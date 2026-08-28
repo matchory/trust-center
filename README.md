@@ -1,42 +1,40 @@
-# sv
+# Matchory Trust Center
 
-Everything you need to build a Svelte project, powered by [`sv`](https://github.com/sveltejs/cli).
+An open-source, self-hostable **Trust Center**: the buyer-facing proof layer that publishes a
+company's security, privacy, and compliance posture, gates sensitive documents behind approval and
+NDA, and records who accessed what and when. Built with SvelteKit and Postgres, first-class DE/EN
+content, no third-party trackers on the public portal.
 
-## Creating a project
+Licensed under [AGPL-3.0-or-later](./LICENSE).
 
-If you're seeing this, you've probably already done this step. Congrats!
+## Getting started
 
-```sh
-# create a new project
-npx sv create my-app
-```
-
-To recreate this project with the same configuration:
+Requires Node 22+, [pnpm](https://pnpm.io), and Docker.
 
 ```sh
-# recreate this project
-pnpm dlx sv@0.17.0 create --template minimal --types ts --install pnpm .
+cp .env.example .env
+
+# Postgres, Mailpit, and a dev OIDC provider for local staff login
+docker compose -f docker-compose.dev.yml up -d --wait
+
+pnpm install
+pnpm db:migrate
+pnpm dev
 ```
 
-## Developing
+The app is then served at http://localhost:5173.
 
-Once you've created a project and installed dependencies with `npm install` (or `pnpm install` or `yarn`), start a development server:
+## Commands
 
-```sh
-npm run dev
+| Command                     | Description                                             |
+| --------------------------- | ------------------------------------------------------- |
+| `pnpm dev`                  | Start the dev server                                    |
+| `pnpm build`                | Build a production version of the app                   |
+| `pnpm test:unit`            | Run unit tests                                          |
+| `pnpm test:integration`     | Run integration tests against a disposable Postgres     |
+| `pnpm test:e2e`             | Run end-to-end tests against a production preview build |
+| `pnpm lint` / `pnpm format` | Check / fix formatting and lint issues                  |
+| `pnpm check`                | Type-check the project                                  |
+| `pnpm db:migrate`           | Apply database migrations                               |
 
-# or start the server and open the app in a new browser tab
-npm run dev -- --open
-```
-
-## Building
-
-To create a production version of your app:
-
-```sh
-npm run build
-```
-
-You can preview the production build with `npm run preview`.
-
-> To deploy your app, you may need to install an [adapter](https://svelte.dev/docs/kit/adapters) for your target environment.
+You can preview a production build with `pnpm preview`.
