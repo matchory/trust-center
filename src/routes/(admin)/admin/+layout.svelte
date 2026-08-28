@@ -3,8 +3,7 @@
 	import { m } from '$lib/paraglide/messages.js';
 	import type { LayoutServerData } from './$types';
 
-	let { data, children }: { data: LayoutServerData; children: import('svelte').Snippet } =
-		$props();
+	let { data, children }: { data: LayoutServerData; children: import('svelte').Snippet } = $props();
 </script>
 
 <div class="min-h-screen bg-neutral-50 text-neutral-900">
@@ -13,7 +12,9 @@
 
 		<div class="flex items-center gap-4 text-sm">
 			<span data-testid="staff-email">{data.staff.email}</span>
-			<span data-testid="staff-role" class="rounded bg-neutral-100 px-2 py-0.5">{data.staff.role}</span>
+			<span data-testid="staff-role" class="rounded bg-neutral-100 px-2 py-0.5"
+				>{data.staff.role}</span
+			>
 			<form method="POST" action="/auth/logout">
 				<button data-testid="sign-out" type="submit" class="underline">{m.admin_sign_out()}</button>
 			</form>
