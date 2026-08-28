@@ -3243,7 +3243,7 @@ watermark for.
 - Produces: `GET /api/documents/{fileId}` — the only path by which any stored object leaves the
   process.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Append to `tests/e2e/security.spec.ts`:
 
@@ -3333,11 +3333,11 @@ writing the bytes through the storage adapter so the endpoint has something to s
 Add the imports these need: `addDocumentFile` and `documentFile`, `auditEvent`, `and`, `gte`,
 `createLocalStorage`, `newStorageKey`.
 
-- [ ] **Step 2: Run and watch it fail**
+- [x] **Step 2: Run and watch it fail**
 
 Run: `pnpm test:e2e -- tests/e2e/security.spec.ts` → FAIL, the endpoint 404s everything.
 
-- [ ] **Step 3: Implement the endpoint**
+- [x] **Step 3: Implement the endpoint**
 
 Create `src/routes/api/documents/[fileId]/+server.ts`:
 
@@ -3437,11 +3437,11 @@ export const GET: RequestHandler = async ({ params, getClientAddress, request })
 };
 ```
 
-- [ ] **Step 4: Run and watch it pass**
+- [x] **Step 4: Run and watch it pass**
 
 Run: `pnpm test:e2e -- tests/e2e/security.spec.ts` → PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 pnpm lint && pnpm check && pnpm test:e2e
