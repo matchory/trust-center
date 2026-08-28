@@ -1726,7 +1726,7 @@ shape check before any path is joined.
   - `createLocalStorage(rootDir: string): StorageAdapter`
   - `getStorage(): StorageAdapter` — the lazy process singleton
 
-- [ ] **Step 1: Write the failing storage tests**
+- [x] **Step 1: Write the failing storage tests**
 
 Create `tests/unit/storage.test.ts`:
 
@@ -1818,12 +1818,12 @@ describe('local storage', () => {
 });
 ```
 
-- [ ] **Step 2: Run it and watch it fail**
+- [x] **Step 2: Run it and watch it fail**
 
 Run: `pnpm test:unit -- tests/unit/storage.test.ts`
 Expected: FAIL — module not found.
 
-- [ ] **Step 3: Define the port**
+- [x] **Step 3: Define the port**
 
 Create `src/lib/server/storage/index.ts`:
 
@@ -1868,7 +1868,7 @@ export function getStorage(): StorageAdapter {
 export { createLocalStorage, newStorageKey } from './local';
 ```
 
-- [ ] **Step 4: Implement it over the filesystem**
+- [x] **Step 4: Implement it over the filesystem**
 
 Create `src/lib/server/storage/local.ts`:
 
@@ -1944,12 +1944,12 @@ export function createLocalStorage(rootDir: string): StorageAdapter {
 }
 ```
 
-- [ ] **Step 5: Run the tests and watch them pass**
+- [x] **Step 5: Run the tests and watch them pass**
 
 Run: `pnpm test:unit -- tests/unit/storage.test.ts`
 Expected: PASS, 7 tests.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 pnpm lint && pnpm check && pnpm test:unit
