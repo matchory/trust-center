@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { pickTranslation, resolveLocale, stripLocale } from '../../src/lib/i18n/locale';
+import {
+	assertLocaleSubset,
+	pickTranslation,
+	resolveLocale,
+	stripLocale
+} from '../../src/lib/i18n/locale';
 
 const LOCALES = ['de', 'en'] as const;
 
@@ -38,6 +43,18 @@ describe('resolveLocale', () => {
 
 	it('falls back to the default locale when Accept-Language is absent', () => {
 		expect(resolveLocale({ pathLocale: null }, LOCALES, 'de')).toBe('de');
+	});
+});
+
+describe('assertLocaleSubset', () => {
+	it('does not throw when every configured locale is compiled', () => {
+		expect(() => assertLocaleSubset(['de', 'en'], ['de', 'en', 'fr'])).not.toThrow();
+	});
+
+	it('throws naming both sets when a configured locale has no compiled catalog', () => {
+		expect(() => assertLocaleSubset(['de', 'en', 'fr'], ['de', 'en'])).toThrowError(
+			/PUBLIC_LOCALES.*\["de","en","fr"\].*compiled into Paraglide.*\["de","en"\].*missing: fr/s
+		);
 	});
 });
 

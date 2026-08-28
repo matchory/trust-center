@@ -1,3 +1,26 @@
+/**
+ * Throws unless every configured locale is among the locales Paraglide was
+ * compiled with. `resolveLocale`/`stripLocale` trust `LOCALES` as the set of
+ * locales that can actually be rendered — a configured locale with no
+ * compiled catalog would otherwise reach `assertIsLocale` (in Paraglide's
+ * runtime) and throw mid-request instead of at boot.
+ */
+export function assertLocaleSubset(
+	configured: readonly string[],
+	compiled: readonly string[]
+): void {
+	const unsupported = configured.filter((locale) => !compiled.includes(locale));
+
+	if (unsupported.length > 0) {
+		throw new Error(
+			`PUBLIC_LOCALES ${JSON.stringify(configured)} is not a subset of the locales ` +
+				`compiled into Paraglide ${JSON.stringify(compiled)} (missing: ${unsupported.join(', ')}). ` +
+				`Add a message catalog for the missing locale(s) in project.inlang/settings.json and ` +
+				`recompile, or remove them from PUBLIC_LOCALES.`
+		);
+	}
+}
+
 export interface StrippedPath {
 	locale: string | null;
 	path: string;
