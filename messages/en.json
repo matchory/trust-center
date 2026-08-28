@@ -55,5 +55,10 @@
 	"control_status_implemented": "Implemented",
 	"control_status_in_progress": "In progress",
 	"control_status_planned": "Planned",
-	"control_status_not_applicable": "Not applicable"
+	"control_status_not_applicable": "Not applicable",
+	"admin_group": "Group",
+	"admin_groups": "Groups",
+	"admin_published": "Published",
+	"admin_evidence": "Evidence",
+	"admin_description": "Description"
 }

@@ -55,5 +55,10 @@
 	"control_status_implemented": "Umgesetzt",
 	"control_status_in_progress": "In Umsetzung",
 	"control_status_planned": "Geplant",
-	"control_status_not_applicable": "Nicht zutreffend"
+	"control_status_not_applicable": "Nicht zutreffend",
+	"admin_group": "Bereich",
+	"admin_groups": "Bereiche",
+	"admin_published": "Veröffentlicht",
+	"admin_evidence": "Nachweise",
+	"admin_description": "Beschreibung"
 }
