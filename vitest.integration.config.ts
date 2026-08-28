@@ -8,6 +8,9 @@ export default defineConfig({
 		testTimeout: 30_000,
 		hookTimeout: 120_000,
 		pool: 'forks',
-		singleFork: true
+		// Serialize test files: they share one Testcontainers Postgres. On Vitest 4 this
+		// is `fileParallelism`, NOT `poolOptions.forks.singleFork` — that option is read
+		// only to emit a deprecation warning and does not configure the pool.
+		fileParallelism: false
 	}
 });
