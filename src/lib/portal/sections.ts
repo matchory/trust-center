@@ -13,5 +13,6 @@ export interface PortalSection {
  * to the layout, the landing page, and the sitemap.
  */
 export const PORTAL_SECTIONS: PortalSection[] = [
-	{ path: '/documents', label: () => m.nav_documents() }
+	{ path: '/documents', label: () => m.nav_documents() },
+	{ path: '/controls', label: () => m.nav_controls() }
 ];

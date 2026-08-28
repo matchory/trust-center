@@ -47,5 +47,13 @@
 	"admin_confirm_delete": "Really delete? This cannot be undone.",
 	"admin_saved": "Saved.",
 	"admin_error_required": "This field is required.",
-	"admin_error_slug": "Lowercase letters, digits, and hyphens only."
+	"admin_error_slug": "Lowercase letters, digits, and hyphens only.",
+	"nav_controls": "Controls",
+	"controls_intro": "Technical and organisational measures, grouped by area.",
+	"controls_empty": "No controls have been published yet.",
+	"controls_evidence": "Evidence",
+	"control_status_implemented": "Implemented",
+	"control_status_in_progress": "In progress",
+	"control_status_planned": "Planned",
+	"control_status_not_applicable": "Not applicable"
 }

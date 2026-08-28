@@ -47,5 +47,13 @@
 	"admin_confirm_delete": "Wirklich löschen? Dies kann nicht rückgängig gemacht werden.",
 	"admin_saved": "Gespeichert.",
 	"admin_error_required": "Dieses Feld ist erforderlich.",
-	"admin_error_slug": "Nur Kleinbuchstaben, Ziffern und Bindestriche."
+	"admin_error_slug": "Nur Kleinbuchstaben, Ziffern und Bindestriche.",
+	"nav_controls": "Maßnahmen",
+	"controls_intro": "Technische und organisatorische Maßnahmen, nach Bereichen gegliedert.",
+	"controls_empty": "Es wurden noch keine Maßnahmen veröffentlicht.",
+	"controls_evidence": "Nachweis",
+	"control_status_implemented": "Umgesetzt",
+	"control_status_in_progress": "In Umsetzung",
+	"control_status_planned": "Geplant",
+	"control_status_not_applicable": "Nicht zutreffend"
 }

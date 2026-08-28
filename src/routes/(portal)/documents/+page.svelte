@@ -40,6 +40,7 @@
 					{@const validity = doc.file ? fileValidity(doc.file) : null}
 					<li
 						class="flex flex-wrap items-center gap-x-4 gap-y-2 p-4"
+						id={doc.slug}
 						data-testid="document-{doc.slug}"
 					>
 						<div class="min-w-0 flex-1">
