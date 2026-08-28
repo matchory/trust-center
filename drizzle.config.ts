@@ -4,7 +4,8 @@ const databaseUrl = process.env.DATABASE_URL;
 if (!databaseUrl) {
 	throw new Error(
 		'DATABASE_URL is not set. drizzle-kit reads no .env file itself — run via ' +
-			'`pnpm db:migrate` (which loads .env) or export DATABASE_URL yourself.'
+			'`pnpm db:migrate` or `pnpm db:generate` (both load .env), or export ' +
+			'DATABASE_URL yourself.'
 	);
 }
 

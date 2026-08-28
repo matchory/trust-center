@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { desc, gte } from 'drizzle-orm';
+import { and, desc, eq, gte } from 'drizzle-orm';
 import { createDb, type Db } from '../../src/lib/server/db';
 import { auditEvent } from '../../src/lib/server/db/schema';
 
@@ -136,13 +136,22 @@ test('records a succeeded login, a logout, and a denied login in the audit trail
 	}
 
 	const recent = await db
-		.select({ action: auditEvent.action })
+		.select({ action: auditEvent.action, actorType: auditEvent.actorType })
 		.from(auditEvent)
-		.where(gte(auditEvent.at, from))
+		.where(and(gte(auditEvent.at, from), eq(auditEvent.actorType, 'staff')))
 		.orderBy(desc(auditEvent.seq));
 	const actions = recent.map((row) => row.action);
 
 	expect(actions).toContain('staff.login.succeeded');
 	expect(actions).toContain('staff.logout');
-	expect(actions).toContain('staff.login.denied');
+
+	// The denied login resolves to no staff_user row, so it is recorded under
+	// the staff-unresolved actor type — asserting on it separately proves the
+	// two actor spaces stay distinct.
+	const denied = await db
+		.select({ action: auditEvent.action })
+		.from(auditEvent)
+		.where(and(gte(auditEvent.at, from), eq(auditEvent.actorType, 'staff-unresolved')));
+
+	expect(denied.map((row) => row.action)).toContain('staff.login.denied');
 });

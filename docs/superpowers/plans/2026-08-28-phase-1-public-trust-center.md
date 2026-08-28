@@ -184,7 +184,7 @@ tests/e2e/           portal.spec.ts, admin-documents.spec.ts, admin-content.spec
 
 **Before starting:** this task implements proposed deviation 3 in the header. Confirm it is signed off.
 
-- [ ] **Step 1: Write the failing config tests**
+- [x] **Step 1: Write the failing config tests**
 
 Replace the whole of `tests/unit/config.test.ts` with:
 
@@ -271,12 +271,12 @@ describe('parseConfig', () => {
 });
 ```
 
-- [ ] **Step 2: Run the config tests and watch them fail**
+- [x] **Step 2: Run the config tests and watch them fail**
 
 Run: `pnpm test:unit -- tests/unit/config.test.ts`
 Expected: FAIL — `parseConfig` takes one argument and knows nothing of `LOCALES`, `BASE_URL`, or `STORAGE_DIR`.
 
-- [ ] **Step 3: Rewrite the config parser**
+- [x] **Step 3: Rewrite the config parser**
 
 Replace `src/lib/server/config/parse.ts` with:
 
@@ -436,12 +436,12 @@ export type { AppConfig } from './parse';
 
 Delete `src/lib/i18n/locales.ts`.
 
-- [ ] **Step 4: Run the config tests and watch them pass**
+- [x] **Step 4: Run the config tests and watch them pass**
 
 Run: `pnpm test:unit -- tests/unit/config.test.ts`
 Expected: PASS, 12 tests.
 
-- [ ] **Step 5: Write the failing locale-routing tests**
+- [x] **Step 5: Write the failing locale-routing tests**
 
 Append to `tests/unit/locale.test.ts`. Keep the existing `stripLocale`, `resolveLocale`, and
 `pickTranslation` describes — they all still apply. **Delete the `assertLocaleSubset` describe and,
@@ -505,12 +505,12 @@ describe('classifyPath', () => {
 });
 ```
 
-- [ ] **Step 6: Run the locale tests and watch them fail**
+- [x] **Step 6: Run the locale tests and watch them fail**
 
 Run: `pnpm test:unit -- tests/unit/locale.test.ts`
 Expected: FAIL — `classifyPath` and `localizePath` are not exported.
 
-- [ ] **Step 7: Add the two routing helpers**
+- [x] **Step 7: Add the two routing helpers**
 
 Append to `src/lib/i18n/locale.ts`:
 
@@ -547,12 +547,12 @@ export function classifyPath(
 }
 ```
 
-- [ ] **Step 8: Run the locale tests and watch them pass**
+- [x] **Step 8: Run the locale tests and watch them pass**
 
 Run: `pnpm test:unit -- tests/unit/locale.test.ts`
 Expected: PASS.
 
-- [ ] **Step 9: Rewire the hooks**
+- [x] **Step 9: Rewire the hooks**
 
 Replace `src/hooks.ts` with:
 
@@ -709,7 +709,7 @@ declare global {
 export {};
 ```
 
-- [ ] **Step 10: Move the negotiating redirect into the root layout load**
+- [x] **Step 10: Move the negotiating redirect into the root layout load**
 
 This is where the redirect belongs rather than in `handle`: layout loads run for pages and only
 for pages, so endpoints (`/api/*`, `/sitemap.xml`, `/robots.txt`, `/branding.css`), static assets,
@@ -736,7 +736,7 @@ export const load: LayoutServerLoad = ({ locals, url }) => {
 };
 ```
 
-- [ ] **Step 11: Make the auth redirects locale-aware**
+- [x] **Step 11: Make the auth redirects locale-aware**
 
 In `src/routes/auth/callback/+server.ts`, add the imports and change the final redirect:
 
@@ -756,7 +756,7 @@ In `src/routes/auth/logout/+server.ts`, change the final redirect the same way:
 
 `locals` is already destructured there.
 
-- [ ] **Step 12: Remove the dead Paraglide strategy declarations and the scaffold residue**
+- [x] **Step 12: Remove the dead Paraglide strategy declarations and the scaffold residue**
 
 Paraglide's `strategy` is declared in two places and honoured in neither, because both entry
 points overwrite the locale resolver (`hooks.server.ts` via the async storage, `hooks.client.ts`
@@ -782,7 +782,7 @@ In `vite.config.ts`, replace the `strategy` key with the reason it is absent:
 
 Delete the unused scaffold residue: `src/lib/index.ts` and `.vscode/extensions.json`.
 
-- [ ] **Step 13: Rename the environment variables everywhere**
+- [x] **Step 13: Rename the environment variables everywhere**
 
 Replace `.env.example` with:
 
@@ -855,7 +855,7 @@ In `README.md`, add a short "Configuration" section pointing at `.env.example` a
 locale rule in one sentence: *the locales a deployment can serve are compiled into the build;
 `LOCALES` selects which of them are enabled.*
 
-- [ ] **Step 14: Rewrite the locale e2e spec for prefixed URLs**
+- [x] **Step 14: Rewrite the locale e2e spec for prefixed URLs**
 
 Replace `tests/e2e/locale.spec.ts` with:
 
@@ -947,7 +947,7 @@ In `tests/e2e/auth.spec.ts`, update the two URL assertions that assumed unprefix
 `await expect(page).toHaveURL(/\/admin$/)` still holds (the path now ends `/de/admin`), and
 `await expect(page).toHaveURL('/')` after sign-out becomes `await expect(page).toHaveURL(/\/de$/)`.
 
-- [ ] **Step 15: Run the whole suite**
+- [x] **Step 15: Run the whole suite**
 
 ```bash
 docker compose -f docker-compose.dev.yml up -d --wait
@@ -959,7 +959,7 @@ pnpm test:unit && pnpm test:integration && pnpm test:e2e
 Expected: all green. If `pnpm check` complains that `$env/static/public` types are missing, that
 is stale generated output — delete `.svelte-kit/` and re-run.
 
-- [ ] **Step 16: Commit**
+- [x] **Step 16: Commit**
 
 ```bash
 git add -A

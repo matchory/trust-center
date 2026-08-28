@@ -1,4 +1,4 @@
-import { eq } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createDb, type Db } from '../../src/lib/server/db';
 import { auditEvent } from '../../src/lib/server/db/schema';
@@ -16,6 +16,22 @@ beforeAll(() => {
 afterAll(async () => {
 	await close();
 });
+
+/**
+ * Drizzle wraps driver errors: `message` is only `Failed query: <sql> params: …`,
+ * so asserting on it matches the statement text rather than the database's
+ * complaint — and passes whenever the phrase happens to appear in the SQL or a
+ * bound parameter. The Postgres message is on `cause`.
+ */
+async function rejectionCause(query: PromiseLike<unknown>): Promise<string> {
+	try {
+		await query;
+	} catch (error) {
+		const wrapped = error as Error & { cause?: Error };
+		return wrapped.cause?.message ?? wrapped.message;
+	}
+	throw new Error('expected the query to be rejected, but it succeeded');
+}
 
 describe('audit log', () => {
 	it('records an event and reads it back by subject', async () => {
@@ -76,8 +92,107 @@ describe('audit log', () => {
 			subjectId: 'append-only-guard'
 		});
 
-		await expect(
-			db.delete(auditEvent).where(eq(auditEvent.subjectId, 'append-only-guard'))
-		).rejects.toThrow(/append-only/);
+		expect(
+			await rejectionCause(
+				db.delete(auditEvent).where(eq(auditEvent.subjectId, 'append-only-guard'))
+			)
+		).toMatch(/append-only/);
+	});
+
+	it('permits clearing ip, ua and actor_id — the one pseudonymization exception', async () => {
+		await recordEvent(db, {
+			action: 'test.pseudonymize',
+			actor: { type: 'requester', id: 'req-purge-me' },
+			subjectType: 'test',
+			subjectId: 'pseudonymize-allowed',
+			ip: '198.51.100.7',
+			ua: 'Mozilla/5.0'
+		});
+
+		await db
+			.update(auditEvent)
+			.set({ ip: null, ua: null, actorId: null })
+			.where(eq(auditEvent.subjectId, 'pseudonymize-allowed'));
+
+		const [row] = await queryEvents(db, {
+			subjectType: 'test',
+			subjectId: 'pseudonymize-allowed'
+		});
+
+		expect(row?.ip).toBeNull();
+		expect(row?.ua).toBeNull();
+		expect(row?.actorId).toBeNull();
+		// The occurrence itself survives the purge — that is the whole point of
+		// pseudonymizing rather than deleting.
+		expect(row?.action).toBe('test.pseudonymize');
+	});
+
+	it('rejects rewriting ip to a different value rather than clearing it', async () => {
+		await recordEvent(db, {
+			action: 'test.pseudonymize',
+			actor: { type: 'requester', id: 'req-2' },
+			subjectType: 'test',
+			subjectId: 'pseudonymize-rewrite',
+			ip: '198.51.100.7'
+		});
+
+		expect(
+			await rejectionCause(
+				db
+					.update(auditEvent)
+					.set({ ip: '203.0.113.9' })
+					.where(eq(auditEvent.subjectId, 'pseudonymize-rewrite'))
+			)
+		).toMatch(/never rewrite/);
+	});
+
+	it('rejects changing any column outside the pseudonymization set', async () => {
+		await recordEvent(db, {
+			action: 'test.immutable',
+			actor: { type: 'system', id: null },
+			subjectType: 'test',
+			subjectId: 'immutable-action'
+		});
+
+		expect(
+			await rejectionCause(
+				db
+					.update(auditEvent)
+					.set({ action: 'test.rewritten' })
+					.where(eq(auditEvent.subjectId, 'immutable-action'))
+			)
+		).toMatch(/append-only/);
+	});
+
+	it('rejects redacting meta, which must never hold requester personal data', async () => {
+		await recordEvent(db, {
+			action: 'test.meta-immutable',
+			actor: { type: 'system', id: null },
+			subjectType: 'test',
+			subjectId: 'meta-immutable',
+			meta: { documentId: 'doc-1' }
+		});
+
+		expect(
+			await rejectionCause(
+				db.update(auditEvent).set({ meta: {} }).where(eq(auditEvent.subjectId, 'meta-immutable'))
+			)
+		).toMatch(/append-only/);
+	});
+
+	it('rejects truncation, which row-level delete triggers do not catch', async () => {
+		expect(await rejectionCause(db.execute(sql`TRUNCATE TABLE "audit_event"`))).toMatch(
+			/cannot be truncated/
+		);
+	});
+
+	it('rejects an actor_type outside the four the application defines', async () => {
+		expect(
+			await rejectionCause(
+				db.execute(
+					sql`INSERT INTO "audit_event" ("actor_type", "action") VALUES ('anonymous', 'test.bad-actor')`
+				)
+			)
+		).toMatch(/actor_type/);
 	});
 });

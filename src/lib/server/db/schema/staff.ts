@@ -1,15 +1,20 @@
-import { index, pgTable, text, timestamp, uuid } from 'drizzle-orm/pg-core';
+import { sql } from 'drizzle-orm';
+import { check, index, pgTable, text, timestamp, uuid } from 'drizzle-orm/pg-core';
 
-export const staffUser = pgTable('staff_user', {
-	id: uuid('id').primaryKey().defaultRandom(),
-	oidcSub: text('oidc_sub').notNull().unique(),
-	email: text('email').notNull(),
-	name: text('name').notNull(),
-	role: text('role').notNull(),
-	lastLoginAt: timestamp('last_login_at', { withTimezone: true }),
-	disabledAt: timestamp('disabled_at', { withTimezone: true }),
-	createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow()
-});
+export const staffUser = pgTable(
+	'staff_user',
+	{
+		id: uuid('id').primaryKey().defaultRandom(),
+		oidcSub: text('oidc_sub').notNull().unique(),
+		email: text('email').notNull(),
+		name: text('name').notNull(),
+		role: text('role').notNull(),
+		lastLoginAt: timestamp('last_login_at', { withTimezone: true }),
+		disabledAt: timestamp('disabled_at', { withTimezone: true }),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow()
+	},
+	(table) => [check('staff_user_role_check', sql`${table.role} IN ('admin', 'approver')`)]
+);
 
 export const staffSession = pgTable(
 	'staff_session',
