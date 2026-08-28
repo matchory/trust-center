@@ -60,5 +60,13 @@
 	"admin_groups": "Bereiche",
 	"admin_published": "Veröffentlicht",
 	"admin_evidence": "Nachweise",
-	"admin_description": "Beschreibung"
+	"admin_description": "Beschreibung",
+	"nav_certifications": "Zertifizierungen",
+	"certifications_issued_by": "Ausgestellt von {issuer}",
+	"certifications_valid": "Gültig {from} – {until}",
+	"certifications_certificate": "Zertifikat",
+	"admin_framework": "Rahmenwerk",
+	"admin_issuer": "Aussteller",
+	"admin_certificate": "Zertifikat",
+	"admin_scope": "Geltungsbereich"
 }

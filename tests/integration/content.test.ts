@@ -1,0 +1,92 @@
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { createDb, type Db } from '../../src/lib/server/db';
+import { certification, documentCategory } from '../../src/lib/server/db/schema';
+import {
+	createCertification,
+	listPublicCertifications,
+	setCertificationTranslation,
+	updateCertification
+} from '../../src/lib/server/content/certifications';
+import {
+	createCategory,
+	createDocument,
+	updateDocument
+} from '../../src/lib/server/content/documents';
+
+let db: Db;
+let close: () => Promise<void>;
+
+beforeAll(() => {
+	const url = process.env.TEST_DATABASE_URL;
+	if (!url) throw new Error('TEST_DATABASE_URL not set by global setup');
+	({ db, close } = createDb(url));
+});
+
+afterAll(async () => {
+	await close();
+});
+
+describe('certifications', () => {
+	beforeEach(async () => {
+		await db.delete(certification);
+		await db.delete(documentCategory);
+	});
+
+	it('lists published certifications with scope and validity', async () => {
+		const id = await createCertification(db, {
+			slug: 'iso-27001',
+			framework: 'ISO/IEC 27001:2022',
+			issuer: 'TÜV Süd',
+			validFrom: new Date('2025-04-01T00:00:00Z'),
+			validUntil: new Date('2028-03-31T00:00:00Z'),
+			certificateDocumentId: null
+		});
+		await setCertificationTranslation(db, id, 'de', { scope: 'Betrieb der Matchory-Plattform' });
+		await updateCertification(db, id, { published: true });
+
+		const items = await listPublicCertifications(db, { locale: 'de', defaultLocale: 'de' });
+
+		expect(items).toHaveLength(1);
+		expect(items[0]?.framework).toBe('ISO/IEC 27001:2022');
+		expect(items[0]?.scope).toBe('Betrieb der Matchory-Plattform');
+		expect(items[0]?.isScopeFallback).toBe(false);
+	});
+
+	it('hides an unpublished certification', async () => {
+		const id = await createCertification(db, {
+			slug: 'draft',
+			framework: 'SOC 2',
+			issuer: 'X',
+			validFrom: null,
+			validUntil: null,
+			certificateDocumentId: null
+		});
+		await setCertificationTranslation(db, id, 'de', { scope: 'x' });
+
+		expect(await listPublicCertifications(db, { locale: 'de', defaultLocale: 'de' })).toHaveLength(
+			0
+		);
+	});
+
+	it('does not link a certificate document that is not publicly visible', async () => {
+		const categoryId = await createCategory(db, { slug: 'certs', position: 0 });
+		const gated = await createDocument(db, { slug: 'iso-cert', categoryId, tier: 'request' });
+		await updateDocument(db, gated, { status: 'published' });
+
+		const id = await createCertification(db, {
+			slug: 'iso-27001',
+			framework: 'ISO/IEC 27001:2022',
+			issuer: 'TÜV Süd',
+			validFrom: null,
+			validUntil: null,
+			certificateDocumentId: gated
+		});
+		await setCertificationTranslation(db, id, 'de', { scope: 'x' });
+		await updateCertification(db, id, { published: true });
+
+		expect(
+			(await listPublicCertifications(db, { locale: 'de', defaultLocale: 'de' }))[0]
+				?.certificateFileId
+		).toBeNull();
+	});
+});

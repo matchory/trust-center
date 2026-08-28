@@ -50,6 +50,13 @@
       "when": 1787956311179,
       "tag": "0006_controls",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1787959312146,
+      "tag": "0007_certifications",
+      "breakpoints": true
     }
   ]
 }

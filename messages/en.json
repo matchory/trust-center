@@ -60,5 +60,13 @@
 	"admin_groups": "Groups",
 	"admin_published": "Published",
 	"admin_evidence": "Evidence",
-	"admin_description": "Description"
+	"admin_description": "Description",
+	"nav_certifications": "Certifications",
+	"certifications_issued_by": "Issued by {issuer}",
+	"certifications_valid": "Valid {from} – {until}",
+	"certifications_certificate": "Certificate",
+	"admin_framework": "Framework",
+	"admin_issuer": "Issuer",
+	"admin_certificate": "Certificate",
+	"admin_scope": "Scope"
 }
