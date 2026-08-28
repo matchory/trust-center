@@ -2873,7 +2873,7 @@ never appear in public output can be permanent rather than retrofitted."
 - Consumes: `listPublicDocuments()`, `<Badge>`, `<FallbackNotice>`, `<SectionHeading>`.
 - Produces: `formatBytes(bytes, locale)`, `formatDate(date, locale)`, `fileValidity(file, now)` in `$lib/format`; the `/documents` entry in `PORTAL_SECTIONS`.
 
-- [ ] **Step 1: Write the failing formatting tests**
+- [x] **Step 1: Write the failing formatting tests**
 
 `fileValidity` is the interesting part — it decides the badge — so it is a pure function with its
 own tests rather than an expression inside markup.
@@ -2937,11 +2937,11 @@ describe('formatDate', () => {
 });
 ```
 
-- [ ] **Step 2: Run and watch it fail**
+- [x] **Step 2: Run and watch it fail**
 
 Run: `pnpm test:unit -- tests/unit/format.test.ts` → FAIL, module not found.
 
-- [ ] **Step 3: Implement the formatters**
+- [x] **Step 3: Implement the formatters**
 
 Create `src/lib/format.ts`:
 
@@ -2988,11 +2988,11 @@ export function formatDate(date: Date, locale: string): string {
 }
 ```
 
-- [ ] **Step 4: Run and watch it pass**
+- [x] **Step 4: Run and watch it pass**
 
 Run: `pnpm test:unit -- tests/unit/format.test.ts` → PASS.
 
-- [ ] **Step 5: Add the messages**
+- [x] **Step 5: Add the messages**
 
 `messages/de.json`:
 
@@ -3026,7 +3026,7 @@ Run: `pnpm test:unit -- tests/unit/format.test.ts` → PASS.
 	"documents_no_file": "No file attached"
 ```
 
-- [ ] **Step 6: Register the section**
+- [x] **Step 6: Register the section**
 
 In `src/lib/portal/sections.ts`, replace the empty array and drop the `void m;` line:
 
@@ -3034,7 +3034,7 @@ In `src/lib/portal/sections.ts`, replace the empty array and drop the `void m;` 
 export const PORTAL_SECTIONS: PortalSection[] = [{ path: '/documents', label: () => m.nav_documents() }];
 ```
 
-- [ ] **Step 7: Write the page**
+- [x] **Step 7: Write the page**
 
 Create `src/routes/(portal)/documents/+page.server.ts`:
 
@@ -3145,7 +3145,7 @@ Create `src/routes/(portal)/documents/+page.svelte`:
 Give each document `<li>` an `id={doc.slug}` as well: Task 9's evidence links point at these
 anchors.
 
-- [ ] **Step 8: Write the permanent security test**
+- [x] **Step 8: Write the permanent security test**
 
 Create `tests/e2e/security.spec.ts`. This file grows through the phase; it holds the assertions
 spec §12 calls out as the ones that would be specifically embarrassing to get wrong.
@@ -3203,7 +3203,7 @@ test('a gated document never appears in public HTML', async ({ page }) => {
 });
 ```
 
-- [ ] **Step 9: Run everything and commit**
+- [x] **Step 9: Run everything and commit**
 
 ```bash
 pnpm lint && pnpm check && pnpm test:unit && pnpm test:integration && pnpm test:e2e
