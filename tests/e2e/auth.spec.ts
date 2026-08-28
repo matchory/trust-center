@@ -1,4 +1,31 @@
 import { expect, test } from '@playwright/test';
+import { desc, gte } from 'drizzle-orm';
+import { createDb, type Db } from '../../src/lib/server/db';
+import { auditEvent } from '../../src/lib/server/db/schema';
+
+// Regression coverage for the two behaviours this product most exists to
+// guarantee — instant server-side revocation and an audit trail — needs to
+// read the real audit_event table, hence a direct DB connection here rather
+// than only asserting on browser-visible state. `DATABASE_URL` is loaded via
+// `test:e2e`'s `--env-file-if-exists=.env` (see package.json), pointing at
+// the same dev Postgres docker-compose.dev.yml starts.
+const databaseUrl = process.env.DATABASE_URL;
+if (!databaseUrl) {
+	throw new Error(
+		'DATABASE_URL is not set — the e2e suite asserts against the real audit_event ' +
+			"table and needs it (see .env.example, and package.json's test:e2e script)."
+	);
+}
+let db: Db;
+let closeDb: () => Promise<void>;
+
+test.beforeAll(() => {
+	({ db, close: closeDb } = createDb(databaseUrl));
+});
+
+test.afterAll(async () => {
+	await closeDb();
+});
 
 // The dev-IdP's built-in `devInteractions` login screen (node-oidc-provider)
 // renders unlabelled inputs — no <label> or aria-label, only placeholder
@@ -62,12 +89,60 @@ test('a user in no mapped group is refused', async ({ page }) => {
 	expect(cookieNames).not.toContain('tc_staff_session');
 });
 
-test('signing out revokes the session immediately', async ({ page }) => {
+test('signing out revokes the session immediately, at the server', async ({ page, context }) => {
 	await signIn(page, 'admin');
 	await expect(page).toHaveURL(/\/admin$/);
+
+	const sessionCookie = (await context.cookies()).find(
+		(cookie) => cookie.name === 'tc_staff_session'
+	);
+	if (!sessionCookie) throw new Error('expected a tc_staff_session cookie after signing in');
 
 	await page.getByTestId('sign-out').click();
 
 	await page.goto('/admin');
 	expect(page.url()).not.toContain('/admin');
+
+	// Re-add the cookie the browser just cleared and request /admin again.
+	// This proves the session was revoked SERVER-SIDE: if `revokeStaffSession`
+	// were ever deleted, the cookie alone would still get the visitor into
+	// /admin, since the browser-cleared cookie no longer matters once we
+	// hand the old value back ourselves.
+	await context.addCookies([sessionCookie]);
+	await page.goto('/admin');
+	expect(page.url()).not.toContain('/admin');
+});
+
+test('records a succeeded login, a logout, and a denied login in the audit trail', async ({
+	page,
+	browser
+}) => {
+	// A small grace period rather than `new Date()` exactly at test start,
+	// in case the test runner's and the database container's clocks skew.
+	const from = new Date(Date.now() - 5_000);
+
+	await signIn(page, 'admin');
+	await expect(page).toHaveURL(/\/admin$/);
+	await page.getByTestId('sign-out').click();
+	await expect(page).toHaveURL('/');
+
+	const deniedContext = await browser.newContext();
+	try {
+		const deniedPage = await deniedContext.newPage();
+		const deniedResponse = await signIn(deniedPage, 'nobody');
+		expect(deniedResponse.status()).toBe(403);
+	} finally {
+		await deniedContext.close();
+	}
+
+	const recent = await db
+		.select({ action: auditEvent.action })
+		.from(auditEvent)
+		.where(gte(auditEvent.at, from))
+		.orderBy(desc(auditEvent.seq));
+	const actions = recent.map((row) => row.action);
+
+	expect(actions).toContain('staff.login.succeeded');
+	expect(actions).toContain('staff.logout');
+	expect(actions).toContain('staff.login.denied');
 });

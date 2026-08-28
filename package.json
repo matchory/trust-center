@@ -16,7 +16,7 @@
 		"format": "prettier --write .",
 		"test:unit": "vitest run --config vitest.config.ts",
 		"test:integration": "vitest run --config vitest.integration.config.ts",
-		"test:e2e": "playwright test"
+		"test:e2e": "node --env-file-if-exists=.env node_modules/@playwright/test/cli.js test"
 	},
 	"devDependencies": {
 		"@inlang/paraglide-js": "^2.24.1",
