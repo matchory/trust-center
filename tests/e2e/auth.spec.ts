@@ -11,6 +11,16 @@ import { expect, test } from '@playwright/test';
 // "Continue" button.
 async function signIn(page: import('@playwright/test').Page, account: string) {
 	await page.goto('/auth/login');
+
+	// Started before the form is even filled in — Playwright's `response`
+	// listener is attached to the page immediately and survives the
+	// subsequent same-page navigations, so it reliably observes whichever
+	// later action actually triggers the callback request instead of racing
+	// it. Returned so callers can assert on the callback's status.
+	const callbackResponse = page.waitForResponse((response) =>
+		response.url().includes('/auth/callback')
+	);
+
 	await page.getByPlaceholder('Enter any login').fill(account);
 	await page.getByPlaceholder('and password').fill('any-password');
 	await page.getByRole('button', { name: /sign-?in|continue|login/i }).click();
@@ -19,6 +29,8 @@ async function signIn(page: import('@playwright/test').Page, account: string) {
 	if (await consent.isVisible().catch(() => false)) {
 		await consent.click();
 	}
+
+	return callbackResponse;
 }
 
 test('redirects an anonymous visitor away from the admin area', async ({ page }) => {
@@ -36,9 +48,18 @@ test('an admin can sign in and reach the admin area', async ({ page }) => {
 });
 
 test('a user in no mapped group is refused', async ({ page }) => {
-	await signIn(page, 'nobody');
+	const response = await signIn(page, 'nobody');
 
+	expect(response.status()).toBe(403);
 	await expect(page.getByText(/not a member of a group authorised/i)).toBeVisible();
+
+	// The dev-IdP itself sets its own `_interaction`/`_session.legacy`
+	// cookies on the shared `localhost` domain (cookies aren't port-scoped),
+	// so asserting zero cookies in the context would fail for reasons
+	// unrelated to our guard. What must not exist is *our* session cookie —
+	// its absence proves no session was created before the role check ran.
+	const cookieNames = (await page.context().cookies()).map((cookie) => cookie.name);
+	expect(cookieNames).not.toContain('tc_staff_session');
 });
 
 test('signing out revokes the session immediately', async ({ page }) => {

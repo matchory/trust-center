@@ -3,21 +3,34 @@ import { getConfig } from '../config';
 
 let cached: client.Configuration | undefined;
 
+// `new URL('http://[::1]:5556').hostname` is `[::1]` (brackets included) in
+// Node's WHATWG URL implementation — compare against both the bracketed and
+// bare forms or the loopback check below fails open on IPv6 loopback.
+const LOOPBACK_HOSTNAMES = new Set(['localhost', '127.0.0.1', '[::1]', '::1']);
+
 export async function getOidcConfig(): Promise<client.Configuration> {
 	if (!cached) {
 		const config = getConfig();
-		const issuerIsHttps = new URL(config.oidc.issuer).protocol === 'https:';
+		const issuerUrl = new URL(config.oidc.issuer);
+		const isInsecureLoopback =
+			issuerUrl.protocol === 'http:' && LOOPBACK_HOSTNAMES.has(issuerUrl.hostname);
 
 		cached = await client.discovery(
-			new URL(config.oidc.issuer),
+			issuerUrl,
 			config.oidc.clientId,
 			config.oidc.clientSecret,
 			undefined,
-			// openid-client refuses HTTP discovery/token requests by default. Only
-			// relax that for a non-HTTPS issuer (the dev-IdP on localhost) — a
-			// production deployment configured with an HTTPS issuer keeps the
-			// default, strict behaviour.
-			issuerIsHttps ? undefined : { execute: [client.allowInsecureRequests] }
+			// `allowInsecureRequests` isn't a per-request opt: it sets `tlsOnly =
+			// false` permanently on the returned `Configuration`, which we cache
+			// and reuse, so this relaxes every subsequent request against this
+			// issuer for the process lifetime — discovery, token exchange
+			// (including the client secret), JWKS, userinfo, refresh, revocation,
+			// and introspection — and disables the callback URL's protocol check
+			// too. Only ever relax this for a loopback issuer (the dev-IdP); a
+			// remote `http://` issuer (e.g. an internal host behind a
+			// TLS-terminating proxy, an easy misconfiguration for a self-hoster)
+			// must keep openid-client's default strict, HTTPS-only behaviour.
+			isInsecureLoopback ? { execute: [client.allowInsecureRequests] } : undefined
 		);
 	}
 	return cached;
