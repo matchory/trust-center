@@ -12,6 +12,6 @@ export interface PortalSection {
  * entry here as it lands, so adding a section is one line rather than an edit
  * to the layout, the landing page, and the sitemap.
  */
-export const PORTAL_SECTIONS: PortalSection[] = [];
-
-void m;
+export const PORTAL_SECTIONS: PortalSection[] = [
+	{ path: '/documents', label: () => m.nav_documents() }
+];

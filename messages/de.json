@@ -10,5 +10,16 @@
 	"portal_imprint": "Impressum",
 	"portal_privacy": "Datenschutz",
 	"portal_no_sections": "Für dieses Trust Center wurden noch keine Inhalte veröffentlicht.",
-	"content_fallback_notice": "Nur auf {language} verfügbar."
+	"content_fallback_notice": "Nur auf {language} verfügbar.",
+	"nav_documents": "Dokumente",
+	"documents_intro": "Alle öffentlich verfügbaren Nachweise, Verträge und Richtlinien.",
+	"documents_empty": "Es wurden noch keine Dokumente veröffentlicht.",
+	"documents_download": "Herunterladen",
+	"documents_version": "Version {version}",
+	"documents_valid_until": "Gültig bis {date}",
+	"documents_status_current": "Aktuell",
+	"documents_status_expiring": "Läuft bald ab",
+	"documents_status_expired": "Abgelaufen",
+	"documents_status_not_yet_valid": "Noch nicht gültig",
+	"documents_no_file": "Keine Datei hinterlegt"
 }

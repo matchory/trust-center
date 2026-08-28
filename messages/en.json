@@ -10,5 +10,16 @@
 	"portal_imprint": "Imprint",
 	"portal_privacy": "Privacy",
 	"portal_no_sections": "No content has been published on this trust center yet.",
-	"content_fallback_notice": "Only available in {language}."
+	"content_fallback_notice": "Only available in {language}.",
+	"nav_documents": "Documents",
+	"documents_intro": "Every publicly available attestation, agreement, and policy.",
+	"documents_empty": "No documents have been published yet.",
+	"documents_download": "Download",
+	"documents_version": "Version {version}",
+	"documents_valid_until": "Valid until {date}",
+	"documents_status_current": "Current",
+	"documents_status_expiring": "Expiring soon",
+	"documents_status_expired": "Expired",
+	"documents_status_not_yet_valid": "Not yet valid",
+	"documents_no_file": "No file attached"
 }
