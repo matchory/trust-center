@@ -1995,7 +1995,7 @@ build order puts them first: everything harder shows up here.
   - `listCategories(db)` / `createCategory(db, input)` / `setCategoryTranslation` / `deleteCategory`
   - `DOCUMENT_TIERS`, `DOCUMENT_STATUSES` and the `DocumentTier` / `DocumentStatus` types
 
-- [ ] **Step 1: Write the failing repository tests**
+- [x] **Step 1: Write the failing repository tests**
 
 Create `tests/integration/documents.test.ts`:
 
@@ -2200,12 +2200,12 @@ describe('document repository', () => {
 });
 ```
 
-- [ ] **Step 2: Run it and watch it fail**
+- [x] **Step 2: Run it and watch it fail**
 
 Run: `pnpm test:integration -- tests/integration/documents.test.ts`
 Expected: FAIL — module not found.
 
-- [ ] **Step 3: Write the schema**
+- [x] **Step 3: Write the schema**
 
 First create `src/lib/content-types.ts`. The tier and status vocabularies are needed by admin
 Svelte components as well as by the schema, and a component importing anything under
@@ -2332,7 +2332,7 @@ export const documentFile = pgTable(
 
 Add `export * from './documents';` to `src/lib/server/db/schema/index.ts`.
 
-- [ ] **Step 4: Generate and apply the migration**
+- [x] **Step 4: Generate and apply the migration**
 
 ```bash
 pnpm db:generate --name documents
@@ -2343,7 +2343,7 @@ Confirm the generated `drizzle/0005_documents.sql` contains the two check constr
 partial unique index (`WHERE "is_current"`). If drizzle-kit emitted the partial index without its
 `WHERE` clause, add it by hand — the "one current file per locale" guarantee lives there.
 
-- [ ] **Step 5: Write the repository**
+- [x] **Step 5: Write the repository**
 
 Note the import style: server modules use relative paths, not `$lib`, so the integration suite can
 import them under plain Vitest without SvelteKit's aliases. This matches Phase 0 (`src/lib/server/
@@ -2832,12 +2832,12 @@ export async function deleteCategory(db: Db, id: string): Promise<void> {
 }
 ```
 
-- [ ] **Step 6: Run the tests and watch them pass**
+- [x] **Step 6: Run the tests and watch them pass**
 
 Run: `pnpm test:integration -- tests/integration/documents.test.ts`
 Expected: PASS, 9 tests.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 pnpm lint && pnpm check && pnpm test:unit && pnpm test:integration
