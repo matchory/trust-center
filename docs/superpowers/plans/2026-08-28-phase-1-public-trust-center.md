@@ -3485,7 +3485,7 @@ anything during this task.
     `document_file.deleted`, `document_category.created`, `document_category.updated`,
     `document_category.deleted`
 
-- [ ] **Step 1: Write the failing upload tests**
+- [x] **Step 1: Write the failing upload tests**
 
 Create `tests/unit/upload.test.ts`:
 
@@ -3541,9 +3541,9 @@ describe('readUpload', () => {
 });
 ```
 
-- [ ] **Step 2: Run and watch it fail** — `pnpm test:unit -- tests/unit/upload.test.ts`
+- [x] **Step 2: Run and watch it fail** — `pnpm test:unit -- tests/unit/upload.test.ts`
 
-- [ ] **Step 3: Implement the upload reader**
+- [x] **Step 3: Implement the upload reader**
 
 Create `src/lib/server/upload.ts`:
 
@@ -3598,9 +3598,9 @@ export async function readUpload(
 }
 ```
 
-- [ ] **Step 4: Run and watch it pass**
+- [x] **Step 4: Run and watch it pass**
 
-- [ ] **Step 5: Add the admin nav registry and messages**
+- [x] **Step 5: Add the admin nav registry and messages**
 
 Create `src/lib/admin/sections.ts`:
 
@@ -3655,7 +3655,7 @@ Add the English equivalents to `messages/en.json`: "Create", "Save", "Delete", "
 "Valid until", "Categories", "Really delete? This cannot be undone.", "Saved.",
 "This field is required.", "Lowercase letters, digits, and hyphens only."
 
-- [ ] **Step 6: Give the admin shell a nav**
+- [x] **Step 6: Give the admin shell a nav**
 
 In `src/routes/(admin)/admin/+layout.server.ts`, add the enabled locales so every admin form can
 render one tab per locale:
@@ -3693,7 +3693,7 @@ In `src/routes/(admin)/admin/+layout.svelte`, add a nav between the header and `
 Import `ADMIN_SECTIONS` and `localizePath`. Every admin link must go through `localizePath` — the
 admin is locale-prefixed like everything else.
 
-- [ ] **Step 7: Write the failing admin e2e spec**
+- [x] **Step 7: Write the failing admin e2e spec**
 
 Create `tests/e2e/admin-documents.spec.ts`:
 
@@ -3772,9 +3772,9 @@ test('rejects a slug that is not URL-safe', async ({ page }) => {
 });
 ```
 
-- [ ] **Step 8: Run and watch it fail** — `pnpm test:e2e -- tests/e2e/admin-documents.spec.ts`
+- [x] **Step 8: Run and watch it fail** — `pnpm test:e2e -- tests/e2e/admin-documents.spec.ts`
 
-- [ ] **Step 9: Build the categories route**
+- [x] **Step 9: Build the categories route**
 
 Create `src/routes/(admin)/admin/documents/categories/+page.server.ts`:
 
@@ -3946,7 +3946,7 @@ Create `src/routes/(admin)/admin/documents/categories/+page.svelte`:
 `data.locales` comes from the admin layout load — child pages inherit parent layout data in
 SvelteKit, so no per-page load is needed for it.
 
-- [ ] **Step 10: Build the document list and create routes**
+- [x] **Step 10: Build the document list and create routes**
 
 Create `src/routes/(admin)/admin/documents/+page.server.ts`:
 
@@ -4139,7 +4139,7 @@ Create `src/routes/(admin)/admin/documents/new/+page.svelte`:
 </form>
 ```
 
-- [ ] **Step 11: Build the document edit route**
+- [x] **Step 11: Build the document edit route**
 
 Create `src/routes/(admin)/admin/documents/[id]/+page.server.ts`:
 
@@ -4549,14 +4549,14 @@ Create `src/routes/(admin)/admin/documents/[id]/+page.svelte`:
 </form>
 ```
 
-- [ ] **Step 12: Run the admin e2e spec and watch it pass**
+- [x] **Step 12: Run the admin e2e spec and watch it pass**
 
 Run: `pnpm test:e2e -- tests/e2e/admin-documents.spec.ts`
 Expected: PASS. If the create redirect lands on `/admin/documents/<id>` without a locale prefix,
 `localizePath` was missed in the `new` action — the root layout would then bounce it through a
 redirect and the URL assertion fails.
 
-- [ ] **Step 13: Run everything and commit**
+- [x] **Step 13: Run everything and commit**
 
 ```bash
 pnpm lint && pnpm check && pnpm test:unit && pnpm test:integration && pnpm test:e2e
