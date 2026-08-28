@@ -16,7 +16,15 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm lint
+      # No .env present here either: svelte-kit sync's write_ambient emits
+      # `declare module '$env/static/public'` containing only the keys
+      # actually present in the environment, with no index signature — so
+      # src/lib/i18n/locales.ts's `$env/static/public` import needs these
+      # set for `svelte-check` to type-check it, same as the build step below.
       - run: pnpm check
+        env:
+          PUBLIC_LOCALES: de,en
+          PUBLIC_DEFAULT_LOCALE: de
       # No .env present here: proves `pnpm build` needs no runtime secrets,
       # only the two PUBLIC_* build-time vars every self-hoster must set.
       - run: pnpm build

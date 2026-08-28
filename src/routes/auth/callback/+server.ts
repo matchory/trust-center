@@ -39,6 +39,8 @@ export const GET: RequestHandler = async ({ url, cookies, getClientAddress, requ
 		await recordEvent(db, {
 			action: 'staff.login.denied',
 			actor: { type: 'staff-unresolved', id: null },
+			ip,
+			ua,
 			meta: { oidcSub: sub, email, groups }
 		});
 		error(403, 'Your account is not a member of a group authorised to use this trust center.');
