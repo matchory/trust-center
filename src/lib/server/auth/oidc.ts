@@ -1,10 +1,11 @@
 import * as client from 'openid-client';
-import { config } from '../config';
+import { getConfig } from '../config';
 
 let cached: client.Configuration | undefined;
 
 export async function getOidcConfig(): Promise<client.Configuration> {
 	if (!cached) {
+		const config = getConfig();
 		cached = await client.discovery(
 			new URL(config.oidc.issuer),
 			config.oidc.clientId,
@@ -15,7 +16,7 @@ export async function getOidcConfig(): Promise<client.Configuration> {
 }
 
 export function redirectUri(): string {
-	return new URL('/auth/callback', config.publicBaseUrl).toString();
+	return new URL('/auth/callback', getConfig().publicBaseUrl).toString();
 }
 
 export interface PendingLogin {

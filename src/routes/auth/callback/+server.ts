@@ -3,11 +3,13 @@ import { recordEvent } from '$lib/server/audit';
 import { completeLogin } from '$lib/server/auth/oidc';
 import { extractGroups, mapRole } from '$lib/server/auth/roles';
 import { SESSION_COOKIE, createStaffSession, upsertStaffUser } from '$lib/server/auth/session';
-import { config } from '$lib/server/config';
-import { db } from '$lib/server/db/instance';
+import { getConfig } from '$lib/server/config';
+import { getDb } from '$lib/server/db/instance';
 import type { RequestHandler } from './$types';
 
 export const GET: RequestHandler = async ({ url, cookies, getClientAddress, request }) => {
+	const db = getDb();
+	const config = getConfig();
 	const state = cookies.get('tc_oidc_state');
 	const codeVerifier = cookies.get('tc_oidc_verifier');
 

@@ -1,4 +1,13 @@
-import { parseConfig } from './parse';
+import { parseConfig, type AppConfig } from './parse';
 
-export const config = parseConfig(process.env);
+let cached: AppConfig | undefined;
+
+/**
+ * Parsed lazily so importing this module never requires a configured
+ * environment — `vite build` must not need runtime secrets.
+ */
+export function getConfig(): AppConfig {
+	return (cached ??= parseConfig(process.env));
+}
+
 export type { AppConfig } from './parse';

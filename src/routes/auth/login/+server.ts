@@ -1,6 +1,6 @@
 import { redirect } from '@sveltejs/kit';
 import { beginLogin } from '$lib/server/auth/oidc';
-import { config } from '$lib/server/config';
+import { getConfig } from '$lib/server/config';
 import type { RequestHandler } from './$types';
 
 export const GET: RequestHandler = async ({ cookies }) => {
@@ -10,7 +10,7 @@ export const GET: RequestHandler = async ({ cookies }) => {
 		path: '/auth',
 		httpOnly: true,
 		sameSite: 'lax' as const,
-		secure: config.publicBaseUrl.startsWith('https://'),
+		secure: getConfig().publicBaseUrl.startsWith('https://'),
 		maxAge: 600
 	};
 

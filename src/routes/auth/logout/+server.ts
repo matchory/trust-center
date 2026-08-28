@@ -1,10 +1,11 @@
 import { redirect } from '@sveltejs/kit';
 import { recordEvent } from '$lib/server/audit';
 import { SESSION_COOKIE, revokeStaffSession } from '$lib/server/auth/session';
-import { db } from '$lib/server/db/instance';
+import { getDb } from '$lib/server/db/instance';
 import type { RequestHandler } from './$types';
 
 export const POST: RequestHandler = async ({ cookies, locals, getClientAddress }) => {
+	const db = getDb();
 	const token = cookies.get(SESSION_COOKIE);
 
 	if (token) {
