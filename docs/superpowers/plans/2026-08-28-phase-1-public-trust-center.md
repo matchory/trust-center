@@ -5796,12 +5796,12 @@ refactor, the extraction changed behaviour and is wrong.
 - Modify: all eight admin route pages from Tasks 8 and 10
 - Test: unchanged — that is the point
 
-- [ ] **Step 1: Confirm the baseline is green**
+- [x] **Step 1: Confirm the baseline is green**
 
 Run: `pnpm test:unit && pnpm test:integration && pnpm test:e2e`
 Expected: all green. Do not start the refactor from a red suite.
 
-- [ ] **Step 2: Write `DataTable.svelte`**
+- [x] **Step 2: Write `DataTable.svelte`**
 
 ```svelte
 <script lang="ts" generics="Row extends { id: string }">
@@ -5865,7 +5865,7 @@ Expected: all green. Do not start the refactor from a red suite.
 
 The `generics` attribute is why Task 3 added `vitePreprocess()`.
 
-- [ ] **Step 3: Write `LocaleTabs.svelte`**
+- [x] **Step 3: Write `LocaleTabs.svelte`**
 
 ```svelte
 <script lang="ts">
@@ -5905,7 +5905,7 @@ The `generics` attribute is why Task 3 added `vitePreprocess()`.
 {/each}
 ```
 
-- [ ] **Step 4: Write `FormField.svelte`**
+- [x] **Step 4: Write `FormField.svelte`**
 
 ```svelte
 <script lang="ts">
@@ -5927,7 +5927,7 @@ The `generics` attribute is why Task 3 added `vitePreprocess()`.
 </label>
 ```
 
-- [ ] **Step 5: Write the translation upsert helper**
+- [x] **Step 5: Write the translation upsert helper**
 
 Create `src/lib/server/content/translations.ts`. This is the one server-side duplication worth
 removing: every content type loops the enabled locales and upserts a row.
@@ -5953,21 +5953,21 @@ export async function saveTranslationsFromForm<T>(
 }
 ```
 
-- [ ] **Step 6: Refactor the eight admin pages onto the primitives**
+- [x] **Step 6: Refactor the eight admin pages onto the primitives**
 
 Replace the hand-rolled table in both list pages with `<DataTable>`, the hand-rolled tab strip in
 both edit pages with `<LocaleTabs bind:active={activeLocale}>`, and every `<label class="grid…">`
 wrapper with `<FormField>`. Replace the per-locale loops in the two group/category routes with
 `saveTranslationsFromForm`.
 
-- [ ] **Step 7: Prove the refactor changed nothing**
+- [x] **Step 7: Prove the refactor changed nothing**
 
 Run: `pnpm lint && pnpm check && pnpm test:unit && pnpm test:integration && pnpm test:e2e`
 Expected: all green, **with no test file modified**. Run `git status` and confirm nothing under
 `tests/` appears. If a test needed changing, revert and redo the extraction — the primitives must
 preserve the DOM contract the tests assert, including every `data-testid`.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add -A
