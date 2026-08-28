@@ -1,14 +1,21 @@
 import { expect, test } from '@playwright/test';
-import { eq } from 'drizzle-orm';
+import { and, eq, gte } from 'drizzle-orm';
 import { createDb, type Db } from '../../src/lib/server/db';
-import { documentCategory, document } from '../../src/lib/server/db/schema';
 import {
+	auditEvent,
+	documentCategory,
+	document,
+	documentFile
+} from '../../src/lib/server/db/schema';
+import {
+	addDocumentFile,
 	createCategory,
 	createDocument,
 	setCategoryTranslation,
 	setDocumentTranslation,
 	updateDocument
 } from '../../src/lib/server/content/documents';
+import { createLocalStorage, newStorageKey } from '../../src/lib/server/storage/local';
 
 const databaseUrl = process.env.DATABASE_URL;
 if (!databaseUrl) throw new Error('DATABASE_URL is not set — see .env.example');
@@ -32,6 +39,32 @@ test.beforeAll(async () => {
 		await setDocumentTranslation(db, id, 'en', { title: `Fixture ${slug}`, summary: null });
 		await updateDocument(db, id, { status: 'published' });
 	}
+
+	const storage = createLocalStorage(process.env.STORAGE_DIR ?? './data/storage');
+
+	for (const slug of ['public-fixture', 'gated-fixture']) {
+		const [row] = await db
+			.select({ id: document.id })
+			.from(document)
+			.where(eq(document.slug, slug));
+		if (!row) throw new Error(`fixture document ${slug} missing`);
+
+		const key = newStorageKey();
+		const stored = await storage.put(key, new TextEncoder().encode(`%PDF-1.7 ${slug}`));
+
+		await addDocumentFile(db, {
+			documentId: row.id,
+			locale: 'de',
+			storageKey: stored.key,
+			sha256: stored.sha256,
+			sizeBytes: stored.size,
+			filename: `${slug}.pdf`,
+			contentType: 'application/pdf',
+			validFrom: null,
+			validUntil: null,
+			uploadedByStaffId: null
+		});
+	}
 });
 
 test.afterAll(async () => {
@@ -47,4 +80,57 @@ test('a gated document never appears in public HTML', async ({ page }) => {
 	await expect(page.getByTestId('document-public-fixture')).toBeVisible();
 	await expect(page.getByTestId('document-gated-fixture')).toHaveCount(0);
 	expect(await page.content()).not.toContain('gated-fixture');
+});
+
+test('serves a public document file and records exactly one audit event', async ({ request }) => {
+	const [file] = await db
+		.select({ id: documentFile.id, sha256: documentFile.sha256 })
+		.from(documentFile)
+		.innerJoin(document, eq(documentFile.documentId, document.id))
+		.where(eq(document.slug, 'public-fixture'));
+	if (!file) throw new Error('fixture file missing — check beforeAll');
+
+	const before = new Date(Date.now() - 2_000);
+	const response = await request.get(`/api/documents/${file.id}`);
+
+	expect(response.status()).toBe(200);
+	expect(response.headers()['content-disposition']).toMatch(/attachment/);
+	// Downloads are audited, so they must not be served from a cache.
+	expect(response.headers()['cache-control']).toMatch(/no-store/);
+
+	const events = await db
+		.select({ action: auditEvent.action, subjectId: auditEvent.subjectId })
+		.from(auditEvent)
+		.where(and(gte(auditEvent.at, before), eq(auditEvent.action, 'document.downloaded')));
+
+	expect(events.map((event) => event.subjectId)).toContain(file.id);
+});
+
+test('refuses to serve a gated document file', async ({ request }) => {
+	const [file] = await db
+		.select({ id: documentFile.id })
+		.from(documentFile)
+		.innerJoin(document, eq(documentFile.documentId, document.id))
+		.where(eq(document.slug, 'gated-fixture'));
+	if (!file) throw new Error('fixture file missing — check beforeAll');
+
+	const response = await request.get(`/api/documents/${file.id}`);
+	expect(response.status()).toBe(404);
+});
+
+test('exposes no route that serves a storage key directly', async ({ request }) => {
+	const [file] = await db
+		.select({ storageKey: documentFile.storageKey })
+		.from(documentFile)
+		.innerJoin(document, eq(documentFile.documentId, document.id))
+		.where(eq(document.slug, 'public-fixture'));
+	if (!file) throw new Error('fixture file missing — check beforeAll');
+
+	for (const path of [
+		`/${file.storageKey}`,
+		`/storage/${file.storageKey}`,
+		`/api/documents/${file.storageKey}`
+	]) {
+		expect((await request.get(path)).status()).toBeGreaterThanOrEqual(400);
+	}
 });
