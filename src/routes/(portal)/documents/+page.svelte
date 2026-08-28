@@ -2,6 +2,7 @@
 	import Badge from '$lib/components/portal/Badge.svelte';
 	import FallbackNotice from '$lib/components/portal/FallbackNotice.svelte';
 	import SectionHeading from '$lib/components/portal/SectionHeading.svelte';
+	import Seo from '$lib/components/portal/Seo.svelte';
 	import { fileValidity, formatBytes, formatDate, type FileValidity } from '$lib/format';
 	import { m } from '$lib/paraglide/messages.js';
 	import type { PageProps } from './$types';
@@ -22,6 +23,15 @@
 		'not-yet-valid': () => m.documents_status_not_yet_valid()
 	};
 </script>
+
+<Seo
+	title={m.nav_documents()}
+	description={m.documents_intro()}
+	siteName={data.branding.organizationName}
+	locale={data.locale}
+	locales={data.locales}
+	defaultLocale={data.defaultLocale}
+/>
 
 <SectionHeading title={m.nav_documents()} description={m.documents_intro()} />
 

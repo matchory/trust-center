@@ -2,6 +2,7 @@
 	import Badge from '$lib/components/portal/Badge.svelte';
 	import FallbackNotice from '$lib/components/portal/FallbackNotice.svelte';
 	import SectionHeading from '$lib/components/portal/SectionHeading.svelte';
+	import Seo from '$lib/components/portal/Seo.svelte';
 	import type { UpdateKind } from '$lib/content-types';
 	import { formatDate } from '$lib/format';
 	import { m } from '$lib/paraglide/messages.js';
@@ -16,6 +17,15 @@
 		advisory: () => m.update_kind_advisory()
 	};
 </script>
+
+<Seo
+	title={m.nav_updates()}
+	description={m.updates_intro()}
+	siteName={data.branding.organizationName}
+	locale={data.locale}
+	locales={data.locales}
+	defaultLocale={data.defaultLocale}
+/>
 
 <SectionHeading title={m.nav_updates()} description={m.updates_intro()} />
 

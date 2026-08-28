@@ -2,6 +2,7 @@
 	import Badge from '$lib/components/portal/Badge.svelte';
 	import FallbackNotice from '$lib/components/portal/FallbackNotice.svelte';
 	import SectionHeading from '$lib/components/portal/SectionHeading.svelte';
+	import Seo from '$lib/components/portal/Seo.svelte';
 	import { fileValidity, formatDate } from '$lib/format';
 	import { localizePath } from '$lib/i18n/locale';
 	import { PORTAL_SECTIONS } from '$lib/portal/sections';
@@ -10,6 +11,15 @@
 
 	let { data }: PageProps = $props();
 </script>
+
+<Seo
+	title={m.site_title()}
+	description={m.portal_tagline()}
+	siteName={data.branding.organizationName}
+	locale={data.locale}
+	locales={data.locales}
+	defaultLocale={data.defaultLocale}
+/>
 
 <SectionHeading title={m.site_title()} description={m.portal_tagline()} />
 

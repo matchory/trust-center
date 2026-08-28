@@ -1,6 +1,7 @@
 <script lang="ts">
 	import FallbackNotice from '$lib/components/portal/FallbackNotice.svelte';
 	import SectionHeading from '$lib/components/portal/SectionHeading.svelte';
+	import Seo from '$lib/components/portal/Seo.svelte';
 	import { formatDate } from '$lib/format';
 	import { m } from '$lib/paraglide/messages.js';
 	import type { PageProps } from './$types';
@@ -12,6 +13,15 @@
 	const countryName = (code: string) =>
 		new Intl.DisplayNames([data.locale], { type: 'region' }).of(code) ?? code;
 </script>
+
+<Seo
+	title={m.nav_subprocessors()}
+	description={m.subprocessors_intro()}
+	siteName={data.branding.organizationName}
+	locale={data.locale}
+	locales={data.locales}
+	defaultLocale={data.defaultLocale}
+/>
 
 <SectionHeading title={m.nav_subprocessors()} description={m.subprocessors_intro()} />
 

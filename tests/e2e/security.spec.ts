@@ -165,3 +165,8 @@ test('serves a content security policy that permits only same-origin resources',
 	expect(csp).toContain("frame-ancestors 'none'");
 	expect(csp).not.toContain('unsafe-inline');
 });
+
+test('a gated document never appears in the sitemap', async ({ request }) => {
+	const body = await (await request.get('/sitemap.xml')).text();
+	expect(body).not.toContain('gated-fixture');
+});

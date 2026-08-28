@@ -8,6 +8,10 @@
 	let { data, children }: { data: LayoutServerData; children: import('svelte').Snippet } = $props();
 </script>
 
+<svelte:head>
+	<meta name="robots" content="noindex, nofollow" />
+</svelte:head>
+
 <div class="min-h-screen bg-neutral-50 text-neutral-900">
 	<header class="flex items-center justify-between border-b border-neutral-200 bg-white px-6 py-3">
 		<a href={resolve('/admin')} class="font-semibold">{m.site_title()} · {m.nav_admin()}</a>

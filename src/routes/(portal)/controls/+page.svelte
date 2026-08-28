@@ -2,6 +2,7 @@
 	import Badge from '$lib/components/portal/Badge.svelte';
 	import FallbackNotice from '$lib/components/portal/FallbackNotice.svelte';
 	import SectionHeading from '$lib/components/portal/SectionHeading.svelte';
+	import Seo from '$lib/components/portal/Seo.svelte';
 	import type { ControlStatus } from '$lib/content-types';
 	import { localizePath } from '$lib/i18n/locale';
 	import { m } from '$lib/paraglide/messages.js';
@@ -23,6 +24,15 @@
 		not_applicable: () => m.control_status_not_applicable()
 	};
 </script>
+
+<Seo
+	title={m.nav_controls()}
+	description={m.controls_intro()}
+	siteName={data.branding.organizationName}
+	locale={data.locale}
+	locales={data.locales}
+	defaultLocale={data.defaultLocale}
+/>
 
 <SectionHeading title={m.nav_controls()} description={m.controls_intro()} />
 
