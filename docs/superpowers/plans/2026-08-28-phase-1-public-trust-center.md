@@ -1344,7 +1344,7 @@ fallbacks, so Task 16 supplies branding values without touching any component.
   - `<FallbackNotice locale={string} />`
   - `<SectionHeading title={string} description={string | null} />`
 
-- [ ] **Step 1: Write the failing portal e2e spec**
+- [x] **Step 1: Write the failing portal e2e spec**
 
 Create `tests/e2e/portal.spec.ts`:
 
@@ -1378,12 +1378,12 @@ test('marks the active locale so it is not announced as a link to elsewhere', as
 });
 ```
 
-- [ ] **Step 2: Run it and watch it fail**
+- [x] **Step 2: Run it and watch it fail**
 
 Run: `pnpm test:e2e -- tests/e2e/portal.spec.ts`
 Expected: FAIL — no shell, no switcher.
 
-- [ ] **Step 3: Add the messages**
+- [x] **Step 3: Add the messages**
 
 Add to `messages/de.json`:
 
@@ -1409,7 +1409,7 @@ Add to `messages/en.json`:
 	"content_fallback_notice": "Only available in {language}."
 ```
 
-- [ ] **Step 4: Create the section registry**
+- [x] **Step 4: Create the section registry**
 
 Create `src/lib/portal/sections.ts`:
 
@@ -1436,7 +1436,7 @@ void m;
 The trailing `void m;` keeps the import live while the list is empty; delete it in Task 6, which
 adds the first real entry.
 
-- [ ] **Step 5: Build the shell components**
+- [x] **Step 5: Build the shell components**
 
 Create `src/lib/components/portal/LocaleSwitcher.svelte`:
 
@@ -1545,7 +1545,7 @@ Create `src/lib/components/portal/SectionHeading.svelte`:
 </header>
 ```
 
-- [ ] **Step 6: Build the portal layout and landing page**
+- [x] **Step 6: Build the portal layout and landing page**
 
 Create `src/routes/(portal)/+layout.svelte`:
 
@@ -1653,7 +1653,7 @@ span:
 
 `/auth/login` stays unprefixed: it is an endpoint, not a page, and the OIDC redirect URI is fixed.
 
-- [ ] **Step 7: Add `vitePreprocess` and clean up the scaffold favicon**
+- [x] **Step 7: Add `vitePreprocess` and clean up the scaffold favicon**
 
 Content tasks from here on write `.svelte` files with typed script blocks that use `satisfies` and
 generics; without a preprocessor those fail to compile. In `vite.config.ts`:
@@ -1671,12 +1671,12 @@ import { vitePreprocess } from '@sveltejs/vite-plugin-svelte';
 Delete the unreferenced `src/lib/assets/favicon.svg`. A real favicon arrives with branding in
 Task 16.
 
-- [ ] **Step 8: Run the tests and watch them pass**
+- [x] **Step 8: Run the tests and watch them pass**
 
 Run: `pnpm test:e2e -- tests/e2e/portal.spec.ts tests/e2e/locale.spec.ts`
 Expected: PASS.
 
-- [ ] **Step 9: Run the whole suite and commit**
+- [x] **Step 9: Run the whole suite and commit**
 
 ```bash
 pnpm lint && pnpm check && pnpm test:unit && pnpm test:integration && pnpm test:e2e
