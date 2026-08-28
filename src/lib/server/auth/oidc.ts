@@ -37,7 +37,7 @@ export async function getOidcConfig(): Promise<client.Configuration> {
 }
 
 export function redirectUri(): string {
-	return new URL('/auth/callback', getConfig().publicBaseUrl).toString();
+	return new URL('/auth/callback', getConfig().baseUrl).toString();
 }
 
 export interface PendingLogin {

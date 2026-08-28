@@ -10,7 +10,7 @@
 		"build": "vite build",
 		"preview": "node --env-file-if-exists=.env node_modules/vite/bin/vite.js preview",
 		"db:migrate": "node --env-file-if-exists=.env node_modules/drizzle-kit/bin.cjs migrate",
-		"paraglide:compile": "paraglide-js compile --project ./project.inlang --outdir ./src/lib/paraglide --strategy url preferredLanguage baseLocale",
+		"paraglide:compile": "paraglide-js compile --project ./project.inlang --outdir ./src/lib/paraglide",
 		"prepare": "pnpm paraglide:compile && (svelte-kit sync || echo '')",
 		"check": "pnpm paraglide:compile && svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
 		"check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",

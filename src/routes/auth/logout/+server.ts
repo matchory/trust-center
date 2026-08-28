@@ -2,6 +2,7 @@ import { redirect } from '@sveltejs/kit';
 import { recordEvent } from '$lib/server/audit';
 import { SESSION_COOKIE, revokeStaffSession } from '$lib/server/auth/session';
 import { getDb } from '$lib/server/db/instance';
+import { localizePath } from '$lib/i18n/locale';
 import type { RequestHandler } from './$types';
 
 export const POST: RequestHandler = async ({ cookies, locals, getClientAddress }) => {
@@ -22,5 +23,5 @@ export const POST: RequestHandler = async ({ cookies, locals, getClientAddress }
 	}
 
 	cookies.delete(SESSION_COOKIE, { path: '/' });
-	redirect(303, '/');
+	redirect(303, localizePath('/', locals.locale));
 };

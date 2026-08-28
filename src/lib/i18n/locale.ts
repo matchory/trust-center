@@ -1,26 +1,3 @@
-/**
- * Throws unless every configured locale is among the locales Paraglide was
- * compiled with. `resolveLocale`/`stripLocale` trust `LOCALES` as the set of
- * locales that can actually be rendered — a configured locale with no
- * compiled catalog would otherwise reach `assertIsLocale` (in Paraglide's
- * runtime) and throw mid-request instead of at boot.
- */
-export function assertLocaleSubset(
-	configured: readonly string[],
-	compiled: readonly string[]
-): void {
-	const unsupported = configured.filter((locale) => !compiled.includes(locale));
-
-	if (unsupported.length > 0) {
-		throw new Error(
-			`PUBLIC_LOCALES ${JSON.stringify(configured)} is not a subset of the locales ` +
-				`compiled into Paraglide ${JSON.stringify(compiled)} (missing: ${unsupported.join(', ')}). ` +
-				`Add a message catalog for the missing locale(s) in project.inlang/settings.json and ` +
-				`recompile, or remove them from PUBLIC_LOCALES.`
-		);
-	}
-}
-
 export interface StrippedPath {
 	locale: string | null;
 	path: string;
@@ -98,4 +75,35 @@ export function pickTranslation<T>(
 	if (fallback) return { value: fallback.value, locale: fallback.locale, isFallback: true };
 
 	return null;
+}
+
+/** Builds the canonical, always-prefixed URL path for a locale. */
+export function localizePath(path: string, locale: string): string {
+	return path === '/' ? `/${locale}` : `/${locale}${path}`;
+}
+
+export type LocaleRoute =
+	| { kind: 'localized'; locale: string; path: string }
+	| { kind: 'unprefixed'; path: string }
+	| { kind: 'unknown-locale'; locale: string };
+
+/**
+ * The whole locale routing decision as a pure function, so `hooks.server.ts`
+ * stays a switch over three cases and the interesting part is unit-testable.
+ *
+ * The distinction that matters: a prefix Paraglide compiled a catalog for is
+ * *structurally* a locale prefix even when the operator has disabled it, so it
+ * must 404 rather than fall through to content lookup — otherwise disabling a
+ * locale would turn `/en/avv` into a search for a document slugged "en".
+ */
+export function classifyPath(
+	pathname: string,
+	compiled: readonly string[],
+	enabled: readonly string[]
+): LocaleRoute {
+	const { locale, path } = stripLocale(pathname, compiled);
+
+	if (locale === null) return { kind: 'unprefixed', path };
+	if (!enabled.includes(locale)) return { kind: 'unknown-locale', locale };
+	return { kind: 'localized', locale, path };
 }

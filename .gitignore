@@ -6,6 +6,7 @@ src/lib/paraglide/
 .env.*
 !.env.example
 .superpowers/
+data/
 
 # Output
 .output

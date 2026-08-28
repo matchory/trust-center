@@ -1,12 +1,22 @@
+import { redirect } from '@sveltejs/kit';
+import { getConfig } from '$lib/server/config';
+import { localizePath } from '$lib/i18n/locale';
 import type { LayoutServerLoad } from './$types';
 
 export const load: LayoutServerLoad = ({ locals, url }) => {
-	// This load function only reads `locals.locale`, which SvelteKit's
-	// dependency tracking does not watch — reroute maps `/` and `/en` to the
-	// same route id, so without reading something URL-derived, SvelteKit
-	// would treat client-side navigation between them as not requiring a
-	// re-run, and `data.locale` would never update. Reading `url.pathname`
-	// marks this load as URL-dependent so it reruns on every navigation.
+	// Every page lives at a locale-prefixed URL, so an unprefixed request is
+	// negotiated once and redirected. That keeps every content URL stable and
+	// cacheable, and makes canonical/hreflang answerable (Task 17).
+	if (locals.pathLocale === null) {
+		redirect(302, `${localizePath(url.pathname, locals.locale)}${url.search}`);
+	}
+
+	// Reroute maps every locale prefix to the same route id, so without
+	// reading something URL-derived here too, SvelteKit would treat
+	// client-side navigation between /de and /en as not requiring this load
+	// to rerun, and `data.locale` would never update.
 	void url.pathname;
-	return { locale: locals.locale };
+
+	const { locales, defaultLocale } = getConfig();
+	return { locale: locals.locale, locales, defaultLocale };
 };

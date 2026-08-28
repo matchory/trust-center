@@ -124,7 +124,7 @@ test('records a succeeded login, a logout, and a denied login in the audit trail
 	await signIn(page, 'admin');
 	await expect(page).toHaveURL(/\/admin$/);
 	await page.getByTestId('sign-out').click();
-	await expect(page).toHaveURL('/');
+	await expect(page).toHaveURL(/\/de$/);
 
 	const deniedContext = await browser.newContext();
 	try {

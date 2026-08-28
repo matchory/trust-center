@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
-	assertLocaleSubset,
+	classifyPath,
+	localizePath,
 	pickTranslation,
 	resolveLocale,
 	stripLocale
@@ -46,18 +47,6 @@ describe('resolveLocale', () => {
 	});
 });
 
-describe('assertLocaleSubset', () => {
-	it('does not throw when every configured locale is compiled', () => {
-		expect(() => assertLocaleSubset(['de', 'en'], ['de', 'en', 'fr'])).not.toThrow();
-	});
-
-	it('throws naming both sets when a configured locale has no compiled catalog', () => {
-		expect(() => assertLocaleSubset(['de', 'en', 'fr'], ['de', 'en'])).toThrowError(
-			/PUBLIC_LOCALES.*\["de","en","fr"\].*compiled into Paraglide.*\["de","en"\].*missing: fr/s
-		);
-	});
-});
-
 describe('pickTranslation', () => {
 	const translations = [
 		{ locale: 'de', value: 'Auftragsverarbeitungsvertrag' },
@@ -88,5 +77,57 @@ describe('pickTranslation', () => {
 
 	it('returns null for an empty translation set', () => {
 		expect(pickTranslation([], 'de', 'en')).toBeNull();
+	});
+});
+
+const COMPILED = ['de', 'en'] as const;
+
+describe('localizePath', () => {
+	it('prefixes the root without leaving a trailing slash pair', () => {
+		expect(localizePath('/', 'de')).toBe('/de');
+	});
+
+	it('prefixes a nested path', () => {
+		expect(localizePath('/documents/avv', 'en')).toBe('/en/documents/avv');
+	});
+
+	it('is idempotent in composition with stripLocale', () => {
+		expect(localizePath(stripLocale('/en/documents', COMPILED).path, 'de')).toBe('/de/documents');
+	});
+});
+
+describe('classifyPath', () => {
+	it('accepts a prefix that is compiled and enabled', () => {
+		expect(classifyPath('/en/documents', COMPILED, ['de', 'en'])).toEqual({
+			kind: 'localized',
+			locale: 'en',
+			path: '/documents'
+		});
+	});
+
+	it('reports a compiled but disabled locale as unknown, so it can 404', () => {
+		expect(classifyPath('/en/documents', COMPILED, ['de'])).toEqual({
+			kind: 'unknown-locale',
+			locale: 'en'
+		});
+	});
+
+	it('treats a prefix with no compiled catalog as an ordinary path', () => {
+		expect(classifyPath('/fr/documents', COMPILED, ['de', 'en'])).toEqual({
+			kind: 'unprefixed',
+			path: '/fr/documents'
+		});
+	});
+
+	it('reports the bare root as unprefixed', () => {
+		expect(classifyPath('/', COMPILED, ['de', 'en'])).toEqual({ kind: 'unprefixed', path: '/' });
+	});
+
+	it('accepts a bare locale prefix as that locale at the root', () => {
+		expect(classifyPath('/de', COMPILED, ['de', 'en'])).toEqual({
+			kind: 'localized',
+			locale: 'de',
+			path: '/'
+		});
 	});
 });

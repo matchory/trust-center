@@ -10,7 +10,7 @@ export const GET: RequestHandler = async ({ cookies }) => {
 		path: '/auth',
 		httpOnly: true,
 		sameSite: 'lax' as const,
-		secure: getConfig().publicBaseUrl.startsWith('https://'),
+		secure: getConfig().baseUrl.startsWith('https://'),
 		maxAge: 600
 	};
 

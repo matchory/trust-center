@@ -24,6 +24,12 @@ pnpm dev
 
 The app is then served at http://localhost:5173.
 
+## Configuration
+
+See [`.env.example`](./.env.example) for every environment variable this app reads, with
+descriptions. One rule worth knowing up front: the locales a deployment can serve are compiled
+into the build; `LOCALES` selects which of them are enabled.
+
 ## Commands
 
 | Command                     | Description                                             |

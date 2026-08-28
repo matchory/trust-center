@@ -5,9 +5,10 @@ import { extractGroups, mapRole } from '$lib/server/auth/roles';
 import { SESSION_COOKIE, createStaffSession, upsertStaffUser } from '$lib/server/auth/session';
 import { getConfig } from '$lib/server/config';
 import { getDb } from '$lib/server/db/instance';
+import { localizePath } from '$lib/i18n/locale';
 import type { RequestHandler } from './$types';
 
-export const GET: RequestHandler = async ({ url, cookies, getClientAddress, request }) => {
+export const GET: RequestHandler = async ({ url, cookies, locals, getClientAddress, request }) => {
 	const db = getDb();
 	const config = getConfig();
 	const state = cookies.get('tc_oidc_state');
@@ -82,9 +83,9 @@ export const GET: RequestHandler = async ({ url, cookies, getClientAddress, requ
 		path: '/',
 		httpOnly: true,
 		sameSite: 'lax',
-		secure: config.publicBaseUrl.startsWith('https://'),
+		secure: config.baseUrl.startsWith('https://'),
 		expires: expiresAt
 	});
 
-	redirect(303, '/admin');
+	redirect(303, localizePath('/admin', locals.locale));
 };
