@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createDb, type Db } from '../../src/lib/server/db';
 import {
@@ -82,6 +83,10 @@ describe('staff sessions', () => {
 			.from((await import('../../src/lib/server/db')).schema.staffSession);
 
 		expect(rows.some((row) => row.tokenHash === token)).toBe(false);
+		expect(rows.some((row) => Object.values(row).some((v) => v === token))).toBe(false);
+
+		const expectedHash = createHash('sha256').update(token).digest('hex');
+		expect(rows.some((row) => row.tokenHash === expectedHash)).toBe(true);
 	});
 
 	it('rejects an unknown token', async () => {
