@@ -1,7 +1,6 @@
 import { fail } from '@sveltejs/kit';
 import { z } from 'zod';
 import { recordEvent } from '$lib/server/audit';
-import { getConfig } from '$lib/server/config';
 import {
 	createControlGroup,
 	deleteControlGroup,
@@ -9,6 +8,7 @@ import {
 	setControlGroupTranslation,
 	updateControlGroup
 } from '$lib/server/content/controls';
+import { saveTranslationsFromForm } from '$lib/server/content/translations';
 import { getDb } from '$lib/server/db/instance';
 import type { Actions, PageServerLoad } from './$types';
 
@@ -20,14 +20,19 @@ const slug = z
 export const load: PageServerLoad = async () => ({ groups: await listControlGroups(getDb()) });
 
 async function saveTranslations(db: ReturnType<typeof getDb>, groupId: string, form: FormData) {
-	for (const locale of getConfig().locales) {
-		const name = String(form.get(`name.${locale}`) ?? '').trim();
-		if (!name) continue;
-		await setControlGroupTranslation(db, groupId, locale, {
-			name,
-			description: String(form.get(`description.${locale}`) ?? '').trim() || null
-		});
-	}
+	await saveTranslationsFromForm(
+		form,
+		(values, locale) => {
+			const name = String(values.get(`name.${locale}`) ?? '').trim();
+			return name
+				? {
+						name,
+						description: String(values.get(`description.${locale}`) ?? '').trim() || null
+					}
+				: null;
+		},
+		(locale, values) => setControlGroupTranslation(db, groupId, locale, values)
+	);
 }
 
 export const actions: Actions = {

@@ -1,5 +1,7 @@
 <script lang="ts">
 	import { enhance } from '$app/forms';
+	import FormField from '$lib/components/admin/FormField.svelte';
+	import LocaleTabs from '$lib/components/admin/LocaleTabs.svelte';
 	import { DOCUMENT_TIERS } from '$lib/content-types';
 	import { formatBytes, formatDate } from '$lib/format';
 	import { m } from '$lib/paraglide/messages.js';
@@ -47,13 +49,11 @@
 	use:enhance
 	class="mb-8 grid max-w-lg gap-3 rounded border bg-white p-4"
 >
-	<label class="grid gap-1 text-sm">
-		{m.admin_slug()}
+	<FormField label={m.admin_slug()}>
 		<input name="slug" value={data.document.slug} class="rounded border px-2 py-1" />
-	</label>
+	</FormField>
 
-	<label class="grid gap-1 text-sm">
-		{m.admin_category()}
+	<FormField label={m.admin_category()}>
 		<select name="categoryId" class="rounded border px-2 py-1">
 			{#each data.categories as category (category.id)}
 				<option value={category.id} selected={category.id === data.document.categoryId}>
@@ -61,52 +61,36 @@
 				</option>
 			{/each}
 		</select>
-	</label>
+	</FormField>
 
-	<label class="grid gap-1 text-sm">
-		{m.admin_tier()}
+	<FormField label={m.admin_tier()}>
 		<select name="tier" class="rounded border px-2 py-1">
 			{#each DOCUMENT_TIERS as tier (tier)}
 				<option value={tier} selected={tier === data.document.tier}>{tier}</option>
 			{/each}
 		</select>
-	</label>
+	</FormField>
 
-	<label class="grid gap-1 text-sm">
-		{m.admin_position()}
+	<FormField label={m.admin_position()}>
 		<input
 			name="position"
 			type="number"
 			value={data.document.position}
 			class="rounded border px-2 py-1"
 		/>
-	</label>
+	</FormField>
 
 	<button class="justify-self-start rounded bg-neutral-900 px-3 py-1.5 text-white"
 		>{m.admin_save()}</button
 	>
 </form>
 
-<div class="mb-3 flex gap-2 border-b">
-	{#each data.locales as locale (locale)}
-		<button
-			type="button"
-			data-testid="locale-tab-{locale}"
-			onclick={() => (activeLocale = locale)}
-			class="border-b-2 px-3 py-2 text-sm {activeLocale === locale
-				? 'border-neutral-900 font-medium'
-				: 'border-transparent text-neutral-500'}"
-		>
-			{locale}
-			{#if !translationFor(locale)}
-				<span class="ml-1 text-xs text-amber-700">•</span>
-			{/if}
-		</button>
-	{/each}
-</div>
-
-{#each data.locales as locale (locale)}
-	{#if locale === activeLocale}
+<LocaleTabs
+	locales={data.locales}
+	bind:active={activeLocale}
+	translated={(locale) => translationFor(locale) !== null}
+>
+	{#snippet children(locale)}
 		<form
 			method="POST"
 			action="?/saveTranslation"
@@ -115,25 +99,23 @@
 		>
 			<input type="hidden" name="locale" value={locale} />
 
-			<label class="grid gap-1 text-sm">
-				{m.admin_title()}
+			<FormField label={m.admin_title()}>
 				<input
 					data-testid="translation-title-{locale}"
 					name="title"
 					value={translationFor(locale)?.title ?? ''}
 					class="rounded border px-2 py-1"
 				/>
-			</label>
+			</FormField>
 
-			<label class="grid gap-1 text-sm">
-				{m.admin_summary()}
+			<FormField label={m.admin_summary()}>
 				<textarea
 					data-testid="translation-summary-{locale}"
 					name="summary"
 					rows="3"
 					class="rounded border px-2 py-1">{translationFor(locale)?.summary ?? ''}</textarea
 				>
-			</label>
+			</FormField>
 
 			{#if form?.field === 'title' && form?.locale === locale}
 				<p class="text-sm text-red-700">{m.admin_error_required()}</p>
@@ -194,15 +176,13 @@
 					/>
 				</label>
 
-				<label class="grid gap-1 text-sm">
-					{m.admin_valid_from()}
+				<FormField label={m.admin_valid_from()}>
 					<input type="date" name="validFrom" class="rounded border px-2 py-1" />
-				</label>
+				</FormField>
 
-				<label class="grid gap-1 text-sm">
-					{m.admin_valid_until()}
+				<FormField label={m.admin_valid_until()}>
 					<input type="date" name="validUntil" class="rounded border px-2 py-1" />
-				</label>
+				</FormField>
 
 				{#if form?.field === 'file'}
 					<p class="text-sm text-red-700 sm:col-span-4">{form.message}</p>
@@ -216,8 +196,8 @@
 				</button>
 			</form>
 		</section>
-	{/if}
-{/each}
+	{/snippet}
+</LocaleTabs>
 
 <form method="POST" action="?/remove" use:enhance class="mt-10">
 	<button

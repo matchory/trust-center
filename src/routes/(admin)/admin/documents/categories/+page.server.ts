@@ -1,7 +1,6 @@
 import { fail } from '@sveltejs/kit';
 import { z } from 'zod';
 import { recordEvent } from '$lib/server/audit';
-import { getConfig } from '$lib/server/config';
 import {
 	createCategory,
 	deleteCategory,
@@ -9,6 +8,7 @@ import {
 	setCategoryTranslation,
 	updateCategory
 } from '$lib/server/content/documents';
+import { saveTranslationsFromForm } from '$lib/server/content/translations';
 import { getDb } from '$lib/server/db/instance';
 import type { Actions, PageServerLoad } from './$types';
 
@@ -32,10 +32,14 @@ export const actions: Actions = {
 			position: Number(form.get('position') ?? 0)
 		});
 
-		for (const locale of getConfig().locales) {
-			const name = String(form.get(`name.${locale}`) ?? '').trim();
-			if (name) await setCategoryTranslation(db, id, locale, { name });
-		}
+		await saveTranslationsFromForm(
+			form,
+			(values, locale) => {
+				const name = String(values.get(`name.${locale}`) ?? '').trim();
+				return name ? { name } : null;
+			},
+			(locale, values) => setCategoryTranslation(db, id, locale, values)
+		);
 
 		await recordEvent(db, {
 			action: 'document_category.created',
@@ -56,10 +60,14 @@ export const actions: Actions = {
 
 		await updateCategory(db, id, { position: Number(form.get('position') ?? 0) });
 
-		for (const locale of getConfig().locales) {
-			const name = String(form.get(`name.${locale}`) ?? '').trim();
-			if (name) await setCategoryTranslation(db, id, locale, { name });
-		}
+		await saveTranslationsFromForm(
+			form,
+			(values, locale) => {
+				const name = String(values.get(`name.${locale}`) ?? '').trim();
+				return name ? { name } : null;
+			},
+			(locale, values) => setCategoryTranslation(db, id, locale, values)
+		);
 
 		await recordEvent(db, {
 			action: 'document_category.updated',

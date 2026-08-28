@@ -1,5 +1,7 @@
 <script lang="ts">
 	import { enhance } from '$app/forms';
+	import FormField from '$lib/components/admin/FormField.svelte';
+	import LocaleTabs from '$lib/components/admin/LocaleTabs.svelte';
 	import { CONTROL_STATUSES } from '$lib/content-types';
 	import { m } from '$lib/paraglide/messages.js';
 	import type { PageProps } from './$types';
@@ -27,13 +29,11 @@
 	use:enhance
 	class="mb-8 grid max-w-lg gap-3 rounded border bg-white p-4"
 >
-	<label class="grid gap-1 text-sm">
-		{m.admin_slug()}
+	<FormField label={m.admin_slug()}>
 		<input name="slug" value={data.control.slug} class="rounded border px-2 py-1" />
-	</label>
+	</FormField>
 
-	<label class="grid gap-1 text-sm">
-		{m.admin_group()}
+	<FormField label={m.admin_group()}>
 		<select name="groupId" class="rounded border px-2 py-1">
 			{#each data.groups as group (group.id)}
 				<option value={group.id} selected={group.id === data.control.groupId}>
@@ -41,16 +41,15 @@
 				</option>
 			{/each}
 		</select>
-	</label>
+	</FormField>
 
-	<label class="grid gap-1 text-sm">
-		{m.admin_status()}
+	<FormField label={m.admin_status()}>
 		<select data-testid="control-status" name="status" class="rounded border px-2 py-1">
 			{#each CONTROL_STATUSES as status (status)}
 				<option value={status} selected={status === data.control.status}>{status}</option>
 			{/each}
 		</select>
-	</label>
+	</FormField>
 
 	<label class="flex items-center gap-2 text-sm">
 		<input
@@ -62,8 +61,7 @@
 		{m.admin_published()}
 	</label>
 
-	<label class="grid gap-1 text-sm">
-		{m.admin_evidence()}
+	<FormField label={m.admin_evidence()}>
 		<select
 			name="evidence"
 			multiple
@@ -77,17 +75,16 @@
 				</option>
 			{/each}
 		</select>
-	</label>
+	</FormField>
 
-	<label class="grid gap-1 text-sm">
-		{m.admin_position()}
+	<FormField label={m.admin_position()}>
 		<input
 			name="position"
 			type="number"
 			value={data.control.position}
 			class="rounded border px-2 py-1"
 		/>
-	</label>
+	</FormField>
 
 	<button
 		data-testid="control-save-meta"
@@ -96,26 +93,12 @@
 	>
 </form>
 
-<div class="mb-3 flex gap-2 border-b">
-	{#each data.locales as locale (locale)}
-		<button
-			type="button"
-			data-testid="locale-tab-{locale}"
-			onclick={() => (activeLocale = locale)}
-			class="border-b-2 px-3 py-2 text-sm {activeLocale === locale
-				? 'border-neutral-900 font-medium'
-				: 'border-transparent text-neutral-500'}"
-		>
-			{locale}
-			{#if !translationFor(locale)}
-				<span class="ml-1 text-xs text-amber-700">•</span>
-			{/if}
-		</button>
-	{/each}
-</div>
-
-{#each data.locales as locale (locale)}
-	{#if locale === activeLocale}
+<LocaleTabs
+	locales={data.locales}
+	bind:active={activeLocale}
+	translated={(locale) => translationFor(locale) !== null}
+>
+	{#snippet children(locale)}
 		<form
 			method="POST"
 			action="?/saveTranslation"
@@ -124,25 +107,23 @@
 		>
 			<input type="hidden" name="locale" value={locale} />
 
-			<label class="grid gap-1 text-sm">
-				{m.admin_title()}
+			<FormField label={m.admin_title()}>
 				<input
 					data-testid="translation-title-{locale}"
 					name="title"
 					value={translationFor(locale)?.title ?? ''}
 					class="rounded border px-2 py-1"
 				/>
-			</label>
+			</FormField>
 
-			<label class="grid gap-1 text-sm">
-				{m.admin_description()}
+			<FormField label={m.admin_description()}>
 				<textarea
 					data-testid="translation-description-{locale}"
 					name="description"
 					rows="3"
 					class="rounded border px-2 py-1">{translationFor(locale)?.description ?? ''}</textarea
 				>
-			</label>
+			</FormField>
 
 			{#if form?.field === 'title' && form?.locale === locale}
 				<p class="text-sm text-red-700">{m.admin_error_required()}</p>
@@ -155,8 +136,8 @@
 				{m.admin_save()}
 			</button>
 		</form>
-	{/if}
-{/each}
+	{/snippet}
+</LocaleTabs>
 
 <form method="POST" action="?/remove" use:enhance class="mt-10">
 	<button

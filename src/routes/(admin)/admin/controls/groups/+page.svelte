@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { enhance } from '$app/forms';
+	import FormField from '$lib/components/admin/FormField.svelte';
 	import { m } from '$lib/paraglide/messages.js';
 	import type { PageProps } from './$types';
 
@@ -17,29 +18,26 @@
 	use:enhance
 	class="mb-8 grid gap-3 rounded border bg-white p-4"
 >
-	<label class="grid gap-1 text-sm">
-		{m.admin_slug()}
+	<FormField label={m.admin_slug()}>
 		<input data-testid="group-slug" name="slug" required class="rounded border px-2 py-1" />
-	</label>
+	</FormField>
 
 	{#each data.locales as locale (locale)}
-		<label class="grid gap-1 text-sm">
-			{m.admin_name()} ({locale})
+		<FormField label={`${m.admin_name()} (${locale})`}>
 			<input
 				data-testid="group-name-{locale}"
 				name="name.{locale}"
 				class="rounded border px-2 py-1"
 			/>
-		</label>
+		</FormField>
 
-		<label class="grid gap-1 text-sm">
-			{m.admin_description()} ({locale})
+		<FormField label={`${m.admin_description()} (${locale})`}>
 			<textarea
 				data-testid="group-description-{locale}"
 				name="description.{locale}"
 				rows="2"
 				class="rounded border px-2 py-1"></textarea>
-		</label>
+		</FormField>
 	{/each}
 
 	{#if form?.field === 'slug'}
@@ -63,25 +61,23 @@
 				<span class="font-mono text-sm text-neutral-500">{group.slug}</span>
 
 				{#each data.locales as locale (locale)}
-					<label class="grid gap-1 text-sm">
-						{locale}
+					<FormField label={locale}>
 						<input
 							name="name.{locale}"
 							value={group.names[locale] ?? ''}
 							placeholder={m.admin_not_translated()}
 							class="rounded border px-2 py-1"
 						/>
-					</label>
+					</FormField>
 
-					<label class="grid gap-1 text-sm">
-						{m.admin_description()} ({locale})
+					<FormField label={`${m.admin_description()} (${locale})`}>
 						<textarea
 							name="description.{locale}"
 							rows="2"
 							placeholder={m.admin_not_translated()}
 							class="rounded border px-2 py-1">{descriptionFor(group, locale)}</textarea
 						>
-					</label>
+					</FormField>
 				{/each}
 
 				<button class="rounded border px-3 py-1.5 text-sm">{m.admin_save()}</button>
