@@ -85,5 +85,11 @@
 	"admin_hosting_provider": "Hosting-Anbieter",
 	"admin_dpa_url": "AVV-Link",
 	"admin_started_at": "Beginn",
-	"admin_ended_at": "Ende"
+	"admin_ended_at": "Ende",
+	"nav_faq": "Häufige Fragen",
+	"faq_intro": "Antworten auf die Fragen, die uns am häufigsten gestellt werden.",
+	"faq_empty": "Es wurden noch keine Fragen veröffentlicht.",
+	"admin_visibility": "Sichtbarkeit",
+	"admin_question": "Frage",
+	"admin_answer": "Antwort"
 }

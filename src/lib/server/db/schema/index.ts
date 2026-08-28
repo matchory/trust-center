@@ -5,3 +5,4 @@ export * from './documents';
 export * from './controls';
 export * from './certifications';
 export * from './subprocessors';
+export * from './answers';

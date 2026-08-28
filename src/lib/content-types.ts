@@ -9,3 +9,5 @@ export const CONTROL_STATUSES = [
 	'not_applicable'
 ] as const;
 export type ControlStatus = (typeof CONTROL_STATUSES)[number];
+export const ANSWER_VISIBILITIES = ['public', 'internal'] as const;
+export type AnswerVisibility = (typeof ANSWER_VISIBILITIES)[number];

@@ -1,6 +1,11 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { createDb, type Db } from '../../src/lib/server/db';
-import { certification, documentCategory, subprocessor } from '../../src/lib/server/db/schema';
+import {
+	answer,
+	certification,
+	documentCategory,
+	subprocessor
+} from '../../src/lib/server/db/schema';
 import {
 	createCertification,
 	listPublicCertifications,
@@ -12,6 +17,12 @@ import {
 	createDocument,
 	updateDocument
 } from '../../src/lib/server/content/documents';
+import {
+	createAnswer,
+	listPublicAnswers,
+	setAnswerTranslation,
+	updateAnswer
+} from '../../src/lib/server/content/answers';
 import {
 	createSubprocessor,
 	listPublicSubprocessors,
@@ -157,5 +168,38 @@ describe('subprocessors', () => {
 		});
 
 		expect([...current, ...former]).toHaveLength(0);
+	});
+});
+
+describe('answers', () => {
+	beforeEach(async () => {
+		await db.delete(answer);
+	});
+
+	it('groups public answers by category', async () => {
+		const first = await createAnswer(db, { slug: 'where-hosted', category: 'infrastructure' });
+		await setAnswerTranslation(db, first, 'de', {
+			question: 'Wo werden die Daten gehostet?',
+			answer: 'In Deutschland, bei Hetzner.'
+		});
+		await updateAnswer(db, first, { visibility: 'public' });
+
+		const second = await createAnswer(db, { slug: 'internal-only', category: 'infrastructure' });
+		await setAnswerTranslation(db, second, 'de', { question: 'Intern?', answer: 'Ja.' });
+
+		const groups = await listPublicAnswers(db, { locale: 'de', defaultLocale: 'de' });
+
+		expect(groups).toHaveLength(1);
+		expect(groups[0]?.category).toBe('infrastructure');
+		expect(groups[0]?.answers).toHaveLength(1);
+		expect(groups[0]?.answers[0]?.question).toBe('Wo werden die Daten gehostet?');
+	});
+
+	it('never exposes an internal answer, which is the default', async () => {
+		const id = await createAnswer(db, { slug: 'secret', category: 'general' });
+		await setAnswerTranslation(db, id, 'de', { question: 'Geheim?', answer: 'Ja.' });
+
+		const groups = await listPublicAnswers(db, { locale: 'de', defaultLocale: 'de' });
+		expect(groups.flatMap((group) => group.answers)).toHaveLength(0);
 	});
 });

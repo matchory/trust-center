@@ -85,5 +85,11 @@
 	"admin_hosting_provider": "Hosting provider",
 	"admin_dpa_url": "DPA link",
 	"admin_started_at": "Start",
-	"admin_ended_at": "End"
+	"admin_ended_at": "End",
+	"nav_faq": "FAQ",
+	"faq_intro": "Answers to the questions we are asked most often.",
+	"faq_empty": "No questions have been published yet.",
+	"admin_visibility": "Visibility",
+	"admin_question": "Question",
+	"admin_answer": "Answer"
 }

@@ -108,3 +108,30 @@ test('an admin can publish a subprocessor and see it on the portal', async ({ pa
 	// Rendered through Intl.DisplayNames in the visitor's locale, not as "DE".
 	await expect(row).toContainText('Deutschland');
 });
+
+test('an answer stays off the FAQ until it is made public', async ({ page }) => {
+	await signInAsAdmin(page);
+
+	await page.goto('/de/admin/faq/new');
+	await page.getByTestId('answer-slug').fill(`faq-${suffix}`);
+	await page.getByTestId('answer-category').fill('infrastructure');
+	await page.getByTestId('answer-create').click();
+	await expect(page).toHaveURL(/\/admin\/faq\/[0-9a-f-]{36}$/);
+
+	await page.getByTestId('translation-question-de').fill('Wo werden die Daten gehostet?');
+	await page.getByTestId('translation-answer-de').fill('In Deutschland, bei Hetzner.');
+	await submitAndWait(page, 'translation-save-de', '?/saveTranslation');
+
+	// Answers start internal, so a translated answer is still not on the portal.
+	await page.goto('/de/faq');
+	await expect(page.getByTestId(`answer-faq-${suffix}`)).toHaveCount(0);
+
+	await page.goBack();
+	await page.getByTestId('answer-visibility').selectOption('public');
+	await submitAndWait(page, 'answer-save-meta', '?/saveMeta');
+
+	await page.goto('/de/faq');
+	await expect(page.getByTestId(`answer-faq-${suffix}`)).toContainText(
+		'In Deutschland, bei Hetzner.'
+	);
+});
