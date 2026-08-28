@@ -1,9 +1,14 @@
-import { index, jsonb, pgTable, text, timestamp, uuid } from 'drizzle-orm/pg-core';
+import { bigserial, index, jsonb, pgTable, text, timestamp, uuid } from 'drizzle-orm/pg-core';
 
 export const auditEvent = pgTable(
 	'audit_event',
 	{
 		id: uuid('id').primaryKey().defaultRandom(),
+		// Monotonic insertion order. `gen_random_uuid()` (the `id` column's
+		// default) has no ordering relationship to insertion time, so same-
+		// timestamp events order nondeterministically without this — and,
+		// unlike a random id, a gap in `seq` makes a deleted row detectable.
+		seq: bigserial('seq', { mode: 'bigint' }).unique(),
 		at: timestamp('at', { withTimezone: true }).notNull().defaultNow(),
 		actorType: text('actor_type').notNull(),
 		actorId: text('actor_id'),

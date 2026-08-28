@@ -66,6 +66,6 @@ export async function queryEvents(
 		.select()
 		.from(auditEvent)
 		.where(conditions.length > 0 ? and(...conditions) : undefined)
-		.orderBy(desc(auditEvent.at), desc(auditEvent.id))
+		.orderBy(desc(auditEvent.seq))
 		.limit(filter.limit ?? 100);
 }

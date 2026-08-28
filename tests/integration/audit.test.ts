@@ -1,5 +1,7 @@
+import { eq } from 'drizzle-orm';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createDb, type Db } from '../../src/lib/server/db';
+import { auditEvent } from '../../src/lib/server/db/schema';
 import { queryEvents, recordEvent } from '../../src/lib/server/audit';
 
 let db: Db;
@@ -64,5 +66,18 @@ describe('audit log', () => {
 		expect(events).toHaveLength(2);
 		expect(events[0]?.action).toBe('staff.login.3');
 		expect(events[1]?.action).toBe('staff.login.2');
+	});
+
+	it('rejects deletion at the database — audit_event is append-only', async () => {
+		await recordEvent(db, {
+			action: 'test.append-only-guard',
+			actor: { type: 'system', id: null },
+			subjectType: 'test',
+			subjectId: 'append-only-guard'
+		});
+
+		await expect(
+			db.delete(auditEvent).where(eq(auditEvent.subjectId, 'append-only-guard'))
+		).rejects.toThrow(/append-only/);
 	});
 });
