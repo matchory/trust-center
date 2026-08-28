@@ -5372,7 +5372,7 @@ the duplication visible rather than hiding it behind a premature abstraction.
 - Modify: `src/lib/admin/sections.ts`, `messages/*.json`
 - Test: `tests/e2e/admin-content.spec.ts`
 
-- [ ] **Step 1: Write the failing e2e test**
+- [x] **Step 1: Write the failing e2e test**
 
 Create `tests/e2e/admin-content.spec.ts`. This file accumulates one test per content type through
 Tasks 10 and 12–15; each proves the same round trip — create in the admin, translate, publish, see
@@ -5423,9 +5423,9 @@ test('an admin can publish a control and see it on the portal', async ({ page })
 });
 ```
 
-- [ ] **Step 2: Run and watch it fail**
+- [x] **Step 2: Run and watch it fail**
 
-- [ ] **Step 3: Write the server routes**
+- [x] **Step 3: Write the server routes**
 
 `src/routes/(admin)/admin/controls/+page.server.ts`:
 
@@ -5706,7 +5706,7 @@ export const actions: Actions = {
 };
 ```
 
-- [ ] **Step 4: Write the Svelte pages by copying and transforming the documents admin**
+- [x] **Step 4: Write the Svelte pages by copying and transforming the documents admin**
 
 Copy each documents admin page to its controls counterpart and apply the listed changes. Copying
 is the point: Task 11 extracts from the resulting pair.
@@ -5754,12 +5754,12 @@ ids and renames the summary field to `description`.
 In the **groups** page: `category-*` test ids → `group-*`, `data.categories` → `data.groups`, and a
 `description.{locale}` textarea beside each name input.
 
-- [ ] **Step 5: Register the section and add the messages**
+- [x] **Step 5: Register the section and add the messages**
 
 `src/lib/admin/sections.ts` gains `{ path: '/admin/controls', label: () => m.nav_controls() }`.
 Add `"admin_evidence"` to both catalogs: `"Nachweise"` / `"Evidence"`.
 
-- [ ] **Step 6: Run everything and commit**
+- [x] **Step 6: Run everything and commit**
 
 ```bash
 pnpm lint && pnpm check && pnpm test:unit && pnpm test:integration && pnpm test:e2e
