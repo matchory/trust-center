@@ -647,7 +647,7 @@ git commit -m "feat: add development environment with Postgres, Mailpit, and a s
 
 **Interfaces:**
 - Consumes: `config.databaseUrl` from Task 2
-- Produces: `createDb(url: string): Db` where `Db` is `PostgresJsDatabase<typeof schema>`; the `setting` table with columns `key` (primary key) and `value` (jsonb); and `withTestDb(fn)` for integration tests.
+- Produces: `createDb(url: string): Db` where `Db` is `PostgresJsDatabase<typeof schema>`; and the `setting` table with columns `key` (primary key) and `value` (jsonb). Integration tests read `process.env.TEST_DATABASE_URL` (set by the global setup) in their own `beforeAll`.
 
 - [ ] **Step 1: Define the first schema and the connection factory**
 
@@ -750,7 +750,10 @@ export default defineConfig({
     testTimeout: 30_000,
     hookTimeout: 120_000,
     pool: 'forks',
-    poolOptions: { forks: { singleFork: true } }
+    // Serialize test files: they share one Testcontainers Postgres. On Vitest 4 this
+    // is `fileParallelism`, NOT `poolOptions.forks.singleFork` — that option is read
+    // only to emit a deprecation warning and does not configure the pool.
+    fileParallelism: false
   }
 });
 ```
@@ -2132,7 +2135,15 @@ Add to `src/app.d.ts`, inside `interface Locals`:
 staff: { id: string; email: string; name: string; role: 'admin' | 'approver' } | null;
 ```
 
-Update `src/hooks.server.ts` to resolve the session after setting the locale:
+Update `src/hooks.server.ts` to resolve the session after setting the locale.
+
+> **Merge, do not replace.** By this point Task 7 has added Paraglide's
+> `AsyncLocalStorage` wiring to this file — the `overwriteServerAsyncLocalStorage`
+> call and the `localeStorage.run(...)` wrapper that makes `m.*()` agree with
+> `event.locals.locale` during SSR. The listing below shows only the session
+> resolution being added; copying it over the file wholesale would delete that
+> wiring and silently break server-rendered translations. Keep `localeStorage.run`
+> as the outermost wrapper around `resolve`.
 
 ```ts
 import type { Handle } from '@sveltejs/kit';

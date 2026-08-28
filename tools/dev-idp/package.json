@@ -1,0 +1,8 @@
+{
+	"name": "trust-center-dev-idp",
+	"private": true,
+	"type": "module",
+	"dependencies": {
+		"oidc-provider": "^8.5.1"
+	}
+}

@@ -1,6 +1,29 @@
 node_modules/
 .svelte-kit/
 build/
+src/lib/paraglide/
 .env
 .env.*
 !.env.example
+.superpowers/
+
+# Output
+.output
+.vercel
+.netlify
+.wrangler
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Env
+!.env.test
+
+# Vite
+vite.config.js.timestamp-*
+vite.config.ts.timestamp-*
+
+# Playwright
+test-results/
+playwright-report/

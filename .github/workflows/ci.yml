@@ -1,0 +1,40 @@
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm lint
+      # No .env present here either: svelte-kit sync's write_ambient emits
+      # `declare module '$env/static/public'` containing only the keys
+      # actually present in the environment, with no index signature — so
+      # src/lib/i18n/locales.ts's `$env/static/public` import needs these
+      # set for `svelte-check` to type-check it, same as the build step below.
+      - run: pnpm check
+        env:
+          PUBLIC_LOCALES: de,en
+          PUBLIC_DEFAULT_LOCALE: de
+      # No .env present here: proves `pnpm build` needs no runtime secrets,
+      # only the two PUBLIC_* build-time vars every self-hoster must set.
+      - run: pnpm build
+        env:
+          PUBLIC_LOCALES: de,en
+          PUBLIC_DEFAULT_LOCALE: de
+      - run: pnpm test:unit
+      - run: cp .env.example .env
+      - run: pnpm test:integration
+      - run: docker compose -f docker-compose.dev.yml up -d --wait --build
+      - run: pnpm exec playwright install --with-deps chromium
+      - run: pnpm db:migrate
+      - run: pnpm test:e2e
