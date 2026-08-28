@@ -4,6 +4,10 @@
 **Status:** Approved for planning
 **Author:** Moritz Friedrich (CISO, Matchory), with Claude
 
+**Amended 2026-08-28 (Phase 1 planning):** Section 7 now states the two-layer locale contract, and
+Section 10 defines the one permitted exception to the append-only audit log. Both resolve
+contradictions carried over from Phase 0; no other section changed.
+
 ---
 
 ## 1. Summary
@@ -244,12 +248,21 @@ German and English stemming differ, and Drizzle keeps side tables typed.
 not a translated string. Because documents require versioning regardless, locale and version share
 one table (Section 8).
 
-**Fallback rule.** Partial translation is the normal steady state. The locale set is configured per
-deployment (`LOCALES`, `DEFAULT_LOCALE`); the admin shows one tab per locale with an explicit
-"not translated" state; the portal falls back to the default locale **with a visible label** rather
-than silently mixing languages. For legal documents this is a requirement, not a nicety: serving a
-German-speaking counsel an English AVV without saying so is worse than showing that it is the only
-available version.
+**Locale configuration is two-layered.** Which locales a deployment *can* render is a build input:
+Paraglide compiles one catalog per locale listed in `project.inlang/settings.json`, and a locale
+without a catalog is not a locale — adding one means translating the interface strings, which is a
+code contribution no environment variable can substitute for. Which of the compiled locales a
+deployment *enables*, and which of them is the default, is runtime configuration (`LOCALES`,
+`DEFAULT_LOCALE`), validated at startup against the compiled set so a misconfiguration fails at boot
+rather than mid-request. An operator can therefore narrow a published image to German only without
+rebuilding it; adding French requires a rebuild. Locale prefix routing is structural and recognises
+any *compiled* locale, so a compiled-but-disabled locale is a 404 rather than a silent fallback.
+
+**Fallback rule.** Partial translation is the normal steady state. The admin shows one tab per
+enabled locale with an explicit "not translated" state; the portal falls back to the default locale
+**with a visible label** rather than silently mixing languages. For legal documents this is a
+requirement, not a nicety: serving a German-speaking counsel an English AVV without saying so is
+worse than showing that it is the only available version.
 
 ---
 
@@ -367,9 +380,16 @@ The product is itself a security artifact; its own posture is part of the argume
   server-side audit log, so the public Trust Center requires no consent banner.
 - **No public object URLs.** All file access is mediated, authorized, watermarked, and logged.
 - **Append-only audit.** Every access decision, acceptance, and download is recorded with actor, IP,
-  user agent, and request correlation.
+  user agent, and request correlation. Audit events are never deleted and never rewritten, enforced
+  at the database rather than by convention. The one exception is pseudonymization on requester
+  purge: a database-enforced, column-scoped operation that may only set `ip`, `ua`, and `actor_id`
+  to `NULL`, only ever moves data toward less identifiability, and itself writes an audit event.
+  It follows that **requester personal data appears in `audit_event` only in those three columns** —
+  never in `meta`, never in `subject_id`. Staff identifiers are outside the requester purge and may
+  appear in `meta`.
 - **Data minimization and retention.** Requester records carry a configurable retention policy;
-  audit events are retained per legal need and pseudonymized on requester purge.
+  audit events are retained per legal need, with the link to the person broken by the
+  pseudonymization defined above rather than by deleting the record of the occurrence.
 - **Double opt-in** for all subscriptions.
 - **Enumeration resistance** on every requester-facing endpoint.
 - **Rate limiting** on request submission, magic-link issuance, and download endpoints.
