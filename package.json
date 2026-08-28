@@ -5,9 +5,9 @@
 	"type": "module",
 	"license": "AGPL-3.0-or-later",
 	"scripts": {
-		"dev": "vite dev",
-		"build": "vite build",
-		"preview": "vite preview",
+		"dev": "node --env-file-if-exists=.env node_modules/vite/bin/vite.js dev",
+		"build": "node --env-file-if-exists=.env node_modules/vite/bin/vite.js build",
+		"preview": "node --env-file-if-exists=.env node_modules/vite/bin/vite.js preview",
 		"paraglide:compile": "paraglide-js compile --project ./project.inlang --outdir ./src/lib/paraglide --strategy url preferredLanguage baseLocale",
 		"prepare": "pnpm paraglide:compile && (svelte-kit sync || echo '')",
 		"check": "pnpm paraglide:compile && svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",

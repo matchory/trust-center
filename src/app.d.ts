@@ -5,6 +5,7 @@ declare global {
 		// interface Error {}
 		interface Locals {
 			locale: string;
+			staff: { id: string; email: string; name: string; role: 'admin' | 'approver' } | null;
 		}
 		// interface PageData {}
 		// interface PageState {}

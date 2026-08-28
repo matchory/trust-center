@@ -1,5 +1,7 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import type { Handle } from '@sveltejs/kit';
+import { SESSION_COOKIE, validateStaffSession } from '$lib/server/auth/session';
+import { db } from '$lib/server/db/instance';
 import { DEFAULT_LOCALE, LOCALES } from '$lib/i18n/locales';
 import { resolveLocale, stripLocale } from '$lib/i18n/locale';
 import { assertIsLocale, overwriteServerAsyncLocalStorage } from '$lib/paraglide/runtime.js';
@@ -23,6 +25,23 @@ export const handle: Handle = async ({ event, resolve }) => {
 		LOCALES,
 		DEFAULT_LOCALE
 	);
+
+	event.locals.staff = null;
+	const token = event.cookies.get(SESSION_COOKIE);
+
+	if (token) {
+		const session = await validateStaffSession(db, token);
+		if (session) {
+			event.locals.staff = {
+				id: session.user.id,
+				email: session.user.email,
+				name: session.user.name,
+				role: session.user.role as 'admin' | 'approver'
+			};
+		} else {
+			event.cookies.delete(SESSION_COOKIE, { path: '/' });
+		}
+	}
 
 	return localeStorage.run({ locale: assertIsLocale(event.locals.locale) }, () =>
 		resolve(event, {
