@@ -8,8 +8,9 @@
 		"dev": "vite dev",
 		"build": "vite build",
 		"preview": "vite preview",
-		"prepare": "svelte-kit sync || echo ''",
-		"check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
+		"paraglide:compile": "paraglide-js compile --project ./project.inlang --outdir ./src/lib/paraglide --strategy url preferredLanguage baseLocale",
+		"prepare": "pnpm paraglide:compile && svelte-kit sync || echo ''",
+		"check": "pnpm paraglide:compile && svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
 		"check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
 		"lint": "prettier --check . && eslint .",
 		"format": "prettier --write .",
@@ -18,6 +19,7 @@
 		"test:e2e": "playwright test"
 	},
 	"devDependencies": {
+		"@inlang/paraglide-js": "^2.24.1",
 		"@playwright/test": "^1.62.1",
 		"@sveltejs/adapter-auto": "^7.0.1",
 		"@sveltejs/kit": "^2.63.0",

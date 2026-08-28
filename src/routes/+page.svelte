@@ -1,2 +1,6 @@
-<h1>Welcome to SvelteKit</h1>
-<p>Visit <a href="https://svelte.dev/docs/kit">svelte.dev/docs/kit</a> to read the documentation</p>
+<script lang="ts">
+	import { m } from '$lib/paraglide/messages.js';
+</script>
+
+<h1 data-testid="site-title">{m.site_title()}</h1>
+<p data-testid="admin-link-label">{m.nav_admin()}</p>

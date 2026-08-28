@@ -3,7 +3,7 @@ import ts from 'typescript-eslint';
 
 export default ts.config(
 	{
-		ignores: ['.svelte-kit/**', 'build/**']
+		ignores: ['.svelte-kit/**', 'build/**', 'src/lib/paraglide/**']
 	},
 	...ts.configs.recommended,
 	...svelte.configs.recommended,

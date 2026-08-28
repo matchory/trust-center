@@ -1,6 +1,7 @@
 node_modules/
 .svelte-kit/
 build/
+src/lib/paraglide/
 .env
 .env.*
 !.env.example
@@ -22,3 +23,7 @@ Thumbs.db
 # Vite
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
+
+# Playwright
+test-results/
+playwright-report/

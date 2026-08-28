@@ -1,0 +1,7 @@
+{
+	"$schema": "https://inlang.com/schema/inlang-message-format",
+	"site_title": "Trust Center",
+	"nav_admin": "Verwaltung",
+	"admin_sign_in": "Anmelden",
+	"admin_sign_out": "Abmelden"
+}
