@@ -6454,7 +6454,7 @@ obligation, and a list that silently drops entries cannot evidence one.
 - Modify: `schema/index.ts`, `src/lib/portal/sections.ts`, `src/lib/admin/sections.ts`, `messages/*.json`
 - Test: `tests/integration/content.test.ts`, `tests/e2e/admin-content.spec.ts`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Append to `tests/integration/content.test.ts`:
 
@@ -6523,9 +6523,9 @@ describe('subprocessors', () => {
 });
 ```
 
-- [ ] **Step 2: Run and watch it fail**
+- [x] **Step 2: Run and watch it fail**
 
-- [ ] **Step 3: Schema**
+- [x] **Step 3: Schema**
 
 ```ts
 // src/lib/server/db/schema/subprocessors.ts
@@ -6567,7 +6567,7 @@ export const subprocessorTranslation = pgTable(
 
 Export from `schema/index.ts`; `pnpm db:generate --name subprocessors && pnpm db:migrate`.
 
-- [ ] **Step 4: Repository**
+- [x] **Step 4: Repository**
 
 `src/lib/server/content/subprocessors.ts` follows `certifications.ts` exactly, with these
 signatures and one difference in the public read model:
@@ -6608,7 +6608,7 @@ export async function setSubprocessorTranslation(db: Db, subprocessorId: string,
 row's `purpose`/`dataCategories` through `pickTranslation` (skipping rows with no usable
 translation), and partitions on `endedAt === null || endedAt > now`.
 
-- [ ] **Step 5: Portal page**
+- [x] **Step 5: Portal page**
 
 Messages — DE: `"nav_subprocessors": "Unterauftragsverarbeiter"`, `"subprocessors_intro": "Alle Dienstleister, die im Auftrag personenbezogene Daten verarbeiten."`, `"subprocessors_current": "Aktuell"`, `"subprocessors_former": "Ehemalig"`, `"subprocessors_purpose": "Zweck"`, `"subprocessors_data": "Datenkategorien"`, `"subprocessors_country": "Land"`, `"subprocessors_region": "Region"`, `"subprocessors_dpa": "AVV"`, `"subprocessors_since": "Seit {date}"`, `"subprocessors_until": "Bis {date}"`, `"subprocessors_empty": "Es sind keine Unterauftragsverarbeiter veröffentlicht."`. EN: "Subprocessors", "Every provider processing personal data on our behalf.", "Current", "Former", "Purpose", "Data categories", "Country", "Region", "DPA", "Since {date}", "Until {date}", "No subprocessors have been published."
 
@@ -6630,7 +6630,7 @@ Task 16 test asserts on *requests the page makes*, not on hrefs.
 
 Give each row `data-testid="subprocessor-{row.slug}"`.
 
-- [ ] **Step 6: Admin routes**
+- [x] **Step 6: Admin routes**
 
 Built on the Task 11 primitives, same shape as certifications. Meta fields: `slug`, `name`,
 `legalEntity`, `country`, `region`, `hostingProvider`, `dpaUrl`, `startedAt`, `endedAt`,
@@ -6639,7 +6639,7 @@ Built on the Task 11 primitives, same shape as certifications. Meta fields: `slu
 Audit actions `subprocessor.created`, `.updated`, `.published`, `.deleted`. Register in
 `ADMIN_SECTIONS`. Add the round-trip test to `tests/e2e/admin-content.spec.ts`.
 
-- [ ] **Step 7: Run everything and commit**
+- [x] **Step 7: Run everything and commit**
 
 ```bash
 pnpm lint && pnpm check && pnpm test:unit && pnpm test:integration && pnpm test:e2e
