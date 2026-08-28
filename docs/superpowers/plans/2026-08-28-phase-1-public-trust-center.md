@@ -7222,7 +7222,7 @@ per locale, and the alternates are mechanical.
 - Modify: every `(portal)` page, `src/routes/(admin)/admin/+layout.svelte`
 - Test: `tests/e2e/seo.spec.ts`, `tests/e2e/security.spec.ts`
 
-- [ ] **Step 1: Write the failing SEO tests**
+- [x] **Step 1: Write the failing SEO tests**
 
 Create `tests/e2e/seo.spec.ts`:
 
@@ -7305,9 +7305,9 @@ test('a gated document never appears in the sitemap', async ({ request }) => {
 });
 ```
 
-- [ ] **Step 2: Run and watch it fail**
+- [x] **Step 2: Run and watch it fail**
 
-- [ ] **Step 3: Write the `Seo` component**
+- [x] **Step 3: Write the `Seo` component**
 
 ```svelte
 <!-- src/lib/components/portal/Seo.svelte -->
@@ -7367,7 +7367,7 @@ Add `<Seo title={…} description={…} siteName={data.branding.organizationName
 locales={data.locales} defaultLocale={data.defaultLocale} />` to every `(portal)` page, using that
 page's heading message as the title and its intro message as the description.
 
-- [ ] **Step 4: Write the sitemap and robots routes**
+- [x] **Step 4: Write the sitemap and robots routes**
 
 `src/routes/sitemap.xml/+server.ts`:
 
@@ -7470,7 +7470,7 @@ export const GET: RequestHandler = ({ setHeaders }) => {
 };
 ```
 
-- [ ] **Step 5: Make the admin `noindex`**
+- [x] **Step 5: Make the admin `noindex`**
 
 Add to `src/routes/(admin)/admin/+layout.svelte`:
 
@@ -7491,7 +7491,7 @@ export const load: LayoutServerLoad = ({ locals, setHeaders }) => {
 };
 ```
 
-- [ ] **Step 6: Run everything and commit**
+- [x] **Step 6: Run everything and commit**
 
 ```bash
 pnpm lint && pnpm check && pnpm test:unit && pnpm test:integration && pnpm test:e2e
