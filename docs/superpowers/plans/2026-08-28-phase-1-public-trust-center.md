@@ -4604,7 +4604,7 @@ rather than a list of claims, so it is in scope.
   `listControlGroups`, `createControlGroup`, `updateControlGroup`, `setControlGroupTranslation`,
   `deleteControlGroup`. `CONTROL_STATUSES` in `$lib/content-types`.
 
-- [ ] **Step 1: Write the failing repository tests**
+- [x] **Step 1: Write the failing repository tests**
 
 Create `tests/integration/controls.test.ts`:
 
@@ -4739,9 +4739,9 @@ describe('control repository', () => {
 });
 ```
 
-- [ ] **Step 2: Run and watch it fail**
+- [x] **Step 2: Run and watch it fail**
 
-- [ ] **Step 3: Write the schema**
+- [x] **Step 3: Write the schema**
 
 Append to `src/lib/content-types.ts` (created in Task 5):
 
@@ -4852,7 +4852,7 @@ pnpm db:generate --name controls
 pnpm db:migrate
 ```
 
-- [ ] **Step 4: Write the repository**
+- [x] **Step 4: Write the repository**
 
 Create `src/lib/server/content/controls.ts`. It mirrors `documents.ts` — the same three-query
 assemble, the same `pickTranslation` fallback reporting — with two differences: no files, and an
@@ -5223,9 +5223,9 @@ The test calls `setControlGroupTranslation(db, id, 'de', { name, description })`
 the explicit one: require it, and update the test's first `seedGroup` call to pass a description
 (it already does).
 
-- [ ] **Step 5: Run and watch the repository tests pass**
+- [x] **Step 5: Run and watch the repository tests pass**
 
-- [ ] **Step 6: Add the messages and publish the portal page**
+- [x] **Step 6: Add the messages and publish the portal page**
 
 `messages/de.json`: `"nav_controls": "Maßnahmen"`, `"controls_intro": "Technische und organisatorische Maßnahmen, nach Bereichen gegliedert."`, `"controls_empty": "Es wurden noch keine Maßnahmen veröffentlicht."`, `"controls_evidence": "Nachweis"`, `"control_status_implemented": "Umgesetzt"`, `"control_status_in_progress": "In Umsetzung"`, `"control_status_planned": "Geplant"`, `"control_status_not_applicable": "Nicht zutreffend"`.
 
@@ -5337,7 +5337,7 @@ Create `src/routes/(portal)/controls/+page.svelte`:
 The evidence links point at anchors on the documents page, so give each document `<li>` there an
 `id={doc.slug}` in `src/routes/(portal)/documents/+page.svelte`.
 
-- [ ] **Step 7: Run everything and commit**
+- [x] **Step 7: Run everything and commit**
 
 ```bash
 pnpm lint && pnpm check && pnpm test:unit && pnpm test:integration && pnpm test:e2e
