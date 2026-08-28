@@ -2135,7 +2135,15 @@ Add to `src/app.d.ts`, inside `interface Locals`:
 staff: { id: string; email: string; name: string; role: 'admin' | 'approver' } | null;
 ```
 
-Update `src/hooks.server.ts` to resolve the session after setting the locale:
+Update `src/hooks.server.ts` to resolve the session after setting the locale.
+
+> **Merge, do not replace.** By this point Task 7 has added Paraglide's
+> `AsyncLocalStorage` wiring to this file — the `overwriteServerAsyncLocalStorage`
+> call and the `localeStorage.run(...)` wrapper that makes `m.*()` agree with
+> `event.locals.locale` during SSR. The listing below shows only the session
+> resolution being added; copying it over the file wholesale would delete that
+> wiring and silently break server-rendered translations. Keep `localeStorage.run`
+> as the outermost wrapper around `resolve`.
 
 ```ts
 import type { Handle } from '@sveltejs/kit';
