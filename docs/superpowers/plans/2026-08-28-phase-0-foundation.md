@@ -647,7 +647,7 @@ git commit -m "feat: add development environment with Postgres, Mailpit, and a s
 
 **Interfaces:**
 - Consumes: `config.databaseUrl` from Task 2
-- Produces: `createDb(url: string): Db` where `Db` is `PostgresJsDatabase<typeof schema>`; the `setting` table with columns `key` (primary key) and `value` (jsonb); and `withTestDb(fn)` for integration tests.
+- Produces: `createDb(url: string): Db` where `Db` is `PostgresJsDatabase<typeof schema>`; and the `setting` table with columns `key` (primary key) and `value` (jsonb). Integration tests read `process.env.TEST_DATABASE_URL` (set by the global setup) in their own `beforeAll`.
 
 - [ ] **Step 1: Define the first schema and the connection factory**
 
@@ -750,7 +750,10 @@ export default defineConfig({
     testTimeout: 30_000,
     hookTimeout: 120_000,
     pool: 'forks',
-    poolOptions: { forks: { singleFork: true } }
+    // Serialize test files: they share one Testcontainers Postgres. On Vitest 4 this
+    // is `fileParallelism`, NOT `poolOptions.forks.singleFork` — that option is read
+    // only to emit a deprecation warning and does not configure the pool.
+    fileParallelism: false
   }
 });
 ```
