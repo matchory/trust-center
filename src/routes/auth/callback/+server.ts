@@ -33,21 +33,32 @@ export const GET: RequestHandler = async ({ url, cookies, getClientAddress, requ
 
 	if (role === null) {
 		// No staff_user row exists for a denied login (we never create one for
-		// someone we just refused), so actorId here is the raw OIDC `sub`
-		// rather than a staff_user UUID as it is on the success path below.
+		// someone we just refused), so there is no staff_user id to use as the
+		// actor/subject — the OIDC subject lives only in `meta`, never in an
+		// identifier column shared with real staff_user ids.
 		await recordEvent(db, {
 			action: 'staff.login.denied',
-			actor: { type: 'staff', id: sub },
-			subjectType: 'staff',
-			subjectId: sub,
-			ip,
-			ua,
-			meta: { email, groups }
+			actor: { type: 'staff-unresolved', id: null },
+			meta: { oidcSub: sub, email, groups }
 		});
 		error(403, 'Your account is not a member of a group authorised to use this trust center.');
 	}
 
 	const user = await upsertStaffUser(db, { oidcSub: sub, email, name, role });
+
+	if (user.disabledAt !== null) {
+		await recordEvent(db, {
+			action: 'staff.login.denied',
+			actor: { type: 'staff', id: user.id },
+			subjectType: 'staff',
+			subjectId: user.id,
+			ip,
+			ua,
+			meta: { reason: 'disabled', role }
+		});
+		error(403, 'Your account has been disabled.');
+	}
+
 	const { token, expiresAt } = await createStaffSession(db, {
 		staffUserId: user.id,
 		ttlHours: config.sessionTtlHours,

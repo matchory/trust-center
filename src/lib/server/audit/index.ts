@@ -2,10 +2,20 @@ import { and, desc, eq } from 'drizzle-orm';
 import { auditEvent } from '../db/schema';
 import type { Db } from '../db';
 
-export type AuditActor = {
-	type: 'staff' | 'requester' | 'system';
-	id: string | null;
-};
+/**
+ * `id` is typed per actor type so the two identifier spaces this system has
+ * for a human staff member can never be confused at a call site: an
+ * *identified* staff actor's `id` is always a `staff_user.id` (UUID) — never
+ * a raw OIDC `sub`. A login attempt that never resolved to a staff_user row
+ * (e.g. a denied login) is `staff-unresolved` with a null id; the OIDC
+ * subject belongs in `meta`, not in an identifier column shared with real
+ * staff_user ids.
+ */
+export type AuditActor =
+	| { type: 'staff'; id: string }
+	| { type: 'staff-unresolved'; id: null }
+	| { type: 'requester'; id: string | null }
+	| { type: 'system'; id: null };
 
 export interface AuditEventInput {
 	action: string;
