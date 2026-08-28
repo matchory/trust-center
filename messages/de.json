@@ -3,5 +3,12 @@
 	"site_title": "Trust Center",
 	"nav_admin": "Verwaltung",
 	"admin_sign_in": "Anmelden",
-	"admin_sign_out": "Abmelden"
+	"admin_sign_out": "Abmelden",
+	"portal_tagline": "Sicherheit, Datenschutz und Compliance — nachvollziehbar dokumentiert.",
+	"portal_skip_to_content": "Zum Inhalt springen",
+	"portal_language": "Sprache",
+	"portal_imprint": "Impressum",
+	"portal_privacy": "Datenschutz",
+	"portal_no_sections": "Für dieses Trust Center wurden noch keine Inhalte veröffentlicht.",
+	"content_fallback_notice": "Nur auf {language} verfügbar."
 }
