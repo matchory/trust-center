@@ -1,0 +1,78 @@
+export interface StrippedPath {
+	locale: string | null;
+	path: string;
+}
+
+export function stripLocale(pathname: string, locales: readonly string[]): StrippedPath {
+	const segments = pathname.split('/');
+	const candidate = segments[1];
+
+	if (candidate === undefined || !locales.includes(candidate)) {
+		return { locale: null, path: pathname };
+	}
+
+	const rest = `/${segments.slice(2).join('/')}`;
+	return { locale: candidate, path: rest === '/' ? '/' : rest.replace(/\/$/, '') };
+}
+
+function parseAcceptLanguage(header: string): string[] {
+	return header
+		.split(',')
+		.map((part) => {
+			const [tag = '', ...params] = part.trim().split(';');
+			const q = params
+				.map((p) => p.trim())
+				.find((p) => p.startsWith('q='))
+				?.slice(2);
+			return { tag: tag.trim().toLowerCase(), q: q === undefined ? 1 : Number.parseFloat(q) };
+		})
+		.filter((entry) => entry.tag.length > 0 && !Number.isNaN(entry.q))
+		.sort((a, b) => b.q - a.q)
+		.map((entry) => entry.tag);
+}
+
+export function resolveLocale(
+	input: { pathLocale: string | null; acceptLanguage?: string },
+	locales: readonly string[],
+	defaultLocale: string
+): string {
+	if (input.pathLocale !== null && locales.includes(input.pathLocale)) {
+		return input.pathLocale;
+	}
+
+	if (input.acceptLanguage) {
+		for (const tag of parseAcceptLanguage(input.acceptLanguage)) {
+			const base = tag.split('-')[0];
+			const match = locales.find((locale) => locale === tag || locale === base);
+			if (match) return match;
+		}
+	}
+
+	return defaultLocale;
+}
+
+export interface PickedTranslation<T> {
+	value: T;
+	locale: string;
+	isFallback: boolean;
+}
+
+/**
+ * Resolves the best available translation. Partial translation is the normal
+ * steady state, so a fallback to the default locale is expected — but callers
+ * must be able to tell, because the portal labels fallback content rather than
+ * silently mixing languages.
+ */
+export function pickTranslation<T>(
+	translations: readonly { locale: string; value: T }[],
+	requested: string,
+	defaultLocale: string
+): PickedTranslation<T> | null {
+	const exact = translations.find((t) => t.locale === requested);
+	if (exact) return { value: exact.value, locale: exact.locale, isFallback: false };
+
+	const fallback = translations.find((t) => t.locale === defaultLocale);
+	if (fallback) return { value: fallback.value, locale: fallback.locale, isFallback: true };
+
+	return null;
+}
