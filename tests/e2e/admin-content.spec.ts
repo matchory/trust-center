@@ -135,3 +135,30 @@ test('an answer stays off the FAQ until it is made public', async ({ page }) => 
 		'In Deutschland, bei Hetzner.'
 	);
 });
+
+test('an update reaches the feed only once it carries a publication date', async ({ page }) => {
+	await signInAsAdmin(page);
+
+	await page.goto('/de/admin/updates/new');
+	await page.getByTestId('update-slug').fill(`upd-${suffix}`);
+	await page.getByTestId('update-kind').selectOption('advisory');
+	await page.getByTestId('update-create').click();
+	await expect(page).toHaveURL(/\/admin\/updates\/[0-9a-f-]{36}$/);
+
+	await page.getByTestId('translation-title-de').fill('Neuer Unterauftragsverarbeiter');
+	await page.getByTestId('translation-body-de').fill('Wir haben Hetzner aufgenommen.');
+	await submitAndWait(page, 'translation-save-de', '?/saveTranslation');
+
+	// A translated post with no date is still a draft.
+	await page.goto('/de/updates');
+	await expect(page.getByTestId(`update-upd-${suffix}`)).toHaveCount(0);
+
+	await page.goBack();
+	await page.getByTestId('update-published-at').fill('2026-06-01T09:00');
+	await submitAndWait(page, 'update-save-meta', '?/saveMeta');
+
+	await page.goto('/de/updates');
+	await expect(page.getByTestId(`update-upd-${suffix}`)).toContainText(
+		'Neuer Unterauftragsverarbeiter'
+	);
+});

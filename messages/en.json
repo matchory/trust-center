@@ -91,5 +91,15 @@
 	"faq_empty": "No questions have been published yet.",
 	"admin_visibility": "Visibility",
 	"admin_question": "Question",
-	"admin_answer": "Answer"
+	"admin_answer": "Answer",
+	"nav_updates": "Updates",
+	"updates_intro": "Changes to documents, certifications, and subprocessors.",
+	"updates_empty": "No updates have been published yet.",
+	"update_kind_document": "Document",
+	"update_kind_subprocessor": "Subprocessor",
+	"update_kind_certification": "Certification",
+	"update_kind_advisory": "Advisory",
+	"admin_kind": "Kind",
+	"admin_published_at": "Published at",
+	"admin_body": "Body"
 }

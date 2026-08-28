@@ -11,3 +11,5 @@ export const CONTROL_STATUSES = [
 export type ControlStatus = (typeof CONTROL_STATUSES)[number];
 export const ANSWER_VISIBILITIES = ['public', 'internal'] as const;
 export type AnswerVisibility = (typeof ANSWER_VISIBILITIES)[number];
+export const UPDATE_KINDS = ['document', 'subprocessor', 'certification', 'advisory'] as const;
+export type UpdateKind = (typeof UPDATE_KINDS)[number];

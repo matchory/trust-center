@@ -6,3 +6,4 @@ export * from './controls';
 export * from './certifications';
 export * from './subprocessors';
 export * from './answers';
+export * from './updates';

@@ -91,5 +91,15 @@
 	"faq_empty": "Es wurden noch keine Fragen veröffentlicht.",
 	"admin_visibility": "Sichtbarkeit",
 	"admin_question": "Frage",
-	"admin_answer": "Antwort"
+	"admin_answer": "Antwort",
+	"nav_updates": "Aktuelles",
+	"updates_intro": "Änderungen an Dokumenten, Zertifizierungen und Unterauftragsverarbeitern.",
+	"updates_empty": "Es wurden noch keine Meldungen veröffentlicht.",
+	"update_kind_document": "Dokument",
+	"update_kind_subprocessor": "Unterauftragsverarbeiter",
+	"update_kind_certification": "Zertifizierung",
+	"update_kind_advisory": "Hinweis",
+	"admin_kind": "Art",
+	"admin_published_at": "Veröffentlicht am",
+	"admin_body": "Text"
 }

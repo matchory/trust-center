@@ -4,7 +4,8 @@ import {
 	answer,
 	certification,
 	documentCategory,
-	subprocessor
+	subprocessor,
+	updatePost
 } from '../../src/lib/server/db/schema';
 import {
 	createCertification,
@@ -23,6 +24,12 @@ import {
 	setAnswerTranslation,
 	updateAnswer
 } from '../../src/lib/server/content/answers';
+import {
+	createUpdate,
+	listPublicUpdates,
+	setUpdateTranslation,
+	updateUpdate
+} from '../../src/lib/server/content/updates';
 import {
 	createSubprocessor,
 	listPublicSubprocessors,
@@ -201,5 +208,36 @@ describe('answers', () => {
 
 		const groups = await listPublicAnswers(db, { locale: 'de', defaultLocale: 'de' });
 		expect(groups.flatMap((group) => group.answers)).toHaveLength(0);
+	});
+});
+
+describe('updates', () => {
+	beforeEach(async () => {
+		await db.delete(updatePost);
+	});
+
+	it('lists published updates newest first', async () => {
+		for (const [slug, when] of [
+			['older', '2026-01-01T00:00:00Z'],
+			['newer', '2026-06-01T00:00:00Z']
+		] as const) {
+			const id = await createUpdate(db, { slug, kind: 'advisory' });
+			await setUpdateTranslation(db, id, 'de', { title: slug, body: 'Text' });
+			await updateUpdate(db, id, { publishedAt: new Date(when) });
+		}
+
+		const posts = await listPublicUpdates(db, { locale: 'de', defaultLocale: 'de' });
+		expect(posts.map((post) => post.slug)).toEqual(['newer', 'older']);
+	});
+
+	it('hides an update with no publication date and one dated in the future', async () => {
+		const unpublished = await createUpdate(db, { slug: 'draft', kind: 'advisory' });
+		await setUpdateTranslation(db, unpublished, 'de', { title: 'Entwurf', body: 'x' });
+
+		const scheduled = await createUpdate(db, { slug: 'scheduled', kind: 'advisory' });
+		await setUpdateTranslation(db, scheduled, 'de', { title: 'Geplant', body: 'x' });
+		await updateUpdate(db, scheduled, { publishedAt: new Date(Date.now() + 86_400_000) });
+
+		expect(await listPublicUpdates(db, { locale: 'de', defaultLocale: 'de' })).toHaveLength(0);
 	});
 });
