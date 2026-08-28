@@ -14,5 +14,6 @@ export interface PortalSection {
  */
 export const PORTAL_SECTIONS: PortalSection[] = [
 	{ path: '/documents', label: () => m.nav_documents() },
-	{ path: '/controls', label: () => m.nav_controls() }
+	{ path: '/controls', label: () => m.nav_controls() },
+	{ path: '/subprocessors', label: () => m.nav_subprocessors() }
 ];

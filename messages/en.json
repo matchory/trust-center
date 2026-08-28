@@ -68,5 +68,22 @@
 	"admin_framework": "Framework",
 	"admin_issuer": "Issuer",
 	"admin_certificate": "Certificate",
-	"admin_scope": "Scope"
+	"admin_scope": "Scope",
+	"nav_subprocessors": "Subprocessors",
+	"subprocessors_intro": "Every provider processing personal data on our behalf.",
+	"subprocessors_current": "Current",
+	"subprocessors_former": "Former",
+	"subprocessors_purpose": "Purpose",
+	"subprocessors_data": "Data categories",
+	"subprocessors_country": "Country",
+	"subprocessors_region": "Region",
+	"subprocessors_dpa": "DPA",
+	"subprocessors_since": "Since {date}",
+	"subprocessors_until": "Until {date}",
+	"subprocessors_empty": "No subprocessors have been published.",
+	"admin_legal_entity": "Legal entity",
+	"admin_hosting_provider": "Hosting provider",
+	"admin_dpa_url": "DPA link",
+	"admin_started_at": "Start",
+	"admin_ended_at": "End"
 }

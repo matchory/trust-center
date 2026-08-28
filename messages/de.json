@@ -68,5 +68,22 @@
 	"admin_framework": "Rahmenwerk",
 	"admin_issuer": "Aussteller",
 	"admin_certificate": "Zertifikat",
-	"admin_scope": "Geltungsbereich"
+	"admin_scope": "Geltungsbereich",
+	"nav_subprocessors": "Unterauftragsverarbeiter",
+	"subprocessors_intro": "Alle Dienstleister, die im Auftrag personenbezogene Daten verarbeiten.",
+	"subprocessors_current": "Aktuell",
+	"subprocessors_former": "Ehemalig",
+	"subprocessors_purpose": "Zweck",
+	"subprocessors_data": "Datenkategorien",
+	"subprocessors_country": "Land",
+	"subprocessors_region": "Region",
+	"subprocessors_dpa": "AVV",
+	"subprocessors_since": "Seit {date}",
+	"subprocessors_until": "Bis {date}",
+	"subprocessors_empty": "Es sind keine Unterauftragsverarbeiter veröffentlicht.",
+	"admin_legal_entity": "Rechtsträger",
+	"admin_hosting_provider": "Hosting-Anbieter",
+	"admin_dpa_url": "AVV-Link",
+	"admin_started_at": "Beginn",
+	"admin_ended_at": "Ende"
 }

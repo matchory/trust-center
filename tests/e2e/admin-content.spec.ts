@@ -81,3 +81,30 @@ test('an admin can publish a certification and see its badge on the landing page
 		'Betrieb der Plattform'
 	);
 });
+
+test('an admin can publish a subprocessor and see it on the portal', async ({ page }) => {
+	await signInAsAdmin(page);
+
+	await page.goto('/de/admin/subprocessors/new');
+	await page.getByTestId('subprocessor-slug').fill(`sub-${suffix}`);
+	await page.getByTestId('subprocessor-name').fill('Hetzner Online GmbH');
+	await page.getByTestId('subprocessor-legal-entity').fill('Hetzner Online GmbH');
+	await page.getByTestId('subprocessor-country').fill('DE');
+	await page.getByTestId('subprocessor-region').fill('EU');
+	await page.getByTestId('subprocessor-create').click();
+	await expect(page).toHaveURL(/\/admin\/subprocessors\/[0-9a-f-]{36}$/);
+
+	await page.getByTestId('translation-purpose-de').fill('Hosting der Anwendung');
+	await page.getByTestId('translation-datacategories-de').fill('Sämtliche Kundendaten');
+	await submitAndWait(page, 'translation-save-de', '?/saveTranslation');
+
+	await page.getByTestId('subprocessor-published').check();
+	await submitAndWait(page, 'subprocessor-save-meta', '?/saveMeta');
+
+	await page.goto('/de/subprocessors');
+	const row = page.getByTestId(`subprocessor-sub-${suffix}`);
+	await expect(row).toBeVisible();
+	await expect(row).toContainText('Hosting der Anwendung');
+	// Rendered through Intl.DisplayNames in the visitor's locale, not as "DE".
+	await expect(row).toContainText('Deutschland');
+});

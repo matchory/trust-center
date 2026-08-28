@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { createDb, type Db } from '../../src/lib/server/db';
-import { certification, documentCategory } from '../../src/lib/server/db/schema';
+import { certification, documentCategory, subprocessor } from '../../src/lib/server/db/schema';
 import {
 	createCertification,
 	listPublicCertifications,
@@ -12,6 +12,12 @@ import {
 	createDocument,
 	updateDocument
 } from '../../src/lib/server/content/documents';
+import {
+	createSubprocessor,
+	listPublicSubprocessors,
+	setSubprocessorTranslation,
+	updateSubprocessor
+} from '../../src/lib/server/content/subprocessors';
 
 let db: Db;
 let close: () => Promise<void>;
@@ -88,5 +94,68 @@ describe('certifications', () => {
 			(await listPublicCertifications(db, { locale: 'de', defaultLocale: 'de' }))[0]
 				?.certificateFileId
 		).toBeNull();
+	});
+});
+
+describe('subprocessors', () => {
+	beforeEach(async () => {
+		await db.delete(subprocessor);
+	});
+
+	async function seed(overrides: Partial<{ endedAt: Date | null; published: boolean }> = {}) {
+		const id = await createSubprocessor(db, {
+			slug: 'hetzner',
+			name: 'Hetzner Online GmbH',
+			legalEntity: 'Hetzner Online GmbH',
+			country: 'DE',
+			region: 'EU',
+			hostingProvider: null,
+			dpaUrl: 'https://www.hetzner.com/dpa',
+			startedAt: new Date('2023-01-01T00:00:00Z'),
+			endedAt: overrides.endedAt ?? null
+		});
+		await setSubprocessorTranslation(db, id, 'de', {
+			purpose: 'Hosting der Anwendung',
+			dataCategories: 'Sämtliche Kundendaten'
+		});
+		await updateSubprocessor(db, id, { published: overrides.published ?? true });
+		return id;
+	}
+
+	it('lists a current subprocessor with purpose and data categories', async () => {
+		await seed();
+
+		const { current, former } = await listPublicSubprocessors(db, {
+			locale: 'de',
+			defaultLocale: 'de'
+		});
+
+		expect(former).toHaveLength(0);
+		expect(current[0]?.name).toBe('Hetzner Online GmbH');
+		expect(current[0]?.purpose).toBe('Hosting der Anwendung');
+		expect(current[0]?.country).toBe('DE');
+	});
+
+	it('moves an ended subprocessor to the former list rather than dropping it', async () => {
+		await seed({ endedAt: new Date('2026-01-01T00:00:00Z') });
+
+		const { current, former } = await listPublicSubprocessors(db, {
+			locale: 'de',
+			defaultLocale: 'de'
+		});
+
+		expect(current).toHaveLength(0);
+		expect(former).toHaveLength(1);
+	});
+
+	it('hides an unpublished subprocessor entirely', async () => {
+		await seed({ published: false });
+
+		const { current, former } = await listPublicSubprocessors(db, {
+			locale: 'de',
+			defaultLocale: 'de'
+		});
+
+		expect([...current, ...former]).toHaveLength(0);
 	});
 });
