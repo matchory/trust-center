@@ -6000,7 +6000,7 @@ may link the certificate itself as a document.
 - Modify: `src/lib/server/db/schema/index.ts`, `src/routes/(portal)/+page.server.ts` (new file), `src/routes/(portal)/+page.svelte`, `src/lib/admin/sections.ts`, `messages/*.json`
 - Test: `tests/integration/content.test.ts`, `tests/e2e/admin-content.spec.ts`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Create `tests/integration/content.test.ts` — the shared file for Tasks 12–15, opened with the same
 `beforeAll`/`afterAll` connection block as `tests/integration/documents.test.ts`:
@@ -6066,9 +6066,9 @@ describe('certifications', () => {
 });
 ```
 
-- [ ] **Step 2: Run and watch it fail**
+- [x] **Step 2: Run and watch it fail**
 
-- [ ] **Step 3: Schema**
+- [x] **Step 3: Schema**
 
 Create `src/lib/server/db/schema/certifications.ts`:
 
@@ -6110,7 +6110,7 @@ export const certificationTranslation = pgTable(
 
 Export it from `schema/index.ts`, then `pnpm db:generate --name certifications && pnpm db:migrate`.
 
-- [ ] **Step 4: Repository**
+- [x] **Step 4: Repository**
 
 Create `src/lib/server/content/certifications.ts`:
 
@@ -6329,7 +6329,7 @@ export async function setCertificationTranslation(
 }
 ```
 
-- [ ] **Step 5: Render the badges on the landing page**
+- [x] **Step 5: Render the badges on the landing page**
 
 Add messages — DE: `"nav_certifications": "Zertifizierungen"`, `"certifications_issued_by": "Ausgestellt von {issuer}"`, `"certifications_valid": "Gültig {from} – {until}"`, `"certifications_certificate": "Zertifikat"`; EN: "Certifications", "Issued by {issuer}", "Valid {from} – {until}", "Certificate".
 
@@ -6407,7 +6407,7 @@ In `src/routes/(portal)/+page.svelte`, insert a badge grid above the section lis
 
 Import `Badge`, `FallbackNotice`, `fileValidity`, and `formatDate` at the top of that page.
 
-- [ ] **Step 6: Admin routes**
+- [x] **Step 6: Admin routes**
 
 Build `src/routes/(admin)/admin/certifications/` on the primitives from Task 11 — `DataTable` for
 the list, `LocaleTabs` + `FormField` for the edit page. The edit page's meta form carries `slug`,
@@ -6422,7 +6422,7 @@ Add to `tests/e2e/admin-content.spec.ts` a test mirroring the controls one: crea
 fill the German scope, tick published, save, then assert
 `page.getByTestId('certification-<slug>')` is visible on `/de`.
 
-- [ ] **Step 7: Run everything and commit**
+- [x] **Step 7: Run everything and commit**
 
 ```bash
 pnpm lint && pnpm check && pnpm test:unit && pnpm test:integration && pnpm test:e2e
