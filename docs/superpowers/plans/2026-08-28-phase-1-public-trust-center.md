@@ -6804,7 +6804,7 @@ and scheduled composer come later.
 - Modify: `schema/index.ts`, `src/lib/content-types.ts`, `src/lib/portal/sections.ts`, `src/lib/admin/sections.ts`, `messages/*.json`
 - Test: `tests/integration/content.test.ts`, `tests/e2e/admin-content.spec.ts`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```ts
 describe('updates', () => {
@@ -6839,9 +6839,9 @@ describe('updates', () => {
 });
 ```
 
-- [ ] **Step 2: Run and watch it fail**
+- [x] **Step 2: Run and watch it fail**
 
-- [ ] **Step 3: Schema, repository, and pages**
+- [x] **Step 3: Schema, repository, and pages**
 
 ```ts
 // src/lib/server/db/schema/updates.ts
@@ -6906,7 +6906,7 @@ The admin routes follow certifications: meta fields `slug`, a `kind` select over
 and a `publishedAt` `datetime-local` input that may be left empty; per-locale `title` and `body`.
 Audit actions `update.created`, `.updated`, `.published`, `.deleted`.
 
-- [ ] **Step 4: Run everything and commit**
+- [x] **Step 4: Run everything and commit**
 
 ```bash
 pnpm lint && pnpm check && pnpm test:unit && pnpm test:integration && pnpm test:e2e
