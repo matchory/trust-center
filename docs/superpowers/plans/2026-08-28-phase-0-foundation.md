@@ -26,6 +26,8 @@ Every task's requirements implicitly include this section. Values are copied fro
 - **Locales are configured per deployment** via `PUBLIC_LOCALES` and `PUBLIC_DEFAULT_LOCALE`. Nothing may hardcode `de` or `en` outside message catalogs and test fixtures.
 - **TDD throughout:** write the failing test, watch it fail, implement minimally, watch it pass, commit.
 - **Commit after every task.** Conventional Commits format.
+- **Licence: GPL-3.0-or-later.** Task 1 adds the full `LICENSE` text and sets
+  `"license": "GPL-3.0-or-later"` in `package.json`.
 
 ## Deviations from the spec, with rationale
 
@@ -108,7 +110,10 @@ tests/e2e/                        Playwright specs
 ```bash
 cd /Users/moritz/Projects/matchory-trust-center
 pnpm dlx sv create . --template minimal --types ts --no-add-ons --install pnpm
+curl -fsSL https://www.gnu.org/licenses/gpl-3.0.txt -o LICENSE
 ```
+
+Then set `"license": "GPL-3.0-or-later"` in `package.json`.
 
 If the directory-not-empty prompt appears, accept continuing — `docs/` and `.git/` are expected to be present.
 
