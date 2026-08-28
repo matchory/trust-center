@@ -6942,7 +6942,7 @@ which is what lets `style-src` stay `'self'` with no `unsafe-inline` anywhere.
 - Produces: `getBranding(db): Promise<Branding>`, `setBranding(db, values): Promise<void>`,
   `parseBranding(value: unknown): Branding`, `BRANDING_SETTING_KEY`.
 
-- [ ] **Step 1: Write the failing branding tests**
+- [x] **Step 1: Write the failing branding tests**
 
 Create `tests/unit/branding.test.ts`:
 
@@ -6996,9 +6996,9 @@ describe('brandingCss', () => {
 });
 ```
 
-- [ ] **Step 2: Run and watch it fail**
+- [x] **Step 2: Run and watch it fail**
 
-- [ ] **Step 3: Implement branding**
+- [x] **Step 3: Implement branding**
 
 Create `src/lib/server/content/branding.ts`:
 
@@ -7064,7 +7064,7 @@ export function brandingCss(branding: Branding): string {
 }
 ```
 
-- [ ] **Step 4: Serve the stylesheet and the logo**
+- [x] **Step 4: Serve the stylesheet and the logo**
 
 `src/routes/branding.css/+server.ts`:
 
@@ -7087,7 +7087,7 @@ audit event (a logo is not a document access) and `cache-control: public, max-ag
 `content-type` comes from the branding record's `logoContentType`, and a record with a
 `logoStorageKey` but no `logoContentType` 404s rather than guessing.
 
-- [ ] **Step 5: Wire branding into the layouts**
+- [x] **Step 5: Wire branding into the layouts**
 
 In `src/routes/+layout.server.ts`, add `branding: await getBranding(getDb())` to the returned data
 (the load becomes `async`). In `src/routes/(portal)/+layout.svelte`, add to `<svelte:head>`:
@@ -7106,7 +7106,7 @@ rendering the logo as an `<img src="/api/branding/logo" alt={data.branding.organ
 class="h-8 w-auto" />` when a key is set. Add the imprint and privacy links to the footer when
 those URLs are set, using `m.portal_imprint()` and `m.portal_privacy()`.
 
-- [ ] **Step 6: Turn on the Content-Security-Policy**
+- [x] **Step 6: Turn on the Content-Security-Policy**
 
 In `vite.config.ts`, inside the `sveltekit({...})` call:
 
@@ -7132,7 +7132,7 @@ In `vite.config.ts`, inside the `sveltekit({...})` call:
 why every source stays `'self'` — the policy *enforces* the claim in spec §13 rather than
 restating it.
 
-- [ ] **Step 7: Write the permanent no-third-party test**
+- [x] **Step 7: Write the permanent no-third-party test**
 
 Append to `tests/e2e/security.spec.ts`:
 
@@ -7169,7 +7169,7 @@ test('serves a content security policy that permits only same-origin resources',
 });
 ```
 
-- [ ] **Step 8: Build the branding admin form**
+- [x] **Step 8: Build the branding admin form**
 
 `src/routes/(admin)/admin/settings/branding/+page.server.ts` loads `getBranding(getDb())` and has
 one `default` action that parses the form through the branding schema, handles an optional logo
@@ -7185,7 +7185,7 @@ contact. Register `{ path: '/admin/settings/branding', label: () => m.admin_bran
 along with `"admin_logo"`, `"admin_color_primary"`, `"admin_color_surface"`, `"admin_color_ink"`,
 `"admin_organization_name"`, `"admin_contact_email"`.
 
-- [ ] **Step 9: Run everything and commit**
+- [x] **Step 9: Run everything and commit**
 
 ```bash
 pnpm lint && pnpm check && pnpm test:unit && pnpm test:integration && pnpm test:e2e
