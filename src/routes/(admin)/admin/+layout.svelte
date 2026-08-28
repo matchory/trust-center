@@ -1,5 +1,7 @@
 <script lang="ts">
 	import { resolve } from '$app/paths';
+	import { ADMIN_SECTIONS } from '$lib/admin/sections';
+	import { localizePath } from '$lib/i18n/locale';
 	import { m } from '$lib/paraglide/messages.js';
 	import type { LayoutServerData } from './$types';
 
@@ -20,6 +22,20 @@
 			</form>
 		</div>
 	</header>
+
+	<nav class="border-b border-neutral-200 bg-white px-6" aria-label={m.nav_admin()}>
+		<ul class="mx-auto flex max-w-5xl gap-4 py-2 text-sm">
+			{#each ADMIN_SECTIONS as section (section.path)}
+				<li>
+					<a
+						href={localizePath(section.path, data.locale)}
+						data-testid="admin-nav-{section.path.split('/').pop()}"
+						class="hover:underline">{section.label()}</a
+					>
+				</li>
+			{/each}
+		</ul>
+	</nav>
 
 	<main class="mx-auto max-w-5xl px-6 py-8">
 		{@render children()}
