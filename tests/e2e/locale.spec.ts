@@ -64,20 +64,18 @@ test('updates rendered messages on client-side navigation between locales', asyn
 	await page.goto('/de');
 	await expect(page.getByTestId('admin-link-label')).toHaveText('Verwaltung');
 
-	// Plant a marker on `window` and a real in-app link before navigating. A
-	// full document reload resets `window`, so the marker surviving the click
-	// proves SvelteKit's client router handled the navigation.
+	// Plant a marker on `window` before navigating. A full document reload
+	// resets `window`, so the marker surviving the click proves SvelteKit's
+	// client router handled the navigation. Only `window` is touched, never the
+	// DOM: an element injected before hydration is liable to be reconciled away
+	// when Svelte claims the tree, which is a race, not a test.
 	await page.evaluate(() => {
 		(window as unknown as { __navMarker?: boolean }).__navMarker = true;
-
-		const anchorPoint = document.querySelector('[data-testid="admin-link-label"]');
-		const link = document.createElement('a');
-		link.href = '/en';
-		link.textContent = 'switch to English';
-		anchorPoint?.after(link);
 	});
 
-	await page.getByRole('link', { name: 'switch to English' }).click();
+	// The portal's own locale switcher, so the link under test is one the app
+	// actually ships rather than one the test invented.
+	await page.getByTestId('locale-switch-en').click();
 
 	await expect(page.getByTestId('admin-link-label')).toHaveText('Administration');
 	await expect(page.locator('html')).toHaveAttribute('lang', 'en');

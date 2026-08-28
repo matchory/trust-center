@@ -1,9 +1,11 @@
 import { redirect } from '@sveltejs/kit';
 import { getConfig } from '$lib/server/config';
+import { getBranding } from '$lib/server/content/branding';
+import { getDb } from '$lib/server/db/instance';
 import { localizePath } from '$lib/i18n/locale';
 import type { LayoutServerLoad } from './$types';
 
-export const load: LayoutServerLoad = ({ locals, url }) => {
+export const load: LayoutServerLoad = async ({ locals, url }) => {
 	// Every page lives at a locale-prefixed URL, so an unprefixed request is
 	// negotiated once and redirected. That keeps every content URL stable and
 	// cacheable, and makes canonical/hreflang answerable (Task 17).
@@ -18,5 +20,10 @@ export const load: LayoutServerLoad = ({ locals, url }) => {
 	void url.pathname;
 
 	const { locales, defaultLocale } = getConfig();
-	return { locale: locals.locale, locales, defaultLocale };
+	return {
+		locale: locals.locale,
+		locales,
+		defaultLocale,
+		branding: await getBranding(getDb())
+	};
 };

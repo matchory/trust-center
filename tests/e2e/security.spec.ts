@@ -134,3 +134,34 @@ test('exposes no route that serves a storage key directly', async ({ request }) 
 		expect((await request.get(path)).status()).toBeGreaterThanOrEqual(400);
 	}
 });
+
+test('the public portal loads no third-party resources', async ({ page, baseURL }) => {
+	const foreign: string[] = [];
+	const origin = new URL(baseURL ?? 'http://localhost:4173').origin;
+
+	page.on('request', (request) => {
+		const url = new URL(request.url());
+		// data: and blob: are the page's own bytes, not a third party.
+		if (url.protocol === 'data:' || url.protocol === 'blob:') return;
+		if (url.origin !== origin) foreign.push(request.url());
+	});
+
+	for (const path of ['/de', '/de/documents', '/de/controls']) {
+		await page.goto(path);
+		await page.waitForLoadState('networkidle');
+	}
+
+	expect(foreign).toEqual([]);
+});
+
+test('serves a content security policy that permits only same-origin resources', async ({
+	request
+}) => {
+	const response = await request.get('/de');
+	const csp = response.headers()['content-security-policy'];
+
+	expect(csp).toBeTruthy();
+	expect(csp).toContain("default-src 'self'");
+	expect(csp).toContain("frame-ancestors 'none'");
+	expect(csp).not.toContain('unsafe-inline');
+});

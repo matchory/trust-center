@@ -101,5 +101,12 @@
 	"update_kind_advisory": "Advisory",
 	"admin_kind": "Kind",
 	"admin_published_at": "Published at",
-	"admin_body": "Body"
+	"admin_body": "Body",
+	"admin_branding": "Branding",
+	"admin_logo": "Logo",
+	"admin_color_primary": "Primary colour",
+	"admin_color_surface": "Surface colour",
+	"admin_color_ink": "Text colour",
+	"admin_organization_name": "Organisation name",
+	"admin_contact_email": "Contact email"
 }

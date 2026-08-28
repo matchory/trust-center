@@ -12,5 +12,6 @@ export const ADMIN_SECTIONS: AdminSection[] = [
 	{ path: '/admin/certifications', label: () => m.nav_certifications() },
 	{ path: '/admin/subprocessors', label: () => m.nav_subprocessors() },
 	{ path: '/admin/faq', label: () => m.nav_faq() },
-	{ path: '/admin/updates', label: () => m.nav_updates() }
+	{ path: '/admin/updates', label: () => m.nav_updates() },
+	{ path: '/admin/settings/branding', label: () => m.admin_branding() }
 ];

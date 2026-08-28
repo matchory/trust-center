@@ -8,6 +8,13 @@
 	let { data, children }: LayoutProps = $props();
 </script>
 
+<svelte:head>
+	<link rel="stylesheet" href="/branding.css" />
+	{#if data.branding.logoStorageKey}
+		<link rel="icon" href="/api/branding/logo" />
+	{/if}
+</svelte:head>
+
 <a
 	data-testid="skip-to-content"
 	href="#content"
@@ -19,11 +26,21 @@
 <div class="min-h-screen bg-[var(--tc-surface,#fafafa)] text-[var(--tc-ink,#171717)]">
 	<header class="border-b border-neutral-200 bg-white">
 		<div class="mx-auto flex max-w-5xl flex-wrap items-center gap-x-6 gap-y-3 px-6 py-4">
-			<a href={localizePath('/', data.locale)} class="text-lg font-semibold tracking-tight">
-				{m.site_title()}
+			<a
+				href={localizePath('/', data.locale)}
+				class="flex items-center gap-2 text-lg font-semibold tracking-tight"
+			>
+				{#if data.branding.logoStorageKey}
+					<img src="/api/branding/logo" alt={data.branding.organizationName} class="h-8 w-auto" />
+				{:else}
+					{data.branding.organizationName}
+				{/if}
 			</a>
 
-			<nav class="flex flex-wrap items-center gap-4 text-sm" aria-label={m.site_title()}>
+			<nav
+				class="flex flex-wrap items-center gap-4 text-sm"
+				aria-label={data.branding.organizationName}
+			>
 				{#each PORTAL_SECTIONS as section (section.path)}
 					<a
 						href={localizePath(section.path, data.locale)}
@@ -48,7 +65,17 @@
 		class="mt-16 border-t border-neutral-200 bg-white px-6 py-8 text-sm text-neutral-500"
 	>
 		<div class="mx-auto flex max-w-5xl flex-wrap items-center gap-4">
-			<span>{m.site_title()}</span>
+			<span>{data.branding.organizationName}</span>
+			{#if data.branding.imprintUrl}
+				<a href={data.branding.imprintUrl} rel="noreferrer noopener external" class="underline"
+					>{m.portal_imprint()}</a
+				>
+			{/if}
+			{#if data.branding.privacyUrl}
+				<a href={data.branding.privacyUrl} rel="noreferrer noopener external" class="underline"
+					>{m.portal_privacy()}</a
+				>
+			{/if}
 			<a data-testid="admin-link-label" href={localizePath('/admin', data.locale)}>
 				{m.nav_admin()}
 			</a>

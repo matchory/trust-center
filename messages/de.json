@@ -101,5 +101,12 @@
 	"update_kind_advisory": "Hinweis",
 	"admin_kind": "Art",
 	"admin_published_at": "Veröffentlicht am",
-	"admin_body": "Text"
+	"admin_body": "Text",
+	"admin_branding": "Erscheinungsbild",
+	"admin_logo": "Logo",
+	"admin_color_primary": "Primärfarbe",
+	"admin_color_surface": "Hintergrundfarbe",
+	"admin_color_ink": "Textfarbe",
+	"admin_organization_name": "Organisationsname",
+	"admin_contact_email": "Kontakt-E-Mail"
 }
