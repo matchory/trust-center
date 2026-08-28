@@ -25,7 +25,9 @@ services:
     build: ./tools/dev-idp
     environment:
       ISSUER: http://localhost:5556
-      REDIRECT_URI: http://localhost:5173/auth/callback
+      # Accepts both the `pnpm dev` origin (5173) and the Playwright e2e
+      # preview server (4173) — see playwright.config.ts's `webServer.env`.
+      REDIRECT_URIS: http://localhost:5173/auth/callback,http://localhost:4173/auth/callback
     ports:
       - '127.0.0.1:${DEV_IDP_PORT:-5556}:5556'
 

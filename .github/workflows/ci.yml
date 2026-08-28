@@ -22,3 +22,8 @@ jobs:
       - run: pnpm build
       - run: pnpm test:unit
       - run: pnpm test:integration
+      - run: docker compose -f docker-compose.dev.yml up -d --build
+      - run: pnpm exec playwright install --with-deps chromium
+      - run: cp .env.example .env
+      - run: pnpm exec drizzle-kit migrate
+      - run: pnpm test:e2e

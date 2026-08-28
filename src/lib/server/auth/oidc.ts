@@ -6,10 +6,18 @@ let cached: client.Configuration | undefined;
 export async function getOidcConfig(): Promise<client.Configuration> {
 	if (!cached) {
 		const config = getConfig();
+		const issuerIsHttps = new URL(config.oidc.issuer).protocol === 'https:';
+
 		cached = await client.discovery(
 			new URL(config.oidc.issuer),
 			config.oidc.clientId,
-			config.oidc.clientSecret
+			config.oidc.clientSecret,
+			undefined,
+			// openid-client refuses HTTP discovery/token requests by default. Only
+			// relax that for a non-HTTPS issuer (the dev-IdP on localhost) — a
+			// production deployment configured with an HTTPS issuer keeps the
+			// default, strict behaviour.
+			issuerIsHttps ? undefined : { execute: [client.allowInsecureRequests] }
 		);
 	}
 	return cached;

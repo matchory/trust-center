@@ -1,7 +1,11 @@
 import Provider from 'oidc-provider';
 
 const ISSUER = process.env.ISSUER ?? 'http://localhost:5556';
-const REDIRECT_URI = process.env.REDIRECT_URI ?? 'http://localhost:5173/auth/callback';
+// Comma-separated so the same client registration can serve both `pnpm dev`
+// (port 5173) and the Playwright e2e preview server (port 4173).
+const REDIRECT_URIS = (process.env.REDIRECT_URIS ?? 'http://localhost:5173/auth/callback').split(
+	','
+);
 
 const USERS = {
 	'admin@example.test': {
@@ -31,7 +35,7 @@ const provider = new Provider(ISSUER, {
 		{
 			client_id: 'trust-center',
 			client_secret: 'dev-secret',
-			redirect_uris: [REDIRECT_URI],
+			redirect_uris: REDIRECT_URIS,
 			grant_types: ['authorization_code'],
 			response_types: ['code']
 		}
