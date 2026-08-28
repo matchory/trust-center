@@ -1007,7 +1007,7 @@ The purge path itself is Phase 2. This task ships only the constraint it will ha
   written, can never be corrected, so `recordEvent` call sites must get their `meta` right the
   first time.
 
-- [ ] **Step 1: Write the failing constraint tests**
+- [x] **Step 1: Write the failing constraint tests**
 
 Append to `tests/integration/audit.test.ts`, inside the existing `describe('audit log', ...)`:
 
@@ -1102,13 +1102,13 @@ Append to `tests/integration/audit.test.ts`, inside the existing `describe('audi
 
 Add `sql` to the drizzle-orm import at the top of the file: `import { eq, sql } from 'drizzle-orm';`
 
-- [ ] **Step 2: Run the tests and watch them fail**
+- [x] **Step 2: Run the tests and watch them fail**
 
 Run: `pnpm test:integration -- tests/integration/audit.test.ts`
 Expected: FAIL. The `UPDATE` and `TRUNCATE` cases fail because they *succeed* — nothing stops
 them yet — and the `actor_type` case fails because the insert is accepted.
 
-- [ ] **Step 3: Write the migration**
+- [x] **Step 3: Write the migration**
 
 Create `drizzle/0004_audit_append_only.sql`:
 
@@ -1190,7 +1190,7 @@ it. Copy `drizzle/meta/0003_snapshot.json` to `drizzle/meta/0004_snapshot.json` 
 `seq` NOT NULL and the two check constraints to it, so a later `drizzle-kit generate` does not
 try to re-add them.
 
-- [ ] **Step 4: Bring the Drizzle schema back into agreement**
+- [x] **Step 4: Bring the Drizzle schema back into agreement**
 
 In `src/lib/server/db/schema/audit.ts`, make `seq` non-null and declare the check:
 
@@ -1232,7 +1232,7 @@ export const staffUser = pgTable(
 
 Import `check` from `drizzle-orm/pg-core` and `sql` from `drizzle-orm` in both files.
 
-- [ ] **Step 5: Run the migration and the tests**
+- [x] **Step 5: Run the migration and the tests**
 
 ```bash
 pnpm db:migrate
@@ -1243,7 +1243,7 @@ Expected: PASS. The integration suite starts a fresh Testcontainers Postgres and
 zero on every run, so no manual cleanup is needed — which is just as well, since `DELETE` and now
 `TRUNCATE` are both refused.
 
-- [ ] **Step 6: Fix the two carry-over nits in this area**
+- [x] **Step 6: Fix the two carry-over nits in this area**
 
 `drizzle.config.ts`'s error text names `pnpm db:migrate`, but the config also loads for
 `drizzle-kit generate`, which needs no database and had no script. Add the missing script to
@@ -1290,12 +1290,12 @@ proves *some* login happened during the window, not that *these* events came fro
 
 Import `and` and `eq` from `drizzle-orm` alongside the existing `desc` and `gte`.
 
-- [ ] **Step 7: Run the whole suite**
+- [x] **Step 7: Run the whole suite**
 
 Run: `pnpm lint && pnpm check && pnpm test:unit && pnpm test:integration && pnpm test:e2e`
 Expected: all green.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add -A
