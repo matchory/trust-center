@@ -48,7 +48,10 @@ services:
     volumes:
       - type: volume
         source: pgdata
-        target: /var/lib/postgresql/data
+        # PG18's PGDATA is /var/lib/postgresql/18/docker, so a volume mounted at
+        # the legacy /var/lib/postgresql/data is never written to and the database
+        # lives on the container layer — silently lost on every recreate.
+        target: /var/lib/postgresql
         volume:
           labels:
             database: ~
