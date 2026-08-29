@@ -19,8 +19,9 @@ export const load: LayoutServerLoad = async ({ locals, url }) => {
 	// to rerun, and `data.locale` would never update.
 	void url.pathname;
 
-	const { locales, defaultLocale } = getConfig();
+	const { baseUrl, locales, defaultLocale } = getConfig();
 	return {
+		baseUrl,
 		locale: locals.locale,
 		locales,
 		defaultLocale,

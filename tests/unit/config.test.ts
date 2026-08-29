@@ -22,6 +22,12 @@ describe('parseConfig', () => {
 		expect(config.oidc.adminGroup).toBe('trust-center-admins');
 	});
 
+	it('strips a trailing slash from BASE_URL, so paths concatenate cleanly', () => {
+		expect(
+			parseConfig({ ...valid, BASE_URL: 'https://trust.example.com/' }, COMPILED).baseUrl
+		).toBe('https://trust.example.com');
+	});
+
 	it('parses the enabled locale set, trimming whitespace', () => {
 		expect(parseConfig({ ...valid, LOCALES: ' de , en ' }, COMPILED).locales).toEqual(['de', 'en']);
 	});

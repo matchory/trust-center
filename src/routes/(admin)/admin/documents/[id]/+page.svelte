@@ -143,7 +143,7 @@
 							<span class="text-neutral-500">{formatDate(file.validUntil, data.locale)}</span>
 						{/if}
 						{#if file.isCurrent}<span class="rounded bg-emerald-50 px-2 text-emerald-800"
-								>current</span
+								>{m.documents_status_current()}</span
 							>{/if}
 
 						<form method="POST" action="?/deleteFile" use:enhance class="ml-auto">

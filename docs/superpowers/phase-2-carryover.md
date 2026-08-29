@@ -91,6 +91,71 @@ Carried forward from `phase-1-carryover.md`, still open:
   with migrations on and stop it, which works but is graceless. A
   `--migrate-only` entry point would be three lines.
 
+## Found by the whole-branch review
+
+The plan asks for a review over the complete branch diff rather than the last
+task. Six of its checks came back clean: every public read model filters
+(`document.tier` + `document.status`, `certification.published`,
+`subprocessor.published`, `answer.visibility`, `updatePost.publishedAt`), every
+admin action records an audit event, no `recordEvent` `meta` carries requester
+personal data, no `$lib/server/...` import reaches a `.svelte` file, no locale
+literal survives outside `src/lib/i18n/`, and no `getConfig()`/`getDb()` runs at
+module scope. Three things did not.
+
+### Fixed on the branch
+
+- **Canonical URLs came from the request host, not `BASE_URL`.**
+  `Seo.svelte` derived its origin from `page.url.origin` while `sitemap.xml`
+  and `robots.txt` used `getConfig().baseUrl`, so the two disagreed about the
+  site's own address. The component's comment already claimed the configured
+  origin, and `docs/self-hosting.md` already documented `BASE_URL` as what
+  canonical URLs are built from; the plan's own Task 17 listing carried the
+  same contradiction, and the implementation copied it faithfully. Seen
+  concretely in the Task 18 container: `BASE_URL=http://localhost:3100`
+  produced `<link rel="canonical" href="https://localhost:3100/en">` —
+  adapter-node defaults the protocol to `https` when `ORIGIN` is unset, so
+  behind a TLS-terminating proxy the scheme is wrong as well as the host. Now
+  `baseUrl` reaches the component through the root layout load, and
+  `parseConfig` strips a trailing slash once so no consumer doubles it.
+
+  **No automated test distinguishes the two.** Under `vite preview` the
+  configured origin and the request origin are the same string, and neither a
+  spoofed `Host` header (vite answers 403) nor `127.0.0.1` (the preview server
+  binds `localhost` only) separates them without changing production-facing
+  config for a test's benefit. The unit test covers the normalisation; the
+  origin itself is covered only by the container smoke run. Phase 2 should give
+  the e2e suite a second Playwright project whose `webServer` runs with a
+  `BASE_URL` deliberately unequal to its listen address.
+
+- **The admin dashboard still said "Content management arrives in Phase 1."**
+  A Phase 0 placeholder, in English, on the one admin page that used no message
+  catalog — and false as of this branch. Replaced with `admin_dashboard_intro`.
+
+- **A hardcoded `current` badge** on the document edit page, the only other
+  untranslated string in any `.svelte` file. Now `m.documents_status_current()`.
+
+### Left alone, deliberately
+
+- **`saveMeta` and `saveTranslation` record the same action name.** Every
+  content type writes `<type>.updated` for both, distinguished only by the
+  shape of `meta` — `{ ...parsed.data }` versus a locale. Documents and
+  controls spell that locale `{ translation: locale }`; certifications, FAQ,
+  subprocessors and updates spell it `{ locale }`. Two problems in one: an
+  auditor cannot filter translation edits by action, and the key naming
+  disagrees across six types. Aligning the keys alone would make documents and
+  controls *less* legible, because `translation:` is what currently carries the
+  distinction at all. The real fix is a distinct action name
+  (`<type>.translation.updated`), which is a schema-adjacent decision and not
+  something to land untested at the end of a phase. The table is append-only,
+  so whatever Phase 2 chooses, the rows written before it are permanent.
+
+- **`getClientAddress()` on the public download path.** The failure recorded
+  below under "Found during Phase 1" was seen on an admin mutation, but
+  `src/routes/api/documents/[fileId]/+server.ts` calls it too — on every
+  visitor download. A misconfigured `ADDRESS_HEADER` there does not merely lose
+  an audit attribution, it 500s the download for every visitor. Same fix, wider
+  blast radius than first recorded.
+
 ## Resolved in Phase 1, recorded because the reasoning matters
 
 - Drizzle wraps driver errors: `error.message` is only

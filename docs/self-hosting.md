@@ -38,7 +38,7 @@ refusal is recorded in the audit log.
 | Variable | Required | Default | What it does |
 | --- | --- | --- | --- |
 | `DATABASE_URL` | yes | — | Postgres connection string. |
-| `BASE_URL` | yes | — | The public origin this deployment is reached at. Used for the OIDC redirect URI, canonical URLs, and the sitemap. Must match what visitors type, including the scheme. |
+| `BASE_URL` | yes | — | The public origin this deployment is reached at. Used for the OIDC redirect URI, canonical URLs, and the sitemap. Must match what visitors type, including the scheme. A trailing slash is ignored. |
 | `LOCALES` | no | `de,en` | Locales this deployment serves. Must be a subset of the locales compiled into the image — the app refuses to start otherwise. See §5. |
 | `DEFAULT_LOCALE` | no | `de` | The locale an unprefixed request negotiates to, and the fallback shown when content is untranslated. Must be one of `LOCALES`. |
 | `STORAGE_DIR` | no | `/data/storage` | Where uploaded documents and branding assets are written. Must be a persistent volume. Nothing here is ever served directly; every read goes through the audited download endpoint. |

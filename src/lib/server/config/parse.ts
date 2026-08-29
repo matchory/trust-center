@@ -95,7 +95,10 @@ export function parseConfig(
 
 	return {
 		databaseUrl: parsed.DATABASE_URL,
-		baseUrl: parsed.BASE_URL,
+		// Normalised once here: every consumer concatenates a path onto it
+		// (canonical URLs, the sitemap, robots.txt, the OIDC redirect URI),
+		// and a trailing slash in the environment would double every one.
+		baseUrl: parsed.BASE_URL.replace(/\/+$/, ''),
 		locales: parsed.LOCALES,
 		defaultLocale: parsed.DEFAULT_LOCALE,
 		storageDir: parsed.STORAGE_DIR,

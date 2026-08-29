@@ -9,6 +9,7 @@
 </script>
 
 <Seo
+	baseUrl={data.baseUrl}
 	title={m.nav_faq()}
 	description={m.faq_intro()}
 	siteName={data.branding.organizationName}

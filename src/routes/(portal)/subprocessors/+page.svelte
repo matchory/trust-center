@@ -15,6 +15,7 @@
 </script>
 
 <Seo
+	baseUrl={data.baseUrl}
 	title={m.nav_subprocessors()}
 	description={m.subprocessors_intro()}
 	siteName={data.branding.organizationName}

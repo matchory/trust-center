@@ -26,6 +26,7 @@
 </script>
 
 <Seo
+	baseUrl={data.baseUrl}
 	title={m.nav_controls()}
 	description={m.controls_intro()}
 	siteName={data.branding.organizationName}

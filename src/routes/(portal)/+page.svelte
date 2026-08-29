@@ -13,6 +13,7 @@
 </script>
 
 <Seo
+	baseUrl={data.baseUrl}
 	title={m.site_title()}
 	description={m.portal_tagline()}
 	siteName={data.branding.organizationName}
