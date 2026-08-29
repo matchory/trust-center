@@ -4,6 +4,7 @@
 	import SectionHeading from '$lib/components/portal/SectionHeading.svelte';
 	import Seo from '$lib/components/portal/Seo.svelte';
 	import { fileValidity, formatBytes, formatDate, type FileValidity } from '$lib/format';
+	import { localizePath } from '$lib/i18n/locale';
 	import { m } from '$lib/paraglide/messages.js';
 	import type { PageProps } from './$types';
 
@@ -64,7 +65,23 @@
 							{#if doc.summary}<p class="mt-1 text-sm text-neutral-600">{doc.summary}</p>{/if}
 						</div>
 
-						{#if doc.file && validity}
+						{#if doc.tier === 'request'}
+							<!-- The read model gives a gated row no file, so there is nothing here
+							     that could become a download URL. -->
+							<Badge>{m.documents_tier_request()}</Badge>
+							<a
+								data-testid="request-access-{doc.slug}"
+								href={localizePath('/request', data.locale)}
+								class="rounded bg-[var(--tc-primary,#171717)] px-3 py-1.5 text-sm font-medium text-white"
+							>
+								{m.documents_request_access()}
+							</a>
+						{:else if doc.tier === 'nda'}
+							<!-- Phase 2 cannot honour an NDA, so this tier states its condition
+							     and offers no route. -->
+							<Badge>{m.documents_tier_nda()}</Badge>
+							<span class="text-sm text-neutral-500">{m.documents_nda_notice()}</span>
+						{:else if doc.file && validity}
 							<Badge tone={TONE[validity]}>{LABEL[validity]()}</Badge>
 							<span class="text-sm text-neutral-500">
 								{m.documents_version({ version: doc.file.version })} ·

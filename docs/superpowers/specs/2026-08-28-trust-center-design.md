@@ -530,8 +530,13 @@ selection, locale fallback — so the interesting parts are testable without a d
   revocation takes effect immediately.
 - **Security regression tests, as first-class citizens.** Enumeration responses are byte-identical
   for known and unknown emails; magic links are single-use; no storage URL is reachable without a
-  grant; every download writes an audit event; gated documents never appear in public HTML, JSON,
-  or the sitemap.
+  grant; every download writes an audit event; a gated document's **file** never appears in public
+  HTML, JSON, or the sitemap.
+
+  Amended in Phase 2: the portal *names* a gated document, with a tier badge and a request link, so
+  a visitor can see that a report exists and ask for it — a trust centre that cannot say a SOC 2
+  report exists is not doing its job. What stays secret is the file id, because that is the download
+  URL. Gated documents remain absent from the sitemap, which lists retrievable pages.
 
 The final group covers the failures that would be specifically embarrassing in this product, so
 they carry permanent tests rather than manual checks.

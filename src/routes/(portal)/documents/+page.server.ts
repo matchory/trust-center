@@ -1,11 +1,11 @@
 import { getConfig } from '$lib/server/config';
-import { listPublicDocuments } from '$lib/server/content/documents';
+import { listPortalDocuments } from '$lib/server/content/documents';
 import { getDb } from '$lib/server/db/instance';
 import type { PageServerLoad } from './$types';
 
 export const load: PageServerLoad = async ({ locals, setHeaders }) => {
 	const { defaultLocale } = getConfig();
-	const categories = await listPublicDocuments(getDb(), {
+	const categories = await listPortalDocuments(getDb(), {
 		locale: locals.locale,
 		defaultLocale
 	});

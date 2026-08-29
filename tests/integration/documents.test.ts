@@ -6,6 +6,7 @@ import {
 	createCategory,
 	createDocument,
 	getDocumentForAdmin,
+	listPortalDocuments,
 	listPublicDocuments,
 	setCategoryTranslation,
 	setDocumentTranslation,
@@ -32,7 +33,7 @@ beforeEach(async () => {
 	await db.delete(documentCategory);
 });
 
-async function seedPublishedDocument(overrides: { tier?: 'public' | 'request' } = {}) {
+async function seedPublishedDocument(overrides: { tier?: 'public' | 'request' | 'nda' } = {}) {
 	const categoryId = await createCategory(db, { slug: 'legal', position: 0 });
 	await setCategoryTranslation(db, categoryId, 'de', { name: 'Rechtliches' });
 	await setCategoryTranslation(db, categoryId, 'en', { name: 'Legal' });
@@ -84,6 +85,72 @@ describe('document repository', () => {
 		const categories = await listPublicDocuments(db, { locale: 'de', defaultLocale: 'de' });
 
 		expect(categories.flatMap((category) => category.documents)).toHaveLength(0);
+	});
+
+	it('lists gated documents for the portal, with their tier', async () => {
+		const { categoryId } = await seedPublishedDocument({ tier: 'request' });
+		const ndaId = await createDocument(db, {
+			slug: 'pentest',
+			categoryId,
+			tier: 'nda',
+			position: 1
+		});
+		await setDocumentTranslation(db, ndaId, 'de', { title: 'Pentest-Bericht', summary: null });
+		await updateDocument(db, ndaId, { status: 'published' });
+
+		const categories = await listPortalDocuments(db, { locale: 'de', defaultLocale: 'de' });
+
+		expect(categories.flatMap((category) => category.documents).map((doc) => [doc.slug, doc.tier])) //
+			.toEqual([
+				['avv', 'request'],
+				['pentest', 'nda']
+			]);
+	});
+
+	it('never returns a file for a gated document, even when one is current', async () => {
+		// The tier badge and the request link are public; the file id is the one
+		// thing that must not reach the HTML, because it is the download URL.
+		const { documentId } = await seedPublishedDocument({ tier: 'request' });
+		await addDocumentFile(db, {
+			documentId,
+			locale: 'de',
+			storageKey: 'gated-key',
+			sha256: 'a'.repeat(64),
+			sizeBytes: 12,
+			filename: 'avv.pdf',
+			contentType: 'application/pdf',
+			validFrom: null,
+			validUntil: null,
+			uploadedByStaffId: null
+		});
+
+		const categories = await listPortalDocuments(db, { locale: 'de', defaultLocale: 'de' });
+		const doc = categories.flatMap((category) => category.documents)[0];
+
+		expect(doc?.tier).toBe('request');
+		expect(doc?.file).toBeNull();
+	});
+
+	it('still carries the file of a public document listed for the portal', async () => {
+		const { documentId } = await seedPublishedDocument();
+		await addDocumentFile(db, {
+			documentId,
+			locale: 'de',
+			storageKey: 'public-key',
+			sha256: 'b'.repeat(64),
+			sizeBytes: 12,
+			filename: 'avv.pdf',
+			contentType: 'application/pdf',
+			validFrom: null,
+			validUntil: null,
+			uploadedByStaffId: null
+		});
+
+		const categories = await listPortalDocuments(db, { locale: 'de', defaultLocale: 'de' });
+		const doc = categories.flatMap((category) => category.documents)[0];
+
+		expect(doc?.tier).toBe('public');
+		expect(doc?.file?.filename).toBe('avv.pdf');
 	});
 
 	it('falls back to the default locale and says so', async () => {

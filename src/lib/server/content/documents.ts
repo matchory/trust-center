@@ -26,11 +26,13 @@ export interface PublicDocumentFile {
 export interface PublicDocument {
 	id: string;
 	slug: string;
+	tier: DocumentTier;
 	title: string;
 	summary: string | null;
 	/** The locale the title and summary were actually taken from. */
 	translationLocale: string;
 	isTranslationFallback: boolean;
+	/** Always `null` for a gated tier — see `listDocumentsByTier`. */
 	file: PublicDocumentFile | null;
 	isFileFallback: boolean;
 }
@@ -56,16 +58,22 @@ function groupByKey<T, K extends string>(rows: readonly T[], key: (row: T) => K)
 }
 
 /**
- * The portal read model. Filters to published, public-tier documents in the
- * query rather than in the caller — the "gated documents never appear in
- * public HTML, JSON, or the sitemap" guarantee (spec §12) is only as good as
+ * The portal read model, filtered to published documents in the given tiers in
+ * the query rather than in the caller — the guarantee a gated document's file
+ * never reaches public HTML, JSON, or the sitemap (spec §12) is only as good as
  * the narrowest place it is enforced.
+ *
+ * Files are fetched for public-tier documents only, so a gated document's file
+ * id never leaves the database. A gated row therefore carries its title and
+ * tier — enough for the portal to offer the request affordance — and nothing
+ * that could be turned into a download URL.
  *
  * An entity with no translation in the requested locale and none in the
  * default locale is omitted rather than rendered untitled.
  */
-export async function listPublicDocuments(
+async function listDocumentsByTier(
 	db: Db,
+	tiers: readonly DocumentTier[],
 	opts: { locale: string; defaultLocale: string }
 ): Promise<PublicDocumentCategory[]> {
 	const rows = await db
@@ -73,11 +81,12 @@ export async function listPublicDocuments(
 			categoryId: documentCategory.id,
 			categorySlug: documentCategory.slug,
 			documentId: document.id,
-			documentSlug: document.slug
+			documentSlug: document.slug,
+			documentTier: document.tier
 		})
 		.from(document)
 		.innerJoin(documentCategory, eq(document.categoryId, documentCategory.id))
-		.where(and(eq(document.status, 'published'), eq(document.tier, 'public')))
+		.where(and(eq(document.status, 'published'), inArray(document.tier, [...tiers])))
 		.orderBy(
 			asc(documentCategory.position),
 			asc(documentCategory.slug),
@@ -88,6 +97,9 @@ export async function listPublicDocuments(
 	if (rows.length === 0) return [];
 
 	const documentIds = rows.map((row) => row.documentId);
+	const fileDocumentIds = rows
+		.filter((row) => row.documentTier === 'public')
+		.map((row) => row.documentId);
 	const categoryIds = [...new Set(rows.map((row) => row.categoryId))];
 
 	const [categoryNames, titles, files] = await Promise.all([
@@ -99,10 +111,14 @@ export async function listPublicDocuments(
 			.select()
 			.from(documentTranslation)
 			.where(inArray(documentTranslation.documentId, documentIds)),
-		db
-			.select()
-			.from(documentFile)
-			.where(and(inArray(documentFile.documentId, documentIds), eq(documentFile.isCurrent, true)))
+		fileDocumentIds.length === 0
+			? []
+			: db
+					.select()
+					.from(documentFile)
+					.where(
+						and(inArray(documentFile.documentId, fileDocumentIds), eq(documentFile.isCurrent, true))
+					)
 	]);
 
 	const namesByCategory = groupByKey(categoryNames, (row) => row.categoryId);
@@ -147,6 +163,7 @@ export async function listPublicDocuments(
 			documents.push({
 				id: row.documentId,
 				slug: row.documentSlug,
+				tier: row.documentTier as DocumentTier,
 				title: pickedTitle.value.title,
 				summary: pickedTitle.value.summary,
 				translationLocale: pickedTitle.locale,
@@ -181,6 +198,26 @@ export async function listPublicDocuments(
 	}
 
 	return result;
+}
+
+/** Published, public-tier documents. The sitemap and every public surface use this. */
+export function listPublicDocuments(
+	db: Db,
+	opts: { locale: string; defaultLocale: string }
+): Promise<PublicDocumentCategory[]> {
+	return listDocumentsByTier(db, ['public'], opts);
+}
+
+/**
+ * Every published document the documents page shows, gated ones included, so a
+ * visitor can see that a report exists and ask for it. Gated rows carry a tier
+ * and no file.
+ */
+export function listPortalDocuments(
+	db: Db,
+	opts: { locale: string; defaultLocale: string }
+): Promise<PublicDocumentCategory[]> {
+	return listDocumentsByTier(db, ['public', 'request', 'nda'], opts);
 }
 
 /** One published, public-tier document by slug, or null. */

@@ -74,12 +74,25 @@ test.afterAll(async () => {
 	await closeDb();
 });
 
-test('a gated document never appears in public HTML', async ({ page }) => {
+test("a gated document's file never appears in public HTML", async ({ page }) => {
+	// Phase 2 names a gated document so a visitor can ask for it — a trust
+	// centre that cannot say a SOC 2 report exists is not doing its job. What
+	// stays secret is the file id, because that *is* the download URL.
+	const [file] = await db
+		.select({ id: documentFile.id })
+		.from(documentFile)
+		.innerJoin(document, eq(documentFile.documentId, document.id))
+		.where(eq(document.slug, 'gated-fixture'));
+	if (!file) throw new Error('fixture file missing — check beforeAll');
+
 	await page.goto('/de/documents');
 
 	await expect(page.getByTestId('document-public-fixture')).toBeVisible();
-	await expect(page.getByTestId('document-gated-fixture')).toHaveCount(0);
-	expect(await page.content()).not.toContain('gated-fixture');
+	await expect(page.getByTestId('document-gated-fixture')).toBeVisible();
+	await expect(page.getByTestId('request-access-gated-fixture')).toBeVisible();
+
+	await expect(page.getByTestId('download-gated-fixture')).toHaveCount(0);
+	expect(await page.content()).not.toContain(file.id);
 });
 
 test('serves a public document file and records exactly one audit event', async ({ request }) => {

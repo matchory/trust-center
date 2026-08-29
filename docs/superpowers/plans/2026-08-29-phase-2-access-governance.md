@@ -142,23 +142,14 @@ Six admin route groups follow the Phase 1 pattern exactly: a `DataTable` list pa
 
 ## Execution log
 
-Tasks 1–8 are complete, and Task 9 is complete **except its Step 8** (commits
-`c2e79e5`..`67bae46`, all **unsigned** — re-sign before pushing).
+Tasks 1–9 are complete (commits `b9fef02`..`HEAD`, all signed).
 
-**Resume at Task 9 Step 8, then Task 10.** Step 8 surfaces the request
-affordance on `/{locale}/documents`, which means changing `listPublicDocuments`
-— the read model two permanent Phase 1 security tests guard ("a gated document
-never appears in public HTML", "…never appears in the sitemap"). Prefer a second
-function (`listGatedForPortal`, returning tier and title but never a `fileId`)
-over widening the existing one, so those tests keep guarding exactly what they
-guard today. Until that lands, `/{locale}/request` is reachable only by URL.
+**Resume at Task 10.**
 
-**Every commit so far is unsigned.** To re-sign the range in one go once the
-signing key is available:
-
-```bash
-git rebase --exec 'git commit --amend --no-edit -S' 04d8449
-```
+**Signing.** The phase's commits were re-signed on 2026-08-29 by rebasing onto
+`04d8449`, which rewrote every hash from `b9fef02` onward. `commit.gpgsign` is
+`true`, so an ordinary `pick` signs on its own; the `--exec 'git commit --amend
+-S'` originally suggested here was redundant and doubled the agent prompts.
 
 ### Departures from this plan, and why
 
@@ -200,6 +191,25 @@ git rebase --exec 'git commit --amend --no-edit -S' 04d8449
   configured environment to drain a queue or delete stale rows is untestable and
   more than either function needs to know; the job that calls them owns the
   lookup.
+
+- **Task 9 Step 8 — spec §12 amended, and the security test with it.** The step
+  as written was unsatisfiable. It asked for a per-document request affordance
+  while insisting the Phase 1 test "a gated document never appears in public
+  HTML" keep passing, and that test asserted the page contained the fixture's
+  slug nowhere at all — the fixture's *title* is `Fixture gated-fixture`, so any
+  row naming the document breaks it, `fileId` or no `fileId`. The suggested
+  `listGatedForPortal` does not rescue it: what the test guarded was the
+  document's existence, not its file. Settled deliberately in favour of naming
+  gated documents, which is what a trust centre is for and how every comparable
+  product behaves; spec §12 now says the **file** is what never appears, and
+  the test asserts the file id is absent from the HTML and no download link is
+  rendered. The sitemap guarantee is untouched.
+
+  Implemented as a private `listDocumentsByTier(db, tiers, opts)` with two
+  exported wrappers — `listPublicDocuments` (unchanged semantics, so the sitemap
+  and `getPublicDocument` keep theirs) and `listPortalDocuments`. Files are
+  queried for public-tier ids only, so a gated file id never leaves the
+  database rather than being nulled on the way out.
 
 ### Found while executing
 
@@ -3502,9 +3512,9 @@ export const actions: Actions = {
 
 `Seo` needs a `noindex` prop if it does not already have one — the request form must not be indexed. Check `src/lib/components/portal/Seo.svelte` and add it the way the admin layout suppresses indexing.
 
-- [ ] **Step 8: Surface the request affordance on the documents page** — NOT DONE, see the execution log
+- [x] **Step 8: Surface the request affordance on the documents page**
 
-In `src/routes/(portal)/documents/+page.server.ts`, the read model currently filters `tier = 'public'`. Widen it to include `request` and `nda` **for listing only**, returning the tier so the component can render the right affordance. A request-tier or NDA-tier row must expose no `fileId` — that is what keeps the gated document out of the HTML, and the Phase 1 security test asserting it must keep passing.
+In `src/routes/(portal)/documents/+page.server.ts`, the read model currently filters `tier = 'public'`. Widen it to include `request` and `nda` **for listing only**, returning the tier so the component can render the right affordance. A request-tier or NDA-tier row must expose no `fileId` — that is the download URL, and the Phase 1 security test guarding it is narrowed to assert exactly that. See the departure note: naming a gated document is a deliberate amendment to spec §12.
 
 In `+page.svelte`, per row:
 
