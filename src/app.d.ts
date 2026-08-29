@@ -11,6 +11,11 @@ declare global {
 			/** The locale taken from the URL prefix, or null on an unprefixed path. */
 			pathLocale: string | null;
 			staff: { id: string; email: string; name: string; role: 'admin' | 'approver' } | null;
+			/**
+			 * The verified prospect behind the gated subtree. Never populated on a
+			 * public path: the cookie carrying it is scoped to `/{locale}/access`.
+			 */
+			requester: { id: string; email: string; name: string; company: string } | null;
 		}
 		// interface PageData {}
 		// interface PageState {}

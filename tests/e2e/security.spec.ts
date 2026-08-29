@@ -183,3 +183,21 @@ test('a gated document never appears in the sitemap', async ({ request }) => {
 	const body = await (await request.get('/sitemap.xml')).text();
 	expect(body).not.toContain('gated-fixture');
 });
+
+test('no public route sets a cookie', async ({ page, context }) => {
+	// The permanent half of the guarantee, in one place. Only the gated /access
+	// subtree may set a cookie, which is what keeps every public response
+	// cacheable without a Vary: Cookie. `/de/access/verify` is listed on
+	// purpose: it lives under the gated path but sets its cookie on POST, never
+	// on the GET a mail gateway's link scanner might follow.
+	//
+	// Do not weaken this. A public page that starts setting a cookie is a
+	// defect, not a test to update.
+	for (const path of ['/de', '/de/documents', '/de/faq', '/de/request', '/de/access/verify']) {
+		const response = await page.goto(path);
+		// Asserted so a route that 500s cannot pass this test by setting no
+		// cookie on its error page.
+		expect(response?.status(), `${path} must render`).toBe(200);
+		expect(await context.cookies(), `${path} must set no cookie`).toHaveLength(0);
+	}
+});

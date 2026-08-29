@@ -1,5 +1,9 @@
 {
 	"$schema": "https://inlang.com/schema/inlang-message-format",
+	"access_verify_confirm": "Confirm request",
+	"access_verify_failed": "This link is invalid, expired, or already used. Please submit a new request.",
+	"access_verify_intro": "Select the button to confirm your request. The link works once.",
+	"access_verify_title": "Confirm your email address",
 	"admin_answer": "Answer",
 	"admin_archive": "Archive",
 	"admin_body": "Body",

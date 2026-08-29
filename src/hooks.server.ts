@@ -3,6 +3,11 @@ import { error, type Handle, type HandleServerError, type ServerInit } from '@sv
 import { SESSION_COOKIE, validateStaffSession } from '$lib/server/auth/session';
 import { getConfig } from '$lib/server/config';
 import { getDb } from '$lib/server/db/instance';
+import {
+	accessCookiePath,
+	REQUESTER_SESSION_COOKIE,
+	validateRequesterSession
+} from '$lib/server/identity/requester';
 import { COMPILED_LOCALES } from '$lib/i18n/compiled';
 import { classifyPath, resolveLocale } from '$lib/i18n/locale';
 import { assertIsLocale, overwriteServerAsyncLocalStorage } from '$lib/paraglide/runtime.js';
@@ -90,6 +95,27 @@ export const handle: Handle = async ({ event, resolve }) => {
 			};
 		} else {
 			event.cookies.delete(SESSION_COOKIE, { path: '/' });
+		}
+	}
+
+	event.locals.requester = null;
+	const requesterToken = event.cookies.get(REQUESTER_SESSION_COOKIE);
+
+	if (requesterToken) {
+		const session = await validateRequesterSession(getDb(), requesterToken);
+
+		if (session) {
+			event.locals.requester = {
+				id: session.requester.id,
+				email: session.requester.email,
+				name: session.requester.name,
+				company: session.requester.company
+			};
+		} else {
+			// Path must match how it was set, or the delete silently does nothing.
+			event.cookies.delete(REQUESTER_SESSION_COOKIE, {
+				path: accessCookiePath(event.locals.locale)
+			});
 		}
 	}
 

@@ -142,9 +142,10 @@ Six admin route groups follow the Phase 1 pattern exactly: a `DataTable` list pa
 
 ## Execution log
 
-Tasks 1–9 are complete (commits `b9fef02`..`HEAD`, all signed).
+Tasks 1–10 are complete (commits `b9fef02`..`HEAD`, all signed).
 
-**Resume at Task 10.**
+**Resume at Task 11.** Verification redirects to `/{locale}/access`, which Task
+11 builds — until it lands, a verified requester reaches a 404.
 
 **Signing.** The phase's commits were re-signed on 2026-08-29 by rebasing onto
 `04d8449`, which rewrote every hash from `b9fef02` onward. `commit.gpgsign` is
@@ -210,6 +211,41 @@ Tasks 1–9 are complete (commits `b9fef02`..`HEAD`, all signed).
   and `getPublicDocument` keep theirs) and `listPortalDocuments`. Files are
   queried for public-tier ids only, so a gated file id never leaves the
   database rather than being nulled on the way out.
+
+- **Task 10 — configuration stays an argument, as in Tasks 7 and 8.** The plan
+  had `createGrant` default its expiry from `getConfig()`. The integration
+  global setup provides `TEST_DATABASE_URL` and nothing else, so that call makes
+  every case in `access-verify.test.ts` unrunnable. `createGrant` now requires
+  `expiresAt` and `verifyRequest` takes `grantTtlDays`; the route owns the
+  lookup.
+
+- **Task 10 — the staff notification is queued by `verifyRequest`, after its
+  transaction commits.** The plan put it in the route, reasoning correctly that
+  a mail queued inside a transaction that later rolls back is a mail about a
+  request that does not exist — then asked for an integration case asserting
+  the queued row, which the route placement makes untestable. Queuing after the
+  commit, inside the function, satisfies both. `staffNotification` is an
+  optional argument, so an unset `STAFF_NOTIFICATION_EMAIL` cannot fail a
+  verification.
+
+- **Task 10 — the staff cookie rename is left to Task 17.** Step 7 moved
+  `SESSION_COOKIE` to the `__Host-` prefix here, on the grounds that "both
+  cookies are set in the same place". They are not: the staff cookie is set in
+  `src/routes/auth/callback/+server.ts` and the requester cookie in the verify
+  route. Nothing in Task 10 needs the rename, so it stays in Task 17 Step 1
+  where the rest of that item lives.
+
+- **Task 10 — `grantedDocuments` deduplicates.** A requester holding both an
+  explicit grant and an all-request-tier grant matches the same document twice
+  in the plan's query. The portal shows a document once, with the date access
+  actually ends, so the latest expiry wins.
+
+- **Task 10 Step 9 — the no-cookie assertion was not where the plan said.**
+  `security.spec.ts` did not assert it; `locale.spec.ts` and `request.spec.ts`
+  did, each for its own route. Both kept, and the consolidated permanent test
+  added to `security.spec.ts` covering `/de`, `/de/documents`, `/de/faq`,
+  `/de/request`, and `/de/access/verify`. It asserts each route returns 200 as
+  well, so a route that 500s cannot pass by setting no cookie on its error page.
 
 ### Found while executing
 
@@ -3597,7 +3633,7 @@ Where an unverified submission becomes an identity, a decision, and — when the
 - Produces: `verifyRequest(db, {token, ip, ua, locale})` → `VerificationOutcome`; `createGrant(db, {...})` → `{grantId}`; `activeGrantFor(db, requesterId)`.
 - Produces: `locals.requester`, consumed by Tasks 11 and 12.
 
-- [ ] **Step 1: Extend `locals`**
+- [x] **Step 1: Extend `locals`**
 
 In `src/app.d.ts`, alongside `staff`:
 
@@ -3610,7 +3646,7 @@ In `src/app.d.ts`, alongside `staff`:
 			} | null;
 ```
 
-- [ ] **Step 2: Write the failing test**
+- [x] **Step 2: Write the failing test**
 
 `tests/integration/access-verify.test.ts`:
 
@@ -3730,12 +3766,12 @@ describe('verifyRequest', () => {
 });
 ```
 
-- [ ] **Step 3: Run it and watch it fail**
+- [x] **Step 3: Run it and watch it fail**
 
 Run: `pnpm test:integration -- access-verify`
 Expected: FAIL — cannot resolve `../../src/lib/server/access/verify`.
 
-- [ ] **Step 4: Implement grants**
+- [x] **Step 4: Implement grants**
 
 `src/lib/server/access/grants.ts`:
 
@@ -3843,7 +3879,7 @@ export async function revokeGrant(
 }
 ```
 
-- [ ] **Step 5: Implement verification**
+- [x] **Step 5: Implement verification**
 
 `src/lib/server/access/verify.ts`:
 
@@ -4018,12 +4054,12 @@ Add an integration case to `tests/integration/access-verify.test.ts` asserting a
 `pending` outcome queues exactly one `staff_new_request` row and an `approved`
 outcome queues none.
 
-- [ ] **Step 6: Run it and watch it pass**
+- [x] **Step 6: Run it and watch it pass**
 
 Run: `pnpm test:integration -- access-verify`
 Expected: PASS, 5 tests.
 
-- [ ] **Step 7: Add the cookie prefixes and `locals.requester` to hooks**
+- [x] **Step 7: Add the cookie prefixes and `locals.requester` to hooks**
 
 In `src/hooks.server.ts`, the staff cookie constant moves to the `__Host-` prefix (Task 17 finishes that item; the constant changes here because both cookies are set in the same place and a split rename is worse). Add after the staff block:
 
@@ -4062,7 +4098,7 @@ export function accessCookiePath(locale: string): string {
 }
 ```
 
-- [ ] **Step 8: Write the verify route**
+- [x] **Step 8: Write the verify route**
 
 `src/routes/(portal)/access/verify/+page.server.ts`:
 
@@ -4136,7 +4172,7 @@ export const actions: Actions = {
 
 `+page.svelte` renders a single button posting the token, plus the failure message. Keep it to one form field (`<input type="hidden" name="token">`) and one submit button labelled `m.access_verify_confirm()`.
 
-- [ ] **Step 9: Split the permanent cookie test**
+- [x] **Step 9: Split the permanent cookie test**
 
 `tests/e2e/security.spec.ts` currently asserts the portal sets no cookies. Keep that assertion, scoped to public routes, and add its sibling:
 
@@ -4151,7 +4187,7 @@ test('the gated subtree is the only place a cookie is set', async ({ page, conte
 
 Do not weaken the public half. If a public page starts setting a cookie, that is a defect, not a test to update.
 
-- [ ] **Step 10: Run everything and commit**
+- [x] **Step 10: Run everything and commit**
 
 ```bash
 pnpm test:integration && pnpm test:e2e -- --project=app
