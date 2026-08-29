@@ -39,6 +39,15 @@ export const init: ServerInit = async () => {
 		const { migrate } = await import('drizzle-orm/postgres-js/migrator');
 		await migrate(getDb(), { migrationsFolder: './drizzle' });
 	}
+
+	// After migrations, so no job queries a table that does not exist yet.
+	// RUN_JOBS=false belongs to operators running a separate worker; the default
+	// single-container deployment has nowhere else to run them. Imported
+	// dynamically so `pnpm build` still needs neither config nor a database.
+	if (process.env.RUN_JOBS !== 'false') {
+		const { startJobRunner } = await import('$lib/server/jobs');
+		startJobRunner();
+	}
 };
 
 export const handle: Handle = async ({ event, resolve }) => {

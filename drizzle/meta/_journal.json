@@ -106,6 +106,13 @@
       "when": 1788004153631,
       "tag": "0014_mail",
       "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "7",
+      "when": 1788004400290,
+      "tag": "0015_staff_session_expiry_idx",
+      "breakpoints": true
     }
   ]
 }

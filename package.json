@@ -11,6 +11,7 @@
 		"preview": "node --env-file-if-exists=.env node_modules/vite/bin/vite.js preview",
 		"db:generate": "node --env-file-if-exists=.env node_modules/drizzle-kit/bin.cjs generate",
 		"db:migrate": "node --env-file-if-exists=.env node_modules/drizzle-kit/bin.cjs migrate",
+		"db:migrate:prod": "node --env-file-if-exists=.env tools/migrate.js",
 		"paraglide:compile": "paraglide-js compile --project ./project.inlang --outdir ./src/lib/paraglide",
 		"prepare": "pnpm paraglide:compile && (svelte-kit sync || echo '')",
 		"check": "pnpm paraglide:compile && svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",

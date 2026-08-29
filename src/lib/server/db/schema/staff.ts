@@ -30,5 +30,10 @@ export const staffSession = pgTable(
 		ua: text('ua'),
 		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow()
 	},
-	(table) => [index('staff_session_user_idx').on(table.staffUserId)]
+	(table) => [
+		index('staff_session_user_idx').on(table.staffUserId),
+		// The cleanup job deletes by expiry. Without this it scans, and every
+		// session validation scans past the expired rows that accumulate.
+		index('staff_session_expires_idx').on(table.expiresAt)
+	]
 );

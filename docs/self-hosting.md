@@ -51,6 +51,13 @@ refusal is recorded in the audit log.
 | `OIDC_GROUPS_CLAIM` | no | `groups` | Claim your IdP returns group memberships under. Entra ID uses `roles` for app roles. |
 | `SESSION_TTL_HOURS` | no | `12` | Hours a staff session stays valid before requiring a fresh login. |
 | `RUN_MIGRATIONS` | no | `true` | Whether the server applies migrations at start. Set to `false` when running more than one replica — see §7. |
+| `RUN_JOBS` | no | `true` | Whether the server runs background jobs — see §7a. |
+| `SMTP_URL` | for mail | — | e.g. `smtp://user:pass@host:587`. Unset means queued mail is never sent. |
+| `MAIL_FROM` | for mail | `trust-center@localhost` | Envelope sender for every message. |
+| `STAFF_NOTIFICATION_EMAIL` | no | — | Where "a new request is waiting for triage" notices go. Unset means none are sent. |
+| `REQUESTER_SESSION_TTL_HOURS` | no | `72` | How long a verified requester stays signed in. |
+| `MAGIC_LINK_TTL_MINUTES` | no | `30` | Lifetime of a single-use verification or sign-in link. |
+| `ACCESS_GRANT_DEFAULT_DAYS` | no | `90` | Default expiry when staff approve without naming one. |
 | `PORT` | no | `3000` | Port the server listens on. |
 | `BODY_SIZE_LIMIT` | no | `32M` | Largest request body `adapter-node` accepts, uploads included. |
 | `ADDRESS_HEADER` | behind a proxy | — | Header to read the client address from. Set to `X-Forwarded-For`. See §8 — without it every audit event records your proxy's address. |
@@ -184,14 +191,42 @@ failure mode, and there is no advisory lock around it. Set
 migrations enabled first — the server applies them before it starts serving:
 
 ```bash
-# One instance, migrations on. Stop it once it reports that it is listening.
-docker compose run --rm -e RUN_MIGRATIONS=true --no-deps app
+# Apply migrations once, then exit. Nothing starts serving.
+docker compose run --rm --entrypoint node app tools/migrate.js
 
 # Then the replicas, migrations off.
 RUN_MIGRATIONS=false docker compose up -d --scale app=3
 ```
 
+`tools/migrate.js` imports nothing from the application — it needs
+`DATABASE_URL` and the `drizzle` folder and no other configuration — so it works
+in the distroless image, which has no shell to exec into. Locally the same thing
+is `pnpm db:migrate:prod`.
+
 Take a database backup before upgrading. Migrations are not reversible.
+
+## 7a. Background jobs
+
+The server runs four jobs in-process on a timer. There is nothing to install and
+no scheduler to configure.
+
+| Job | Every | What it does |
+|---|---|---|
+| `mail:drain` | 15s | Sends queued mail from `outbound_email`, retrying with backoff. |
+| `sessions:cleanup` | 1h | Deletes expired staff and requester sessions. |
+| `requests:sweep` | 15m | Deletes access requests whose verification link expired unused. |
+
+Every tick takes a Postgres advisory lock named for its job, so running more
+than one replica is safe: a second instance whose tick overlaps skips that round
+rather than doing the work twice. Set `RUN_JOBS=false` if you would rather run a
+dedicated worker instance.
+
+**Mail is queued, never sent inline.** A request or a staff decision is never
+held up by, or failed by, an unreachable mail server. With `SMTP_URL` unset the
+queue accepts work and never drains it — correct for a build or a test run, and
+silent in production. If mail is not arriving, look at `outbound_email`:
+`status` is `pending`, `sent`, or `failed`, and `last_error` records why the
+most recent attempt failed.
 
 ## 8. Reverse proxy
 
