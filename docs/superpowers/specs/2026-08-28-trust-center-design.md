@@ -8,6 +8,10 @@
 Section 10 defines the one permitted exception to the append-only audit log. Both resolve
 contradictions carried over from Phase 0; no other section changed.
 
+**Amended 2026-08-29 (Phase 2 planning):** Section 6.5 states that watermarked delivery buffers
+rather than streams, Section 8 replaces the opaque `scope` columns with scope join tables, and
+Section 9.2 requires a POST to consume a magic link. No other section changed.
+
 ---
 
 ## 1. Summary
@@ -207,10 +211,15 @@ rather than rewriting features.
 ### 6.5 Document delivery
 
 Files are never served from storage directly, and no publicly reachable URL to a stored object ever
-exists. Every download passes through one endpoint that resolves the grant, writes an audit event,
-and streams a per-recipient watermarked copy. Watermarks carry recipient name, company, email,
-timestamp, and a confidentiality notice. `pdf-lib` is pure JavaScript and therefore survives a
-later move to an edge runtime.
+exists. Every download passes through one endpoint that resolves the grant and writes an audit
+event. Watermarks carry recipient name, company, email, timestamp, and a confidentiality notice.
+`pdf-lib` is pure JavaScript and therefore survives a later move to an edge runtime.
+
+Watermarking is not streamable: `pdf-lib` must hold the whole document in memory to load, stamp,
+and save it. Delivery is therefore two paths through one endpoint. An ungated download streams from
+storage untouched. A gated download buffers, stamps, and responds with bytes, bounded by the same
+`MAX_UPLOAD_MB` ceiling that admitted the file. The buffering cost falls only where the per-recipient
+watermark is what the audit trail is for.
 
 ### 6.6 Modules
 
@@ -300,23 +309,44 @@ page                + tr(title, body_md)      slug, status, nav_position
 staff_user          oidc_sub, email, name, role(admin|approver), last_login_at, disabled_at
 staff_session       token_hash, staff_user_id, expires_at, ip, ua
 requester           email unique, name, company, company_domain, first_seen_at, notes
-magic_link          token_hash, requester_id, purpose, expires_at, consumed_at
+magic_link          token_hash, requester_id?, purpose, expires_at, consumed_at
 requester_session   token_hash, requester_id, expires_at, ip, ua
 ```
+
+`magic_link.purpose` separates the two cases, and is why `requester_id` is nullable: a
+`verify_request` link is issued before any requester exists (§9.2), while a `sign_in` link
+re-authenticates a known one on the §9.9 return path.
 
 ### Access governance
 
 ```
 access_rule         pattern, action(auto_approve|review|deny), max_tier, priority
-access_request      requester_id, scope, justification, status, decided_by,
-                    decided_at, reason, source(portal|invite)
+access_request      requester_id?, status, all_request_tier, justification,
+                    decided_by, decided_at, reason, source(portal|invite),
+                    submitted_email?, submitted_name?, submitted_company?
+access_request_document  (request_id, document_id)
 nda_template        version, locale, body_md | file_key, effective_from
 nda_acceptance      requester_id, nda_template_version, method(clickthrough|esign),
                     accepted_at, ip, ua, typed_name, template_sha256,
                     record_pdf_key, envelope_id
-access_grant        requester_id, scope, nda_acceptance_id, granted_at,
+access_grant        requester_id, all_request_tier, nda_acceptance_id, granted_at,
                     expires_at, revoked_at, revoked_by
+access_grant_document    (grant_id, document_id)
 ```
+
+Scope is a set of documents, not an opaque column. A request and a grant each carry explicit
+document ids in a join table, plus an `all_request_tier` flag meaning "everything at that tier,
+including documents published later". Real foreign keys mean a deleted document cannot leave a
+dangling scope behind, and resolving what a requester may download is one join rather than a
+containment test over JSON.
+
+`access_request.requester_id` is nullable, and the three `submitted_*` columns exist, because §9.2
+makes verification the act that creates the `requester`. Between submission and verification a
+request holds the unverified email inline; consuming the magic link upserts the requester, adopts
+the row, and nulls those columns in one transaction. Unverified rows are swept once their link
+expires. The alternative — parking the submission as JSON on `magic_link` — would keep unverified
+email out of this table but would also throw away the referential integrity of a document selection
+the prospect has *already made* at submission time.
 
 ### Cross-cutting
 
@@ -337,7 +367,10 @@ setting             key unique, value jsonb
 1. **Request.** The prospect selects documents, or "all restricted", and submits email, name,
    company, and purpose. The response is byte-identical whether or not the email is already known.
 2. **Verify.** A single-use, short-TTL magic link, hashed at rest. Verification is what creates the
-   `requester` identity, so nobody can request access as somebody else.
+   `requester` identity, so nobody can request access as somebody else. Following the link renders a
+   confirmation page; a **POST** consumes the token. Enterprise mail gateways prefetch links to scan
+   them, and a single-use link burned by a scanner locks the requester out as effectively as a lost
+   email would.
 3. **Rule evaluation.** `access_rule` entries are matched by priority against the email domain:
    free-mail or competitor domains are denied or flagged; known-customer domains are auto-approved;
    everything else becomes pending and notifies staff.
@@ -351,7 +384,7 @@ setting             key unique, value jsonb
    both parties. The e-signature adapter substitutes this step and completes on webhook.
 6. **Grant active.** The requester session unlocks the granted document set until `expires_at`
    (default 90 days, configurable).
-7. **Download.** Streamed through the delivery endpoint, watermarked per recipient, one audit event
+7. **Download.** Served through the delivery endpoint, watermarked per recipient, one audit event
    per download.
 8. **Lapse.** A reminder precedes expiry; access then ends automatically. Revocation takes effect
    immediately.
@@ -422,7 +455,7 @@ This already exceeds both open-source prior-art projects.
 ### Phase 2 — Access governance · L
 
 Request-gated tier; requester identity and magic links; request form; staff triage queue; grants
-with scope and expiry; gated portal view; watermarked streaming downloads; notification emails for
+with scope and expiry; gated portal view; watermarked downloads; notification emails for
 new requests, decisions, access links, and expiry reminders; audit log viewer.
 
 ### Phase 3 — NDA workflow · M
