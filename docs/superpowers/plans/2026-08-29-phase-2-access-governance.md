@@ -142,8 +142,16 @@ Six admin route groups follow the Phase 1 pattern exactly: a `DataTable` list pa
 
 ## Execution log
 
-Tasks 1–8 are complete (commits `c2e79e5`..`3b308d1`, all **unsigned** — re-sign
-before pushing). Task 9 is the next one to run.
+Tasks 1–8 are complete, and Task 9 is complete **except its Step 8** (commits
+`c2e79e5`..`67bae46`, all **unsigned** — re-sign before pushing).
+
+**Resume at Task 9 Step 8, then Task 10.** Step 8 surfaces the request
+affordance on `/{locale}/documents`, which means changing `listPublicDocuments`
+— the read model two permanent Phase 1 security tests guard ("a gated document
+never appears in public HTML", "…never appears in the sitemap"). Prefer a second
+function (`listGatedForPortal`, returning tier and title but never a `fileId`)
+over widening the existing one, so those tests keep guarding exactly what they
+guard today. Until that lands, `/{locale}/request` is reachable only by URL.
 
 **Every commit so far is unsigned.** To re-sign the range in one go once the
 signing key is available:
@@ -209,6 +217,17 @@ git rebase --exec 'git commit --amend --no-edit -S' 04d8449
   isolation and in three subsequent full runs. `phase-2-carryover.md` records the
   same test flaking under load in Phase 0. Not a regression from the job runner,
   but it has now been seen twice and should be made robust rather than re-observed.
+
+- **The submission limiter throttles the e2e suite.** Five requests per hour per
+  address is right in production, and every browser test comes from localhost.
+  `tests/e2e/request.spec.ts` clears `rate_limit` per test and carries one
+  explicit case asserting the limiter engages. Any future spec that submits the
+  request form needs the same `beforeEach`.
+
+- **`Seo` gained a `noindex` prop** in Task 9, suppressing the canonical URL and
+  hreflang alternates along with adding the robots meta — a submission surface
+  has nothing for a crawler to prefer. Tasks 10 and 11 need it for the whole
+  `/access` subtree.
 
 - **Migrations are renamed by hand.** `drizzle-kit generate` assigns a random
   name; this repo uses descriptive ones, so each migration needs its file and its
@@ -2993,7 +3012,7 @@ Spec §9.1. The first requester-facing surface, and the one where enumeration re
 - Produces: `submitRequest(db, {email, name, company, justification, documentIds, allRequestTier})` → `{requestId, magicLinkToken}`; `requestableDocuments(db, locale)` → the picker's options.
 - Consumes: `issueMagicLink` (Task 3), `enqueueEmail` (Task 7), `consumeRateLimit` (Task 6).
 
-- [ ] **Step 1: Write the failing integration test**
+- [x] **Step 1: Write the failing integration test**
 
 `tests/integration/access-requests.test.ts`:
 
@@ -3142,12 +3161,12 @@ describe('submitRequest', () => {
 });
 ```
 
-- [ ] **Step 2: Run it and watch it fail**
+- [x] **Step 2: Run it and watch it fail**
 
 Run: `pnpm test:integration -- access-requests`
 Expected: FAIL — cannot resolve `../../src/lib/server/access/requests`.
 
-- [ ] **Step 3: Implement the request module**
+- [x] **Step 3: Implement the request module**
 
 `src/lib/server/access/requests.ts`:
 
@@ -3258,12 +3277,12 @@ export async function submitRequest(
 
 `issueMagicLink` takes a `Db`; a transaction handle satisfies the same type, which is what lets the link and the request commit together. If TypeScript disagrees, widen `Db` in `src/lib/server/db/index.ts` to include the transaction type rather than casting at the call site.
 
-- [ ] **Step 4: Run it and watch it pass**
+- [x] **Step 4: Run it and watch it pass**
 
 Run: `pnpm test:integration -- access-requests`
 Expected: PASS, 6 tests.
 
-- [ ] **Step 5: Add the message strings**
+- [x] **Step 5: Add the message strings**
 
 Add to both catalogs (`messages/en.json` shown; write real German for `de.json`):
 
@@ -3293,7 +3312,7 @@ Add to both catalogs (`messages/en.json` shown; write real German for `de.json`)
 pnpm paraglide:compile
 ```
 
-- [ ] **Step 6: Write the form's server route**
+- [x] **Step 6: Write the form's server route**
 
 `src/routes/(portal)/request/+page.server.ts`:
 
@@ -3406,7 +3425,7 @@ export const actions: Actions = {
 };
 ```
 
-- [ ] **Step 7: Write the form component**
+- [x] **Step 7: Write the form component**
 
 `src/routes/(portal)/request/+page.svelte`:
 
@@ -3483,7 +3502,7 @@ export const actions: Actions = {
 
 `Seo` needs a `noindex` prop if it does not already have one — the request form must not be indexed. Check `src/lib/components/portal/Seo.svelte` and add it the way the admin layout suppresses indexing.
 
-- [ ] **Step 8: Surface the request affordance on the documents page**
+- [ ] **Step 8: Surface the request affordance on the documents page** — NOT DONE, see the execution log
 
 In `src/routes/(portal)/documents/+page.server.ts`, the read model currently filters `tier = 'public'`. Widen it to include `request` and `nda` **for listing only**, returning the tier so the component can render the right affordance. A request-tier or NDA-tier row must expose no `fileId` — that is what keeps the gated document out of the HTML, and the Phase 1 security test asserting it must keep passing.
 
@@ -3495,7 +3514,7 @@ In `+page.svelte`, per row:
 
 Add `/request` to `src/lib/portal/sections.ts` only if the portal nav should carry it. It should not — the entry point is the documents page, where a person already knows what they want.
 
-- [ ] **Step 9: Write the end-to-end test**
+- [x] **Step 9: Write the end-to-end test**
 
 `tests/e2e/request.spec.ts`:
 
@@ -3539,7 +3558,7 @@ test('an unknown and a known email produce the same response', async ({ page }) 
 
 Add `data-testid="request-submitted"` to the confirmation `<p>` in the component.
 
-- [ ] **Step 10: Run everything and commit**
+- [x] **Step 10: Run everything and commit**
 
 ```bash
 pnpm test:integration -- access-requests
