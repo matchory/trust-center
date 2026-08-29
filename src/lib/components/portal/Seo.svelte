@@ -10,7 +10,8 @@
 		siteName,
 		locale,
 		locales,
-		defaultLocale
+		defaultLocale,
+		noindex = false
 	}: {
 		baseUrl: string;
 		title: string;
@@ -19,6 +20,12 @@
 		locale: string;
 		locales: readonly string[];
 		defaultLocale: string;
+		/**
+		 * A submission surface rather than content. Set on pages that exist to be
+		 * used rather than found — they carry no canonical URL either, because
+		 * there is nothing for a crawler to prefer.
+		 */
+		noindex?: boolean;
 	} = $props();
 
 	// Absolute URLs: canonical and og:url must not be relative, and the origin
@@ -34,20 +41,27 @@
 <svelte:head>
 	<title>{title} · {siteName}</title>
 	<meta name="description" content={description} />
-	<link rel="canonical" href={canonical} />
 
-	{#each locales as alternate (alternate)}
+	{#if noindex}
+		<meta name="robots" content="noindex, nofollow" />
+	{:else}
+		<link rel="canonical" href={canonical} />
+	{/if}
+
+	{#each noindex ? [] : locales as alternate (alternate)}
 		<link
 			rel="alternate"
 			hreflang={alternate}
 			href="{baseUrl}{localizePath(basePath, alternate)}"
 		/>
 	{/each}
-	<link
-		rel="alternate"
-		hreflang="x-default"
-		href="{baseUrl}{localizePath(basePath, defaultLocale)}"
-	/>
+	{#if !noindex}
+		<link
+			rel="alternate"
+			hreflang="x-default"
+			href="{baseUrl}{localizePath(basePath, defaultLocale)}"
+		/>
+	{/if}
 
 	<meta property="og:type" content="website" />
 	<meta property="og:site_name" content={siteName} />
