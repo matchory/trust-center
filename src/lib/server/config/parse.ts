@@ -19,6 +19,14 @@ export interface AppConfig {
 	storageDir: string;
 	maxUploadBytes: number;
 	sessionTtlHours: number;
+	requesterSessionTtlHours: number;
+	magicLinkTtlMinutes: number;
+	accessGrantDefaultDays: number;
+	mail: {
+		smtpUrl: string | undefined;
+		from: string;
+		staffNotificationEmail: string | undefined;
+	};
 	oidc: {
 		issuer: string;
 		clientId: string;
@@ -50,7 +58,16 @@ function buildSchema(compiledLocales: readonly string[]) {
 			OIDC_ADMIN_GROUP: z.string().min(1),
 			OIDC_APPROVER_GROUP: z.string().min(1).optional(),
 			OIDC_GROUPS_CLAIM: z.string().min(1).default('groups'),
-			SESSION_TTL_HOURS: z.coerce.number().int().positive().default(12)
+			SESSION_TTL_HOURS: z.coerce.number().int().positive().default(12),
+			REQUESTER_SESSION_TTL_HOURS: z.coerce.number().int().positive().default(72),
+			MAGIC_LINK_TTL_MINUTES: z.coerce.number().int().positive().default(30),
+			ACCESS_GRANT_DEFAULT_DAYS: z.coerce.number().int().positive().default(90),
+			// Optional so `pnpm build` and the unit suite keep working with no mail
+			// server. getMailer() throws a named error when a send is attempted
+			// without it, rather than the application refusing to start.
+			SMTP_URL: z.string().url().optional(),
+			MAIL_FROM: z.string().min(1).default('trust-center@localhost'),
+			STAFF_NOTIFICATION_EMAIL: z.string().email().optional()
 		})
 		.superRefine((value, ctx) => {
 			const unsupported = value.LOCALES.filter((locale) => !compiledLocales.includes(locale));
@@ -104,6 +121,14 @@ export function parseConfig(
 		storageDir: parsed.STORAGE_DIR,
 		maxUploadBytes: parsed.MAX_UPLOAD_MB * 1024 * 1024,
 		sessionTtlHours: parsed.SESSION_TTL_HOURS,
+		requesterSessionTtlHours: parsed.REQUESTER_SESSION_TTL_HOURS,
+		magicLinkTtlMinutes: parsed.MAGIC_LINK_TTL_MINUTES,
+		accessGrantDefaultDays: parsed.ACCESS_GRANT_DEFAULT_DAYS,
+		mail: {
+			smtpUrl: parsed.SMTP_URL,
+			from: parsed.MAIL_FROM,
+			staffNotificationEmail: parsed.STAFF_NOTIFICATION_EMAIL
+		},
 		oidc: {
 			issuer: parsed.OIDC_ISSUER,
 			clientId: parsed.OIDC_CLIENT_ID,
