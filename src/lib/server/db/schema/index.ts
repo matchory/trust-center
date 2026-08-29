@@ -10,3 +10,4 @@ export * from './updates';
 export * from './requesters';
 export * from './access';
 export * from './ratelimit';
+export * from './mail';

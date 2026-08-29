@@ -1,0 +1,74 @@
+import { m } from '../../paraglide/messages.js';
+import { assertIsLocale } from '../../paraglide/runtime.js';
+
+export const MAIL_TEMPLATES = [
+	'verify_request',
+	'request_approved',
+	'request_denied',
+	'sign_in',
+	'grant_expiring',
+	'staff_new_request'
+] as const;
+export type MailTemplate = (typeof MAIL_TEMPLATES)[number];
+
+export interface RenderedMail {
+	subject: string;
+	text: string;
+}
+
+export type MailPayload = Record<string, string | number>;
+
+/**
+ * Every message function is called with an explicit `locale` option, so these
+ * render outside the request's AsyncLocalStorage — which matters, because the
+ * drain job runs on a timer with no request in scope. A mail rendered in the
+ * ambient locale would be whatever the last HTTP request happened to be.
+ */
+export function renderTemplate(
+	id: MailTemplate,
+	locale: string,
+	payload: MailPayload
+): RenderedMail {
+	// Narrowed rather than cast: `locale` arrives from an outbound_email row, and
+	// a row naming a locale this build has no catalog for is a real problem. The
+	// throw is caught by the drain loop, which retries and then marks the mail
+	// failed with the reason recorded — better than silently sending the base
+	// locale to someone who asked for another.
+	const options = { locale: assertIsLocale(locale) };
+	const url = String(payload.url ?? '');
+	const documentCount = String(payload.documentCount ?? 0);
+	const expiresAt = String(payload.expiresAt ?? '');
+
+	switch (id) {
+		case 'verify_request':
+			return {
+				subject: m.mail_verify_request_subject({}, options),
+				text: m.mail_verify_request_body({ url }, options)
+			};
+		case 'request_approved':
+			return {
+				subject: m.mail_request_approved_subject({}, options),
+				text: m.mail_request_approved_body({ url, documentCount, expiresAt }, options)
+			};
+		case 'request_denied':
+			return {
+				subject: m.mail_request_denied_subject({}, options),
+				text: m.mail_request_denied_body({ reason: String(payload.reason ?? '') }, options)
+			};
+		case 'sign_in':
+			return {
+				subject: m.mail_sign_in_subject({}, options),
+				text: m.mail_sign_in_body({ url }, options)
+			};
+		case 'grant_expiring':
+			return {
+				subject: m.mail_grant_expiring_subject({}, options),
+				text: m.mail_grant_expiring_body({ documentCount, expiresAt }, options)
+			};
+		case 'staff_new_request':
+			return {
+				subject: m.mail_staff_new_request_subject({}, options),
+				text: m.mail_staff_new_request_body({ url }, options)
+			};
+	}
+}

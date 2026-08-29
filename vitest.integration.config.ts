@@ -1,6 +1,14 @@
+import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vitest/config';
 
 export default defineConfig({
+	resolve: {
+		// Same reason as vitest.config.ts: server modules import through `$lib`,
+		// SvelteKit resolves that alias via its Vite plugin, and plain Vitest
+		// never loads it. Needed here as soon as an integration test reaches a
+		// module that transitively imports getConfig().
+		alias: { $lib: fileURLToPath(new URL('./src/lib', import.meta.url)) }
+	},
 	test: {
 		environment: 'node',
 		include: ['tests/integration/**/*.test.ts'],
