@@ -140,6 +140,82 @@ Six admin route groups follow the Phase 1 pattern exactly: a `DataTable` list pa
 
 ---
 
+## Execution log
+
+Tasks 1–8 are complete (commits `c2e79e5`..`3b308d1`, all **unsigned** — re-sign
+before pushing). Task 9 is the next one to run.
+
+**Every commit so far is unsigned.** To re-sign the range in one go once the
+signing key is available:
+
+```bash
+git rebase --exec 'git commit --amend --no-edit -S' 04d8449
+```
+
+### Departures from this plan, and why
+
+- **Task 0, unplanned — `fix(compose)`.** Commit `1ce91a1` moved both compose
+  files to `postgres:18-alpine` but kept the `pgdata` volume mounted at
+  `/var/lib/postgresql/data`. PG18's `PGDATA` is `/var/lib/postgresql/18/docker`,
+  so the volume was never written to and the database lived on the container
+  layer — destroyed on every recreate, in `compose.yaml` as much as in the dev
+  file. Nothing in this phase could run until it was fixed.
+
+- **Task 1** — the helper needed `subjectType` and `meta` overrides, and
+  `saveTranslationAction` needed `required`/`optional` field lists. The plan's
+  `isPublished` for documents was wrong: status is `setStatus`'s business, and
+  deriving it in `saveMeta` would emit `document.published` on a slug edit.
+  Step 7's wrapper function does **not** silence `state_referenced_locally` —
+  Svelte flags any `$props()`-derived reference in a `$state` initializer
+  regardless of wrapping. Since no page read `activeLocale` for anything but the
+  binding, `LocaleTabs` now owns the selection outright, with one documented
+  suppression instead of six pages holding state they never used.
+
+- **Task 2** — not Testcontainers. Playwright interpolates `webServer.env` while
+  the config module is evaluated, strictly before `globalSetup` runs, so a URL
+  minted there can never reach the server under test. The suite provisions a
+  database inside the dev Postgres at config load instead, and repoints
+  `DATABASE_URL` so specs opening their own connections agree with the app.
+
+- **Task 3** — `requester.locale` added. Without it every notification falls back
+  to `DEFAULT_LOCALE`, which is an English mail to a German prospect.
+
+- **Task 4** — the plan's verification CHECK was wrong. Written as an equivalence,
+  it was also satisfied when both sides were false, so a verified row could keep
+  its submitted email — the exact leak the constraint exists to prevent. It is
+  now a `CASE` covering both directions. Drizzle also emitted the deferred
+  `magic_link.request_id` foreign key on its own once declared in the schema, so
+  no hand-editing of the migration was needed.
+
+- **Tasks 7 and 8** — `drainOutbox` and `sweepUnverifiedRequests` take their
+  configuration as arguments rather than calling `getConfig()`. Requiring a fully
+  configured environment to drain a queue or delete stale rows is untestable and
+  more than either function needs to know; the job that calls them owns the
+  lookup.
+
+### Found while executing
+
+- **Optional env vars rejected a blank value.** A `.env` spells "unset" as
+  `KEY=`, which reaches Zod as `''` and fails `.optional()`. `.env.example`
+  shipped `STAFF_NOTIFICATION_EMAIL=`, so copying it verbatim produced a
+  deployment that refused to boot. Fixed for `SMTP_URL`,
+  `STAFF_NOTIFICATION_EMAIL`, and the pre-existing `OIDC_APPROVER_GROUP`.
+
+- **`vitest.integration.config.ts` had no `$lib` alias**, which the unit config
+  has. It surfaced the moment an integration test reached a module importing
+  `getConfig()`.
+
+- **`tests/e2e/locale.spec.ts:63` flaked once** in a full run and passed in
+  isolation and in three subsequent full runs. `phase-2-carryover.md` records the
+  same test flaking under load in Phase 0. Not a regression from the job runner,
+  but it has now been seen twice and should be made robust rather than re-observed.
+
+- **Migrations are renamed by hand.** `drizzle-kit generate` assigns a random
+  name; this repo uses descriptive ones, so each migration needs its file and its
+  `drizzle/meta/_journal.json` tag renamed. Tasks 3–8 all did this.
+
+---
+
 ## Task 1: Extract the admin meta-form action
 
 The carry-over's one endorsed refactor. Four content types agreed on the shape of `saveMeta` while differing only in data, which is the same evidence threshold Task 11 of Phase 1 used. Doing it first means the six new admin surfaces in Tasks 13–16 are written against the helper rather than retrofitted into it.
@@ -156,7 +232,7 @@ This task also settles the audit action naming **before** the table grows, becau
 - Produces: `saveMetaAction<T>(opts)` and `saveTranslationAction(opts)` from `$lib/server/admin/actions`, used by every admin edit page from here on. Exact signatures in Step 3.
 - Produces: the audit action convention `<type>.translation.updated` with `meta: { locale }`, consumed by Task 16's viewer filters.
 
-- [ ] **Step 1: Write the failing test for the published/updated split**
+- [x] **Step 1: Write the failing test for the published/updated split**
 
 The helper's only branching logic is which action name to record. That is worth a unit test; the database round-trip is not, and is covered by the existing integration suites.
 
@@ -195,12 +271,12 @@ Add `translationAction` to the import on line 2:
 import { resolveMetaAction, translationAction } from '../../src/lib/server/admin/actions';
 ```
 
-- [ ] **Step 2: Run the test and watch it fail**
+- [x] **Step 2: Run the test and watch it fail**
 
 Run: `pnpm test:unit -- admin-actions`
 Expected: FAIL — `Failed to resolve import "../../src/lib/server/admin/actions"`.
 
-- [ ] **Step 3: Write the helper**
+- [x] **Step 3: Write the helper**
 
 `src/lib/server/admin/actions.ts`:
 
@@ -356,12 +432,12 @@ export function clientIp(event: RequestEvent): string | null {
 }
 ```
 
-- [ ] **Step 4: Run the test and watch it pass**
+- [x] **Step 4: Run the test and watch it pass**
 
 Run: `pnpm test:unit -- admin-actions`
 Expected: PASS, 4 tests.
 
-- [ ] **Step 5: Rewrite the FAQ edit page against the helper**
+- [x] **Step 5: Rewrite the FAQ edit page against the helper**
 
 This is the smallest of the six and the model for the rest. Replace the `saveMeta` and `saveTranslation` entries in `src/routes/(admin)/admin/faq/[id]/+page.server.ts`, keeping `load` and `remove` as they are:
 
@@ -440,7 +516,7 @@ export const actions: Actions = {
 
 The page component needs no change: `AdminActionFailure` has the same `{ field, locale? }` shape the page already narrows on. Its `fail<AnswerActionFailure>` type import goes away with the old code.
 
-- [ ] **Step 6: Rewrite the other five edit pages the same way**
+- [x] **Step 6: Rewrite the other five edit pages the same way**
 
 Apply the identical transformation to `documents/[id]`, `controls/[id]`, `certifications/[id]`, `subprocessors/[id]`, and `updates/[id]`. Each keeps its own Zod object, its own `read`, and its own `update` call; only the surrounding ceremony is deleted. The published predicates:
 
@@ -455,7 +531,7 @@ Apply the identical transformation to `documents/[id]`, `controls/[id]`, `certif
 
 `documents/[id]` keeps its file-upload action untouched — it is not a meta form and does not fit the helper.
 
-- [ ] **Step 7: Silence the `state_referenced_locally` warnings in `LocaleTabs`**
+- [x] **Step 7: Silence the `state_referenced_locally` warnings in `LocaleTabs`**
 
 Six edit pages each write `let activeLocale = $state(data.locale)`, seeding once and deliberately not tracking `data`. The behaviour is owned by `LocaleTabs`, so the suppression belongs there rather than at six call sites.
 
@@ -487,7 +563,7 @@ Then in each of the six edit pages:
 </script>
 ```
 
-- [ ] **Step 8: Verify the whole suite is green and `pnpm check` is silent**
+- [x] **Step 8: Verify the whole suite is green and `pnpm check` is silent**
 
 ```bash
 docker compose -f compose.dev.yaml up -d --wait
@@ -504,7 +580,7 @@ Note: `compose.dev.yaml` now pins `postgres:18-alpine` (commit `1ce91a1`). An ex
 docker compose -f compose.dev.yaml down -v && docker compose -f compose.dev.yaml up -d --wait
 ```
 
-- [ ] **Step 9: Commit**
+- [x] **Step 9: Commit**
 
 ```bash
 git add src/lib/server/admin/actions.ts src/lib/server/http/client-ip.ts \
@@ -530,16 +606,16 @@ Two carry-over defects and one left by commit `1ce91a1`. All three are test-infr
 - Produces: an e2e run against a disposable database, so Tasks 9–19 may create fixtures without cleaning up after themselves.
 - Produces: a second Playwright project, `origin`, whose `BASE_URL` differs from its listen address — the gap the Phase 1 review found and could not close.
 
-- [ ] **Step 1: Align the Testcontainers pin with the compose files**
+- [x] **Step 1: Align the Testcontainers pin with the compose files**
 
 `tests/setup/pg.ts` line 8, `postgres:16-alpine` → `postgres:18-alpine`. Dev and production run 18 as of `1ce91a1`; an integration suite on 16 tests a database nobody deploys.
 
-- [ ] **Step 2: Run the integration suite and watch it still pass**
+- [x] **Step 2: Run the integration suite and watch it still pass**
 
 Run: `pnpm test:integration`
 Expected: PASS. A green run here is the evidence that nothing in the schema depends on 16 — if a migration fails, that is a real finding and belongs in its own commit before continuing.
 
-- [ ] **Step 3: Correct the two stale "Postgres 16" references**
+- [x] **Step 3: Correct the two stale "Postgres 16" references**
 
 In `docs/self-hosting.md` §1, `**Postgres 16.**` → `**Postgres 18.**`. In the design spec §6.1, `Postgres 16.` → `Postgres 18.`, and add to the spec's amendment header:
 
@@ -548,7 +624,7 @@ In `docs/self-hosting.md` §1, `**Postgres 16.**` → `**Postgres 18.**`. In the
 files and the Testcontainers pin.
 ```
 
-- [ ] **Step 4: Write the disposable e2e database setup**
+- [x] **Step 4: Write the disposable e2e database setup**
 
 The e2e suite currently shares the dev database, so fixtures accumulate across runs and three Phase 1 assertions had to be rewritten when matching on fixture text broke on a second run.
 
@@ -587,7 +663,7 @@ export async function globalTeardown() {
 }
 ```
 
-- [ ] **Step 5: Wire it into Playwright, with the second origin project**
+- [x] **Step 5: Wire it into Playwright, with the second origin project**
 
 Replace `playwright.config.ts`:
 
@@ -674,7 +750,7 @@ export default defineConfig({
 
 and give the `origin` project `use: { baseURL: 'http://localhost:4174' }`.
 
-- [ ] **Step 6: Write the failing origin test**
+- [x] **Step 6: Write the failing origin test**
 
 `tests/e2e/origin.spec.ts`:
 
@@ -705,12 +781,12 @@ test('the sitemap lists BASE_URL origins', async ({ request }) => {
 });
 ```
 
-- [ ] **Step 7: Run it and watch it pass**
+- [x] **Step 7: Run it and watch it pass**
 
 Run: `pnpm test:e2e -- --project=origin`
 Expected: PASS, 3 tests. These pass because `b72f18c` already fixed the bug; the point is that they are now *capable* of failing, which nothing before them was. Verify that by temporarily reverting `Seo.svelte` to `page.url.origin`, watching test 1 fail, and restoring it.
 
-- [ ] **Step 8: Run the full e2e suite twice in a row**
+- [x] **Step 8: Run the full e2e suite twice in a row**
 
 ```bash
 pnpm test:e2e
@@ -719,11 +795,11 @@ pnpm test:e2e
 
 Expected: both green. The second run is the actual assertion — under the shared dev database, fixture accumulation made repeat runs fail, which is the defect this task closes.
 
-- [ ] **Step 9: Update CI**
+- [x] **Step 9: Update CI**
 
 `.github/workflows/ci.yml` no longer needs the dev compose stack for Playwright's database, but still needs it for the dev IdP that the admin specs sign in against. Leave the `docker compose -f compose.dev.yaml up -d --wait --build` step, and remove the now-redundant `pnpm db:migrate` before `pnpm test:e2e` — `globalSetup` migrates the disposable database itself.
 
-- [ ] **Step 10: Commit**
+- [x] **Step 10: Commit**
 
 ```bash
 git add playwright.config.ts tests/setup/e2e-db.ts tests/setup/pg.ts \
@@ -750,7 +826,7 @@ The second identity model. It shares no code path with staff sessions, by design
 - Produces: `issueMagicLink(db, {requesterId, purpose, requestId, ttlMinutes})` → `{token, expiresAt}`; `consumeMagicLink(db, token, purpose)` → `{magicLinkId, requesterId, requestId} | null`.
 - Consumes: `clientIp` from Task 1.
 
-- [ ] **Step 1: Write the schema**
+- [x] **Step 1: Write the schema**
 
 `src/lib/server/db/schema/requesters.ts`:
 
@@ -850,7 +926,7 @@ Add to `src/lib/server/db/schema/index.ts`:
 export * from './requesters';
 ```
 
-- [ ] **Step 2: Generate and apply the migration**
+- [x] **Step 2: Generate and apply the migration**
 
 ```bash
 pnpm db:generate
@@ -859,7 +935,7 @@ pnpm db:migrate
 
 Expected: `drizzle/0011_requesters.sql` created with three `CREATE TABLE` statements. Read it before applying — a generated migration that drops anything is a bug in the schema file, not something to run.
 
-- [ ] **Step 3: Write the failing integration test**
+- [x] **Step 3: Write the failing integration test**
 
 `tests/integration/requester.test.ts`:
 
@@ -996,12 +1072,12 @@ describe('requester sessions', () => {
 });
 ```
 
-- [ ] **Step 4: Run it and watch it fail**
+- [x] **Step 4: Run it and watch it fail**
 
 Run: `pnpm test:integration -- requester`
 Expected: FAIL — cannot resolve `../../src/lib/server/identity/requester`.
 
-- [ ] **Step 5: Write the requester module**
+- [x] **Step 5: Write the requester module**
 
 `src/lib/server/identity/requester.ts`:
 
@@ -1117,7 +1193,7 @@ export async function revokeAllRequesterSessions(db: Db, requesterId: string): P
 }
 ```
 
-- [ ] **Step 6: Write the magic-link module**
+- [x] **Step 6: Write the magic-link module**
 
 `src/lib/server/identity/magic-link.ts`:
 
@@ -1190,12 +1266,12 @@ export async function consumeMagicLink(
 }
 ```
 
-- [ ] **Step 7: Run the integration test and watch it pass**
+- [x] **Step 7: Run the integration test and watch it pass**
 
 Run: `pnpm test:integration -- requester`
 Expected: PASS, 8 tests.
 
-- [ ] **Step 8: Add the config this phase needs**
+- [x] **Step 8: Add the config this phase needs**
 
 In `src/lib/server/config/parse.ts`, extend `AppConfig`:
 
@@ -1254,7 +1330,7 @@ MAILPIT_SMTP_PORT=1025
 MAILPIT_UI_PORT=8025
 ```
 
-- [ ] **Step 9: Write the `clientIp` unit test**
+- [x] **Step 9: Write the `clientIp` unit test**
 
 `tests/unit/client-ip.test.ts`:
 
@@ -1285,7 +1361,7 @@ describe('clientIp', () => {
 });
 ```
 
-- [ ] **Step 10: Run everything and commit**
+- [x] **Step 10: Run everything and commit**
 
 ```bash
 pnpm test:unit && pnpm test:integration && pnpm lint && pnpm check
@@ -1308,7 +1384,7 @@ git commit -m "feat(identity): add requesters, magic links, and requester sessio
 **Interfaces:**
 - Produces: `accessRule`, `accessRequest`, `accessRequestDocument`, `accessGrant`, `accessGrantDocument` tables, and the `ACCESS_REQUEST_STATUSES` / `ACCESS_RULE_ACTIONS` value arrays consumed by Tasks 5, 9, 13, and 14.
 
-- [ ] **Step 1: Write the shared value arrays**
+- [x] **Step 1: Write the shared value arrays**
 
 These live outside `$lib/server` because Svelte components need them for `<select>` options, exactly as `src/lib/content-types.ts` does for content.
 
@@ -1337,7 +1413,7 @@ export const ACCESS_REQUEST_SOURCES = ['portal', 'invite'] as const;
 export type AccessRequestSource = (typeof ACCESS_REQUEST_SOURCES)[number];
 ```
 
-- [ ] **Step 2: Write the schema**
+- [x] **Step 2: Write the schema**
 
 `src/lib/server/db/schema/access.ts`:
 
@@ -1498,7 +1574,7 @@ Add to `src/lib/server/db/schema/index.ts`:
 export * from './access';
 ```
 
-- [ ] **Step 3: Generate the migration and add the deferred foreign key**
+- [x] **Step 3: Generate the migration and add the deferred foreign key**
 
 ```bash
 pnpm db:generate
@@ -1528,7 +1604,7 @@ and declare it in the schema so drizzle-kit does not try to add it again on the 
 
 with `import { accessRequest } from './access';`, `import type { AnyPgColumn } from 'drizzle-orm/pg-core';`, and the thunk form breaking the import cycle.
 
-- [ ] **Step 4: Apply and verify the constraints actually bite**
+- [x] **Step 4: Apply and verify the constraints actually bite**
 
 ```bash
 pnpm db:migrate
@@ -1568,7 +1644,7 @@ Import `accessRequest` from `../../src/lib/server/db/schema`.
 
 Note: Drizzle wraps driver errors, so `error.message` is only `Failed query: … params: …`. Any assertion on the *constraint name* must read `error.cause`. `rejects.toThrow()` with no argument is correct here and does not need it.
 
-- [ ] **Step 5: Run and commit**
+- [x] **Step 5: Run and commit**
 
 ```bash
 pnpm test:integration -- requester
@@ -1590,7 +1666,7 @@ Spec §9.3. A pure function over rules and a domain, so it is fully unit-testabl
 **Interfaces:**
 - Produces: `matchRule(rules, domain)` → `MatchedRule | null` and `decideFromRules(rules, domain)` → `{ action, maxTier, ruleId }`, consumed by Task 10's verification path.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 `tests/unit/access-rules.test.ts`:
 
@@ -1696,12 +1772,12 @@ describe('decideFromRules', () => {
 });
 ```
 
-- [ ] **Step 2: Run it and watch it fail**
+- [x] **Step 2: Run it and watch it fail**
 
 Run: `pnpm test:unit -- access-rules`
 Expected: FAIL — cannot resolve the module.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 `src/lib/server/access/rules.ts`:
 
@@ -1781,12 +1857,12 @@ export function decideFromRules(
 }
 ```
 
-- [ ] **Step 4: Run it and watch it pass**
+- [x] **Step 4: Run it and watch it pass**
 
 Run: `pnpm test:unit -- access-rules`
 Expected: PASS, 11 tests.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/lib/server/access/rules.ts tests/unit/access-rules.test.ts
@@ -1806,7 +1882,7 @@ Spec §10 requires it on request submission, magic-link issuance, and download �
 **Interfaces:**
 - Produces: `consumeRateLimit(db, {key, limit, windowSeconds})` → `{ allowed: boolean; retryAfterSeconds: number }`, consumed by Tasks 9, 10, and 12.
 
-- [ ] **Step 1: Write the schema**
+- [x] **Step 1: Write the schema**
 
 `src/lib/server/db/schema/ratelimit.ts`:
 
@@ -1835,7 +1911,7 @@ export const rateLimit = pgTable(
 
 Add `export * from './ratelimit';` to the schema index.
 
-- [ ] **Step 2: Write the failing test**
+- [x] **Step 2: Write the failing test**
 
 `tests/integration/ratelimit.test.ts`:
 
@@ -1901,12 +1977,12 @@ describe('consumeRateLimit', () => {
 });
 ```
 
-- [ ] **Step 3: Run it and watch it fail**
+- [x] **Step 3: Run it and watch it fail**
 
 Run: `pnpm test:integration -- ratelimit`
 Expected: FAIL — cannot resolve `../../src/lib/server/ratelimit`.
 
-- [ ] **Step 4: Implement**
+- [x] **Step 4: Implement**
 
 `src/lib/server/ratelimit.ts`:
 
@@ -1974,12 +2050,12 @@ export async function consumeRateLimit(
 }
 ```
 
-- [ ] **Step 5: Run it and watch it pass**
+- [x] **Step 5: Run it and watch it pass**
 
 Run: `pnpm test:integration -- ratelimit`
 Expected: PASS, 4 tests.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 pnpm db:generate && pnpm db:migrate   # drizzle/0013_ratelimit.sql
@@ -2006,14 +2082,14 @@ Spec §6.4's `MailAdapter`. Every send is queued: SMTP latency and outages must 
 - Produces: `enqueueEmail(db, {to, template, payload, locale})`; `drainOutbox(db, {limit})` → `{sent, failed}`; `renderTemplate(id, locale, payload)` → `{subject, text}`.
 - Consumes: nothing from earlier tasks beyond `Db`.
 
-- [ ] **Step 1: Add nodemailer**
+- [x] **Step 1: Add nodemailer**
 
 ```bash
 pnpm add nodemailer
 pnpm add -D @types/nodemailer
 ```
 
-- [ ] **Step 2: Write the schema**
+- [x] **Step 2: Write the schema**
 
 `src/lib/server/db/schema/mail.ts`:
 
@@ -2068,7 +2144,7 @@ Add `export * from './mail';` to the schema index, then:
 pnpm db:generate && pnpm db:migrate
 ```
 
-- [ ] **Step 3: Write the failing template test**
+- [x] **Step 3: Write the failing template test**
 
 Templates are pure and locale-sensitive, so they test without a database.
 
@@ -2109,12 +2185,12 @@ describe('renderTemplate', () => {
 });
 ```
 
-- [ ] **Step 4: Run it and watch it fail**
+- [x] **Step 4: Run it and watch it fail**
 
 Run: `pnpm test:unit -- mail-templates`
 Expected: FAIL — cannot resolve the module.
 
-- [ ] **Step 5: Write the message catalog entries**
+- [x] **Step 5: Write the message catalog entries**
 
 Add to `messages/en.json`:
 
@@ -2139,7 +2215,7 @@ Add the German equivalents to `messages/de.json` with the same keys. Every reque
 pnpm paraglide:compile
 ```
 
-- [ ] **Step 6: Implement the templates**
+- [x] **Step 6: Implement the templates**
 
 `src/lib/server/mail/templates.ts`:
 
@@ -2224,12 +2300,12 @@ export function renderTemplate(
 }
 ```
 
-- [ ] **Step 7: Run the template test and watch it pass**
+- [x] **Step 7: Run the template test and watch it pass**
 
 Run: `pnpm test:unit -- mail-templates`
 Expected: PASS, 2 tests (the second asserting 6 templates × 2 locales).
 
-- [ ] **Step 8: Write the port and the SMTP implementation**
+- [x] **Step 8: Write the port and the SMTP implementation**
 
 `src/lib/server/mail/index.ts`:
 
@@ -2291,7 +2367,7 @@ export function createSmtpMailer(url: string): MailAdapter {
 }
 ```
 
-- [ ] **Step 9: Write the failing queue test**
+- [x] **Step 9: Write the failing queue test**
 
 `tests/integration/mail-queue.test.ts`:
 
@@ -2400,12 +2476,12 @@ describe('drainOutbox', () => {
 });
 ```
 
-- [ ] **Step 10: Run it and watch it fail**
+- [x] **Step 10: Run it and watch it fail**
 
 Run: `pnpm test:integration -- mail-queue`
 Expected: FAIL — cannot resolve `../../src/lib/server/mail/queue`.
 
-- [ ] **Step 11: Implement the queue**
+- [x] **Step 11: Implement the queue**
 
 `src/lib/server/mail/queue.ts`:
 
@@ -2520,12 +2596,12 @@ export async function drainOutbox(
 }
 ```
 
-- [ ] **Step 12: Run it and watch it pass**
+- [x] **Step 12: Run it and watch it pass**
 
 Run: `pnpm test:integration -- mail-queue`
 Expected: PASS, 4 tests. The concurrency test is the one that matters — if it fails, `SKIP LOCKED` is not doing its job and two replicas would double-send.
 
-- [ ] **Step 13: Commit**
+- [x] **Step 13: Commit**
 
 ```bash
 pnpm lint && pnpm check
@@ -2549,7 +2625,7 @@ Spec §6.4's `JobRunner`. Three consumers arrive with it: draining the outbox, c
 **Interfaces:**
 - Produces: `startJobRunner()` / `stopJobRunner()`; `runJob(db, name, fn)` for advisory-locked periodic work; the `JOBS` registry consumed by Task 18.
 
-- [ ] **Step 1: Add the missing staff_session index**
+- [x] **Step 1: Add the missing staff_session index**
 
 The carry-over item: expired rows accumulate forever and every session validation scans past them. In `src/lib/server/db/schema/staff.ts`, add to `staffSession`'s index list:
 
@@ -2561,7 +2637,7 @@ The carry-over item: expired rows accumulate forever and every session validatio
 pnpm db:generate && pnpm db:migrate
 ```
 
-- [ ] **Step 2: Write the failing test**
+- [x] **Step 2: Write the failing test**
 
 `tests/integration/jobs.test.ts`:
 
@@ -2680,12 +2756,12 @@ describe('sweepUnverifiedRequests', () => {
 
 The staff-session test needs a staff user to exist. If `db.query.staffUser` is unavailable (the Drizzle query API needs the schema passed to `drizzle()`), insert one directly with `db.insert(staffUser).values({oidcSub: randomUUID(), email: 'a@b.c', name: 'A', role: 'admin'}).returning()` and use its id.
 
-- [ ] **Step 3: Run it and watch it fail**
+- [x] **Step 3: Run it and watch it fail**
 
 Run: `pnpm test:integration -- jobs`
 Expected: FAIL — cannot resolve `../../src/lib/server/jobs`.
 
-- [ ] **Step 4: Implement the advisory-locked runner**
+- [x] **Step 4: Implement the advisory-locked runner**
 
 `src/lib/server/jobs/runner.ts`:
 
@@ -2733,7 +2809,7 @@ export async function runJob(db: Db, name: string, fn: () => Promise<void>): Pro
 }
 ```
 
-- [ ] **Step 5: Implement the jobs and the ticker**
+- [x] **Step 5: Implement the jobs and the ticker**
 
 `src/lib/server/jobs/index.ts`:
 
@@ -2833,7 +2909,7 @@ export function stopJobRunner(): void {
 }
 ```
 
-- [ ] **Step 6: Start it from the init hook**
+- [x] **Step 6: Start it from the init hook**
 
 In `src/hooks.server.ts`, at the end of `init`, after the migration block:
 
@@ -2847,7 +2923,7 @@ In `src/hooks.server.ts`, at the end of `init`, after the migration block:
 	}
 ```
 
-- [ ] **Step 7: Add the `--migrate-only` entry point**
+- [x] **Step 7: Add the `--migrate-only` entry point**
 
 The carry-over item: `RUN_MIGRATIONS=false` tells multi-replica operators to bring one instance up with migrations on and stop it, which works but is graceless. Add to `package.json` scripts:
 
@@ -2889,7 +2965,7 @@ and the script:
 
 Document it in `docs/self-hosting.md` beside the existing `RUN_MIGRATIONS` guidance: `docker compose run --rm --entrypoint node app tools/migrate.js`.
 
-- [ ] **Step 8: Run everything and commit**
+- [x] **Step 8: Run everything and commit**
 
 ```bash
 pnpm test:integration -- jobs
