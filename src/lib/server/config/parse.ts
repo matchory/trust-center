@@ -1,5 +1,15 @@
 import { z } from 'zod';
 
+/**
+ * A `.env` conventionally spells "unset" as `KEY=`, which reaches us as an empty
+ * string rather than as undefined — and `.optional()` accepts only the latter.
+ * Without this, copying .env.example verbatim produces a deployment that
+ * refuses to boot on a variable the operator deliberately left blank.
+ */
+function blankAsUndefined<T extends z.ZodTypeAny>(schema: T) {
+	return z.preprocess((value) => (value === '' ? undefined : value), schema.optional());
+}
+
 const localeList = z
 	.string()
 	.min(1)
@@ -56,7 +66,7 @@ function buildSchema(compiledLocales: readonly string[]) {
 			OIDC_CLIENT_ID: z.string().min(1),
 			OIDC_CLIENT_SECRET: z.string().min(1),
 			OIDC_ADMIN_GROUP: z.string().min(1),
-			OIDC_APPROVER_GROUP: z.string().min(1).optional(),
+			OIDC_APPROVER_GROUP: blankAsUndefined(z.string().min(1)),
 			OIDC_GROUPS_CLAIM: z.string().min(1).default('groups'),
 			SESSION_TTL_HOURS: z.coerce.number().int().positive().default(12),
 			REQUESTER_SESSION_TTL_HOURS: z.coerce.number().int().positive().default(72),
@@ -65,9 +75,9 @@ function buildSchema(compiledLocales: readonly string[]) {
 			// Optional so `pnpm build` and the unit suite keep working with no mail
 			// server. getMailer() throws a named error when a send is attempted
 			// without it, rather than the application refusing to start.
-			SMTP_URL: z.string().url().optional(),
+			SMTP_URL: blankAsUndefined(z.string().url()),
 			MAIL_FROM: z.string().min(1).default('trust-center@localhost'),
-			STAFF_NOTIFICATION_EMAIL: z.string().email().optional()
+			STAFF_NOTIFICATION_EMAIL: blankAsUndefined(z.string().email())
 		})
 		.superRefine((value, ctx) => {
 			const unsupported = value.LOCALES.filter((locale) => !compiledLocales.includes(locale));

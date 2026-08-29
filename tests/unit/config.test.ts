@@ -84,3 +84,29 @@ describe('parseConfig', () => {
 		);
 	});
 });
+
+describe('optional variables left blank', () => {
+	it('treats an empty value as unset rather than invalid', () => {
+		// A .env conventionally spells "unset" as `KEY=`. Copying .env.example
+		// verbatim must not produce a deployment that refuses to boot.
+		const config = parseConfig(
+			{
+				...valid,
+				SMTP_URL: '',
+				STAFF_NOTIFICATION_EMAIL: '',
+				OIDC_APPROVER_GROUP: ''
+			},
+			COMPILED
+		);
+
+		expect(config.mail.smtpUrl).toBeUndefined();
+		expect(config.mail.staffNotificationEmail).toBeUndefined();
+		expect(config.oidc.approverGroup).toBeUndefined();
+	});
+
+	it('still rejects a value that is present but malformed', () => {
+		expect(() =>
+			parseConfig({ ...valid, STAFF_NOTIFICATION_EMAIL: 'not-an-email' }, ['de', 'en'])
+		).toThrow(/STAFF_NOTIFICATION_EMAIL/);
+	});
+});

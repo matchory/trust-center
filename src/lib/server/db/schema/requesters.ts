@@ -1,5 +1,7 @@
 import { sql } from 'drizzle-orm';
 import { check, index, pgTable, text, timestamp, uuid } from 'drizzle-orm/pg-core';
+import type { AnyPgColumn } from 'drizzle-orm/pg-core';
+import { accessRequest } from './access';
 
 /**
  * A requester exists only after email verification (spec §9.2), so every row
@@ -42,9 +44,11 @@ export const magicLink = pgTable(
 		// Null for `verify_request`: no requester exists until the link is used.
 		requesterId: uuid('requester_id').references(() => requester.id, { onDelete: 'cascade' }),
 		// Set for `verify_request`, so consuming the link knows which submission
-		// it verifies. The foreign key is added by the access migration, which is
-		// where access_request comes into existence.
-		requestId: uuid('request_id'),
+		// it verifies. The thunk breaks the import cycle with access.ts, which
+		// references `requester` in the other direction.
+		requestId: uuid('request_id').references((): AnyPgColumn => accessRequest.id, {
+			onDelete: 'cascade'
+		}),
 		purpose: text('purpose').notNull(),
 		expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
 		consumedAt: timestamp('consumed_at', { withTimezone: true }),

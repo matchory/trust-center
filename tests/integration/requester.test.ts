@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createDb } from '../../src/lib/server/db';
+import { accessRequest } from '../../src/lib/server/db/schema';
 import { consumeMagicLink, issueMagicLink } from '../../src/lib/server/identity/magic-link';
 import {
 	createRequesterSession,
@@ -24,6 +25,19 @@ afterAll(async () => {
 
 function email() {
 	return `person-${randomUUID()}@acme.example`;
+}
+
+/**
+ * A verify_request link now carries a real foreign key to the submission it
+ * verifies, so tests cannot invent an id for it.
+ */
+async function unverifiedRequest(): Promise<string> {
+	const [row] = await db
+		.insert(accessRequest)
+		.values({ status: 'unverified', submittedEmail: email(), submittedName: 'A' })
+		.returning({ id: accessRequest.id });
+
+	return row!.id;
 }
 
 describe('upsertRequester', () => {
@@ -67,7 +81,7 @@ describe('upsertRequester', () => {
 
 describe('magic links', () => {
 	it('consumes a link exactly once', async () => {
-		const requestId = randomUUID();
+		const requestId = await unverifiedRequest();
 		const { token } = await issueMagicLink(db, {
 			purpose: 'verify_request',
 			requestId,
@@ -84,7 +98,7 @@ describe('magic links', () => {
 	it('refuses a link presented for the wrong purpose', async () => {
 		const { token } = await issueMagicLink(db, {
 			purpose: 'verify_request',
-			requestId: randomUUID(),
+			requestId: await unverifiedRequest(),
 			ttlMinutes: 30
 		});
 
@@ -96,7 +110,7 @@ describe('magic links', () => {
 	it('refuses an expired link', async () => {
 		const { token } = await issueMagicLink(db, {
 			purpose: 'verify_request',
-			requestId: randomUUID(),
+			requestId: await unverifiedRequest(),
 			ttlMinutes: -1
 		});
 
@@ -178,5 +192,61 @@ describe('requester sessions', () => {
 
 		expect(await validateRequesterSession(db, a.token)).toBeNull();
 		expect(await validateRequesterSession(db, b.token)).toBeNull();
+	});
+});
+
+describe('access_request verification invariant', () => {
+	it('refuses a row that is unverified but already names a requester', async () => {
+		const row = await upsertRequester(db, {
+			email: email(),
+			name: 'A',
+			company: 'Acme',
+			locale: 'de'
+		});
+
+		await expect(
+			db.insert(accessRequest).values({
+				status: 'unverified',
+				requesterId: row.id,
+				submittedEmail: 'someone@acme.example'
+			})
+		).rejects.toThrow();
+	});
+
+	it('refuses a verified row that still carries a submitted email', async () => {
+		const row = await upsertRequester(db, {
+			email: email(),
+			name: 'A',
+			company: 'Acme',
+			locale: 'de'
+		});
+
+		await expect(
+			db.insert(accessRequest).values({
+				status: 'pending',
+				requesterId: row.id,
+				submittedEmail: 'someone@acme.example'
+			})
+		).rejects.toThrow();
+	});
+
+	it('accepts the two shapes the flow actually produces', async () => {
+		const [unverified] = await db
+			.insert(accessRequest)
+			.values({ status: 'unverified', submittedEmail: email(), submittedName: 'A' })
+			.returning();
+		expect(unverified).toBeDefined();
+
+		const row = await upsertRequester(db, {
+			email: email(),
+			name: 'A',
+			company: 'Acme',
+			locale: 'de'
+		});
+		const [verified] = await db
+			.insert(accessRequest)
+			.values({ status: 'pending', requesterId: row.id })
+			.returning();
+		expect(verified).toBeDefined();
 	});
 });
