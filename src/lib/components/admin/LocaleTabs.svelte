@@ -1,17 +1,29 @@
 <script lang="ts">
 	let {
 		locales,
-		active = $bindable(),
+		initial,
 		translated,
 		children
 	}: {
 		locales: readonly string[];
-		active: string;
+		/**
+		 * Which tab opens. Read once, on purpose — see `active` below. Callers pass
+		 * their loaded locale and never hold the selection themselves.
+		 */
+		initial: string;
 		/** Whether a locale has a translation — drives the visible
 		 * "not translated" marker the spec's fallback rule requires. */
 		translated: (locale: string) => boolean;
 		children: import('svelte').Snippet<[string]>;
 	} = $props();
+
+	// svelte-ignore state_referenced_locally
+	// Seeded once, deliberately not tracking `initial`: the tab a person has
+	// clicked must survive a form action's `data` invalidation, which is exactly
+	// what this warning describes and exactly what is wanted. Owning the
+	// selection here rather than at six call sites means one suppression instead
+	// of six, and `pnpm check` stays silent enough to be worth reading.
+	let active = $state(initial);
 </script>
 
 <div class="mb-3 flex gap-2 border-b">

@@ -1,8 +1,8 @@
-import { error, fail, redirect } from '@sveltejs/kit';
+import { error, redirect } from '@sveltejs/kit';
 import { z } from 'zod';
 import { localizePath } from '$lib/i18n/locale';
+import { saveMetaAction, saveTranslationAction } from '$lib/server/admin/actions';
 import { recordEvent } from '$lib/server/audit';
-import { getConfig } from '$lib/server/config';
 import {
 	deleteSubprocessor,
 	getSubprocessorForAdmin,
@@ -10,6 +10,7 @@ import {
 	updateSubprocessor
 } from '$lib/server/content/subprocessors';
 import { getDb } from '$lib/server/db/instance';
+import { clientIp } from '$lib/server/http/client-ip';
 import type { Actions, PageServerLoad } from './$types';
 
 export const load: PageServerLoad = async ({ params }) => {
@@ -18,115 +19,80 @@ export const load: PageServerLoad = async ({ params }) => {
 	return { subprocessor: item };
 };
 
-/** One shape for every action failure, so the form can narrow on `field` alone. */
-type SubprocessorActionFailure = { field: string; locale?: string };
-
 /** An empty date input submits '', which is "no date", not an invalid one. */
-const optionalDate = (value: FormDataEntryValue | null): Date | null => {
-	const text = String(value ?? '').trim();
-	return text ? new Date(text) : null;
-};
+const optionalDate = z
+	.string()
+	.trim()
+	.transform((raw) => (raw ? new Date(raw) : null))
+	.refine((date) => date === null || !Number.isNaN(date.getTime()), { message: 'invalid date' });
 
-const optionalText = (value: FormDataEntryValue | null): string | null =>
-	String(value ?? '').trim() || null;
+const optionalText = z
+	.string()
+	.trim()
+	.transform((raw) => raw || null);
 
 export const actions: Actions = {
-	saveMeta: async ({ request, params, locals, getClientAddress }) => {
-		const form = await request.formData();
-		const parsed = z
-			.object({
-				slug: z
-					.string()
-					.trim()
-					.regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/),
-				name: z.string().trim().min(1),
-				legalEntity: z.string().trim().min(1),
-				country: z
-					.string()
-					.trim()
-					.regex(/^[A-Z]{2}$/),
-				region: z.string().trim().min(1),
-				position: z.coerce.number().int()
+	saveMeta: saveMetaAction({
+		type: 'subprocessor',
+		schema: z.object({
+			slug: z
+				.string()
+				.trim()
+				.regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/),
+			name: z.string().trim().min(1),
+			legalEntity: z.string().trim().min(1),
+			country: z
+				.string()
+				.trim()
+				.regex(/^[A-Z]{2}$/),
+			region: z.string().trim().min(1),
+			position: z.coerce.number().int(),
+			published: z.boolean(),
+			hostingProvider: optionalText,
+			dpaUrl: optionalText,
+			startedAt: optionalDate,
+			endedAt: optionalDate
+		}),
+		read: (form) => ({
+			slug: form.get('slug'),
+			name: form.get('name'),
+			legalEntity: form.get('legalEntity'),
+			country: String(form.get('country') ?? '').toUpperCase(),
+			region: form.get('region'),
+			position: form.get('position') ?? 0,
+			published: form.get('published') === 'on',
+			hostingProvider: form.get('hostingProvider') ?? '',
+			dpaUrl: form.get('dpaUrl') ?? '',
+			startedAt: form.get('startedAt') ?? '',
+			endedAt: form.get('endedAt') ?? ''
+		}),
+		update: (db, id, data) => updateSubprocessor(db, id, data),
+		isPublished: (data) => data.published,
+		fallbackField: 'slug'
+	}),
+
+	saveTranslation: saveTranslationAction({
+		type: 'subprocessor',
+		required: ['purpose', 'dataCategories'],
+		set: (db, id, locale, values) =>
+			setSubprocessorTranslation(db, id, locale, {
+				purpose: values.purpose!,
+				dataCategories: values.dataCategories!
 			})
-			.safeParse({
-				slug: form.get('slug'),
-				name: form.get('name'),
-				legalEntity: form.get('legalEntity'),
-				country: String(form.get('country') ?? '').toUpperCase(),
-				region: form.get('region'),
-				position: form.get('position') ?? 0
-			});
-		if (!parsed.success) {
-			return fail<SubprocessorActionFailure>(400, {
-				field: String(parsed.error.issues[0]?.path[0] ?? 'slug')
-			});
-		}
+	}),
 
-		const published = form.get('published') === 'on';
+	remove: async (event) => {
 		const db = getDb();
-
-		await updateSubprocessor(db, params.id, {
-			...parsed.data,
-			hostingProvider: optionalText(form.get('hostingProvider')),
-			dpaUrl: optionalText(form.get('dpaUrl')),
-			startedAt: optionalDate(form.get('startedAt')),
-			endedAt: optionalDate(form.get('endedAt')),
-			published
-		});
-
-		await recordEvent(db, {
-			action: published ? 'subprocessor.published' : 'subprocessor.updated',
-			actor: { type: 'staff', id: locals.staff!.id },
-			subjectType: 'subprocessor',
-			subjectId: params.id,
-			ip: getClientAddress(),
-			meta: { ...parsed.data, published }
-		});
-
-		return { saved: true };
-	},
-
-	saveTranslation: async ({ request, params, locals, getClientAddress }) => {
-		const form = await request.formData();
-		const locale = String(form.get('locale') ?? '');
-		if (!getConfig().locales.includes(locale)) {
-			return fail<SubprocessorActionFailure>(400, { field: 'locale' });
-		}
-
-		const purpose = String(form.get('purpose') ?? '').trim();
-		const dataCategories = String(form.get('dataCategories') ?? '').trim();
-		if (!purpose) return fail<SubprocessorActionFailure>(400, { field: 'purpose', locale });
-		if (!dataCategories) {
-			return fail<SubprocessorActionFailure>(400, { field: 'dataCategories', locale });
-		}
-
-		const db = getDb();
-		await setSubprocessorTranslation(db, params.id, locale, { purpose, dataCategories });
-
-		await recordEvent(db, {
-			action: 'subprocessor.updated',
-			actor: { type: 'staff', id: locals.staff!.id },
-			subjectType: 'subprocessor',
-			subjectId: params.id,
-			ip: getClientAddress(),
-			meta: { locale }
-		});
-
-		return { saved: true };
-	},
-
-	remove: async ({ params, locals, getClientAddress }) => {
-		const db = getDb();
-		await deleteSubprocessor(db, params.id);
+		await deleteSubprocessor(db, event.params.id);
 
 		await recordEvent(db, {
 			action: 'subprocessor.deleted',
-			actor: { type: 'staff', id: locals.staff!.id },
+			actor: { type: 'staff', id: event.locals.staff!.id },
 			subjectType: 'subprocessor',
-			subjectId: params.id,
-			ip: getClientAddress()
+			subjectId: event.params.id,
+			ip: clientIp(event) ?? undefined
 		});
 
-		redirect(303, localizePath('/admin/subprocessors', locals.locale));
+		redirect(303, localizePath('/admin/subprocessors', event.locals.locale));
 	}
 };

@@ -1,9 +1,9 @@
-import { error, fail, redirect } from '@sveltejs/kit';
+import { error, redirect } from '@sveltejs/kit';
 import { z } from 'zod';
 import { CONTROL_STATUSES } from '$lib/content-types';
 import { localizePath } from '$lib/i18n/locale';
+import { saveMetaAction, saveTranslationAction } from '$lib/server/admin/actions';
 import { recordEvent } from '$lib/server/audit';
-import { getConfig } from '$lib/server/config';
 import {
 	deleteControl,
 	getControlForAdmin,
@@ -14,6 +14,7 @@ import {
 } from '$lib/server/content/controls';
 import { listDocumentsForAdmin } from '$lib/server/content/documents';
 import { getDb } from '$lib/server/db/instance';
+import { clientIp } from '$lib/server/http/client-ip';
 import type { Actions, PageServerLoad } from './$types';
 
 export const load: PageServerLoad = async ({ params }) => {
@@ -25,92 +26,65 @@ export const load: PageServerLoad = async ({ params }) => {
 	return { control: item, groups, documents };
 };
 
-/** One shape for every action failure, so the form can narrow on `field` alone. */
-type ControlActionFailure = { field: string; locale?: string };
-
 export const actions: Actions = {
-	saveMeta: async ({ request, params, locals, getClientAddress }) => {
-		const form = await request.formData();
-		const parsed = z
-			.object({
-				slug: z
-					.string()
-					.trim()
-					.regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/),
-				groupId: z.string().uuid(),
-				status: z.enum(CONTROL_STATUSES),
-				position: z.coerce.number().int()
+	saveMeta: saveMetaAction({
+		type: 'control',
+		schema: z.object({
+			slug: z
+				.string()
+				.trim()
+				.regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/),
+			groupId: z.string().uuid(),
+			status: z.enum(CONTROL_STATUSES),
+			position: z.coerce.number().int(),
+			published: z.boolean(),
+			evidence: z.array(z.string())
+		}),
+		read: (form) => ({
+			slug: form.get('slug'),
+			groupId: form.get('groupId'),
+			status: form.get('status'),
+			position: form.get('position') ?? 0,
+			published: form.get('published') === 'on',
+			evidence: form.getAll('evidence').map(String)
+		}),
+		update: async (db, id, data) => {
+			const { evidence, ...meta } = data;
+			await updateControl(db, id, meta);
+			// Evidence is submitted as the complete set every time, so an empty
+			// selection clears it — setControlEvidence deletes the rows.
+			await setControlEvidence(db, id, evidence);
+		},
+		isPublished: (data) => data.published,
+		// Evidence ids are a set of document references, not control metadata;
+		// the previous implementation left them out of the audit meta too.
+		meta: ({ evidence, ...rest }) => ({ ...rest, evidenceCount: evidence.length }),
+		fallbackField: 'slug'
+	}),
+
+	saveTranslation: saveTranslationAction({
+		type: 'control',
+		required: ['title'],
+		optional: ['description'],
+		set: (db, id, locale, values) =>
+			setControlTranslation(db, id, locale, {
+				title: values.title!,
+				description: values.description ?? null
 			})
-			.safeParse({
-				slug: form.get('slug'),
-				groupId: form.get('groupId'),
-				status: form.get('status'),
-				position: form.get('position') ?? 0
-			});
-		if (!parsed.success)
-			return fail<ControlActionFailure>(400, {
-				field: String(parsed.error.issues[0]?.path[0] ?? 'slug')
-			});
+	}),
 
-		const published = form.get('published') === 'on';
+	remove: async (event) => {
 		const db = getDb();
+		await deleteControl(db, event.params.id);
 
-		await updateControl(db, params.id, { ...parsed.data, published });
-		// Evidence is submitted as the complete set every time, so an empty
-		// selection clears it — `getAll` returns [] and setControlEvidence
-		// deletes the rows.
-		await setControlEvidence(db, params.id, form.getAll('evidence').map(String));
-
-		await recordEvent(db, {
-			action: published ? 'control.published' : 'control.updated',
-			actor: { type: 'staff', id: locals.staff!.id },
-			subjectType: 'control',
-			subjectId: params.id,
-			ip: getClientAddress(),
-			meta: { ...parsed.data, published }
-		});
-
-		return { saved: true };
-	},
-
-	saveTranslation: async ({ request, params, locals, getClientAddress }) => {
-		const form = await request.formData();
-		const locale = String(form.get('locale'));
-		if (!getConfig().locales.includes(locale))
-			return fail<ControlActionFailure>(400, { field: 'locale' });
-
-		const title = String(form.get('title') ?? '').trim();
-		if (!title) return fail<ControlActionFailure>(400, { field: 'title', locale });
-
-		const db = getDb();
-		await setControlTranslation(db, params.id, locale, {
-			title,
-			description: String(form.get('description') ?? '').trim() || null
-		});
-
-		await recordEvent(db, {
-			action: 'control.updated',
-			actor: { type: 'staff', id: locals.staff!.id },
-			subjectType: 'control',
-			subjectId: params.id,
-			ip: getClientAddress(),
-			meta: { translation: locale }
-		});
-
-		return { saved: true };
-	},
-
-	remove: async ({ params, locals, getClientAddress }) => {
-		const db = getDb();
-		await deleteControl(db, params.id);
 		await recordEvent(db, {
 			action: 'control.deleted',
-			actor: { type: 'staff', id: locals.staff!.id },
+			actor: { type: 'staff', id: event.locals.staff!.id },
 			subjectType: 'control',
-			subjectId: params.id,
-			ip: getClientAddress()
+			subjectId: event.params.id,
+			ip: clientIp(event) ?? undefined
 		});
 
-		redirect(303, localizePath('/admin/controls', locals.locale));
+		redirect(303, localizePath('/admin/controls', event.locals.locale));
 	}
 };

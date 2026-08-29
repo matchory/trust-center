@@ -7,10 +7,6 @@
 
 	let { data, form }: PageProps = $props();
 
-	// One tab per enabled locale — the "not translated" state has to be visible,
-	// not inferred from an empty field.
-	let activeLocale = $state(data.locale);
-
 	const translationFor = (locale: string) =>
 		data.subprocessor.translations.find((translation) => translation.locale === locale) ?? null;
 
@@ -122,7 +118,7 @@
 
 <LocaleTabs
 	locales={data.locales}
-	bind:active={activeLocale}
+	initial={data.locale}
 	translated={(locale) => translationFor(locale) !== null}
 >
 	{#snippet children(locale)}
