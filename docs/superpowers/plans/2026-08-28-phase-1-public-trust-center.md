@@ -7526,7 +7526,7 @@ the container to this phase; this closes it.
 - Modify: `vite.config.ts`, `package.json`, `src/hooks.server.ts`, `.dockerignore`, `.github/workflows/ci.yml`, `playwright.config.ts`, `README.md`
 - Test: the CI image build itself, plus a documented smoke run
 
-- [ ] **Step 1: Swap the adapter**
+- [x] **Step 1: Swap the adapter**
 
 ```bash
 pnpm remove @sveltejs/adapter-auto
@@ -7540,7 +7540,7 @@ configuration when one exists, and every setting in this project lives inline.
 
 Run `pnpm build` and confirm `build/index.js` appears.
 
-- [ ] **Step 2: Run migrations at start, behind a switch**
+- [x] **Step 2: Run migrations at start, behind a switch**
 
 Distroless has no shell, so "exec into the container and migrate" does not exist. Extend `init` in
 `src/hooks.server.ts`:
@@ -7566,7 +7566,7 @@ export const init: ServerInit = async () => {
 };
 ```
 
-- [ ] **Step 3: Write the Dockerfile**
+- [x] **Step 3: Write the Dockerfile**
 
 ```dockerfile
 # syntax=docker/dockerfile:1
@@ -7639,7 +7639,7 @@ playwright-report
 docs
 ```
 
-- [ ] **Step 4: Write the production compose file**
+- [x] **Step 4: Write the production compose file**
 
 ```yaml
 # docker-compose.yml — a complete single-host deployment.
@@ -7691,7 +7691,7 @@ volumes:
 The app is bound to `127.0.0.1` deliberately: it speaks plain HTTP and expects a TLS-terminating
 reverse proxy in front. `docs/self-hosting.md` says so explicitly.
 
-- [ ] **Step 5: Write the self-hosting guide**
+- [x] **Step 5: Write the self-hosting guide**
 
 Create `docs/self-hosting.md` covering, in this order:
 
@@ -7727,7 +7727,7 @@ Create `docs/self-hosting.md` covering, in this order:
 In `README.md`, add a line pointing at the guide, and a `docker compose up -d` quick start beside
 the existing development one.
 
-- [ ] **Step 6: Fix the CI double build and the stale Playwright comment**
+- [x] **Step 6: Fix the CI double build and the stale Playwright comment**
 
 In `playwright.config.ts`, stop rebuilding in CI, where the workflow has already built:
 
@@ -7777,7 +7777,7 @@ In `.github/workflows/ci.yml`, add an image build after the test steps:
 This is the step that would catch a broken adapter configuration, a missing runtime dependency, or
 migrations that fail to apply — none of which `pnpm build` can see.
 
-- [ ] **Step 7: Verify the image by hand**
+- [x] **Step 7: Verify the image by hand**
 
 ```bash
 docker build -t trust-center:local .
@@ -7799,7 +7799,7 @@ docker run --rm --network host \
 
 Note the `:5433` — host port 5432 belongs to an unrelated project on this machine.
 
-- [ ] **Step 8: Run everything and commit**
+- [x] **Step 8: Run everything and commit**
 
 ```bash
 pnpm lint && pnpm check && pnpm test:unit && pnpm test:integration && pnpm test:e2e

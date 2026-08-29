@@ -29,3 +29,21 @@ jobs:
       - run: pnpm exec playwright install --with-deps chromium
       - run: pnpm db:migrate
       - run: pnpm test:e2e
+      - name: Build the production image
+        run: docker build -t trust-center:ci .
+      - name: Confirm the image starts and serves the portal
+        run: |
+          docker run -d --name tc-smoke --network host \
+            -e DATABASE_URL=postgres://trustcenter:trustcenter@localhost:5432/trustcenter \
+            -e BASE_URL=http://localhost:3000 \
+            -e LOCALES=de,en -e DEFAULT_LOCALE=de \
+            -e OIDC_ISSUER=http://localhost:5556 \
+            -e OIDC_CLIENT_ID=trust-center -e OIDC_CLIENT_SECRET=dev-secret \
+            -e OIDC_ADMIN_GROUP=trust-center-admins \
+            trust-center:ci
+          for i in $(seq 1 30); do
+            if curl -fsS -o /dev/null http://localhost:3000/de; then exit 0; fi
+            sleep 2
+          done
+          docker logs tc-smoke
+          exit 1

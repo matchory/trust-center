@@ -1,0 +1,44 @@
+# docker-compose.yml — a complete single-host deployment.
+# See docs/self-hosting.md for every variable and for the OIDC setup.
+services:
+  app:
+    build: .
+    image: trust-center:local
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgres://trustcenter:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/trustcenter
+      BASE_URL: ${BASE_URL:?set BASE_URL, e.g. https://trust.example.com}
+      LOCALES: ${LOCALES:-de,en}
+      DEFAULT_LOCALE: ${DEFAULT_LOCALE:-de}
+      OIDC_ISSUER: ${OIDC_ISSUER:?set OIDC_ISSUER}
+      OIDC_CLIENT_ID: ${OIDC_CLIENT_ID:?set OIDC_CLIENT_ID}
+      OIDC_CLIENT_SECRET: ${OIDC_CLIENT_SECRET:?set OIDC_CLIENT_SECRET}
+      OIDC_ADMIN_GROUP: ${OIDC_ADMIN_GROUP:?set OIDC_ADMIN_GROUP}
+      OIDC_APPROVER_GROUP: ${OIDC_APPROVER_GROUP:-}
+      MAX_UPLOAD_MB: ${MAX_UPLOAD_MB:-25}
+    ports:
+      - '127.0.0.1:3000:3000'
+    volumes:
+      - storage:/data/storage
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: trustcenter
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+      POSTGRES_DB: trustcenter
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U trustcenter']
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+volumes:
+  storage:
+  pgdata:

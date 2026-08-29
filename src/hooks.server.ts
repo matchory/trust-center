@@ -22,12 +22,22 @@ overwriteServerAsyncLocalStorage(localeStorage);
  * 500 with the same parse error. `getConfig()` is memoised, so this also warms
  * it before the first request.
  */
-export const init: ServerInit = () => {
+export const init: ServerInit = async () => {
 	try {
 		getConfig();
 	} catch (cause) {
 		console.error(cause instanceof Error ? cause.message : cause);
 		process.exit(1);
+	}
+
+	// Default on, because the single-container deployment this ships for has
+	// nowhere else to run them. Operators running more than one replica set
+	// RUN_MIGRATIONS=false and run a one-off migration job instead — two
+	// replicas racing the same migration is a real failure mode, and there is
+	// no advisory lock around drizzle's migrator to prevent it.
+	if (process.env.RUN_MIGRATIONS !== 'false') {
+		const { migrate } = await import('drizzle-orm/postgres-js/migrator');
+		await migrate(getDb(), { migrationsFolder: './drizzle' });
 	}
 };
 

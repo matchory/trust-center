@@ -7,20 +7,14 @@ export default defineConfig({
 	// honours at the unprefixed root) is deterministic across machines/CI,
 	// rather than depending on the host's LANG/OS locale.
 	use: { baseURL: 'http://localhost:4173', locale: 'de-DE' },
-	// Run against a production preview build rather than `vite dev`, for
-	// parity with what actually ships. A previous version of this comment
-	// claimed `vite@8.2.2` + `@sveltejs/kit@2.70.3` have a dev-mode-only bug
-	// where the client router never intercepts link clicks — that was never
-	// confirmed. Checked directly (`pnpm dev`, a real click on a `/en` link
-	// injected at the `/` root, 3 runs): the navigation stayed client-side —
-	// no HTTP request was made for `/en`, a marker set on `window` before
-	// the click survived it, and `<html lang>` updated correctly — with
-	// these exact pinned versions on this machine. No dev-mode defect
-	// reproduced. Kept on `preview` anyway: testing against the built
-	// artifact is the better default regardless, which is what the "updates
-	// rendered messages on client-side navigation" test below depends on.
+	// Run against a production preview build rather than `vite dev`, for parity
+	// with what actually ships.
 	webServer: {
-		command: 'pnpm build && pnpm preview --port 4173 --strictPort',
+		// CI has already run `pnpm build`; rebuilding here doubles the slowest
+		// step of the workflow for nothing.
+		command: process.env.CI
+			? 'pnpm preview --port 4173 --strictPort'
+			: 'pnpm build && pnpm preview --port 4173 --strictPort',
 		url: 'http://localhost:4173',
 		reuseExistingServer: !process.env.CI,
 		timeout: 60_000,

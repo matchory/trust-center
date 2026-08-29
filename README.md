@@ -7,7 +7,20 @@ content, no third-party trackers on the public portal.
 
 Licensed under [AGPL-3.0-or-later](./LICENSE).
 
-## Getting started
+## Running it
+
+For a real deployment, everything runs from one compose file:
+
+```sh
+cp .env.example .env
+# Set POSTGRES_PASSWORD, BASE_URL, and the OIDC_* values.
+docker compose up -d
+```
+
+See [`docs/self-hosting.md`](./docs/self-hosting.md) for every environment variable, worked
+Keycloak and Authentik setups, reverse-proxy configuration, and backups.
+
+## Developing
 
 Requires Node 22+, [pnpm](https://pnpm.io), and Docker.
 
@@ -26,8 +39,8 @@ The app is then served at http://localhost:5173.
 
 ## Configuration
 
-See [`.env.example`](./.env.example) for every environment variable this app reads, with
-descriptions. One rule worth knowing up front: the locales a deployment can serve are compiled
+See [`docs/self-hosting.md`](./docs/self-hosting.md), or [`.env.example`](./.env.example), for
+every environment variable this app reads, with descriptions. One rule worth knowing up front: the locales a deployment can serve are compiled
 into the build; `LOCALES` selects which of them are enabled.
 
 ## Commands
@@ -42,5 +55,6 @@ into the build; `LOCALES` selects which of them are enabled.
 | `pnpm lint` / `pnpm format` | Check / fix formatting and lint issues                  |
 | `pnpm check`                | Type-check the project                                  |
 | `pnpm db:migrate`           | Apply database migrations                               |
+| `pnpm db:generate`          | Generate a migration from schema changes                |
 
 You can preview a production build with `pnpm preview`.
