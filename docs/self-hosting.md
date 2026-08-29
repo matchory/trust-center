@@ -6,7 +6,7 @@ else is contacted at runtime except your OIDC issuer.
 ## 1. What you need
 
 - **Docker** with Compose v2.
-- **Postgres 16.** `compose.yaml` provides one; point `DATABASE_URL` at
+- **Postgres 18.** `compose.yaml` provides one; point `DATABASE_URL` at
   your own instead if you already run a managed database.
 - **An OIDC issuer** that can return group memberships — Keycloak, Authentik,
   Entra ID, Okta, and Google Workspace all work. Staff roles come from groups,

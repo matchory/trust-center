@@ -25,9 +25,14 @@ jobs:
       - run: pnpm test:unit
       - run: cp .env.example .env
       - run: pnpm test:integration
+      # Still needed for the dev IdP the admin specs sign in against, and for the
+      # Postgres the e2e suite creates its disposable database inside.
       - run: docker compose -f compose.dev.yaml up -d --wait --build
       - run: pnpm exec playwright install --with-deps chromium
-      - run: pnpm db:migrate
+      # No `pnpm db:migrate` here any more: the e2e suite creates and migrates
+      # its own database per run (tests/setup/e2e-db.ts), so migrating the shared
+      # dev database bought nothing. The smoke container below still migrates it
+      # on boot, which is what that step is there to prove.
       - run: pnpm test:e2e
       - name: Build the production image
         run: docker build -t trust-center:ci .

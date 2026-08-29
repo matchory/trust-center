@@ -8,6 +8,9 @@
 Section 10 defines the one permitted exception to the append-only audit log. Both resolve
 contradictions carried over from Phase 0; no other section changed.
 
+**Amended 2026-08-29 (Phase 2, Task 2):** Section 6.1 names Postgres 18, matching the compose
+files and the Testcontainers pin.
+
 **Amended 2026-08-29 (Phase 2 planning):** Section 6.5 states that watermarked delivery buffers
 rather than streams, Section 8 replaces the opaque `scope` columns with scope join tables, and
 Section 9.2 requires a POST to consume a magic link. No other section changed.
@@ -157,7 +160,7 @@ governance, notifications, audit, analytics, and an internal answer library.
 ### 6.1 Stack
 
 SvelteKit 2 with Svelte 5 runes, TypeScript in strict mode, `adapter-node` in a distroless
-container. Postgres 16. Drizzle ORM for schema and migrations. Tailwind with a small set of
+container. Postgres 18. Drizzle ORM for schema and migrations. Tailwind with a small set of
 hand-rolled components. Paraglide JS (inlang) for interface strings. `pdf-lib` for watermarking and
 NDA record generation. `openid-client` for OIDC. Vitest for unit and integration tests,
 Testcontainers for Postgres, Playwright for end-to-end.

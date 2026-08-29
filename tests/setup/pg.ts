@@ -5,7 +5,7 @@ import { createDb } from '../../src/lib/server/db';
 let container: StartedPostgreSqlContainer | undefined;
 
 export async function setup() {
-	container = await new PostgreSqlContainer('postgres:16-alpine').start();
+	container = await new PostgreSqlContainer('postgres:18-alpine').start();
 	const url = container.getConnectionUri();
 	process.env.TEST_DATABASE_URL = url;
 
