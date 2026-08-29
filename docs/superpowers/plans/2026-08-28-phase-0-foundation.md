@@ -44,7 +44,7 @@ Two deliberate departures. Both are recorded here so they are visible to reviewe
 ## File Structure
 
 ```
-docker-compose.dev.yml            Postgres, Mailpit, stub IdP
+compose.dev.yaml            Postgres, Mailpit, stub IdP
 Dockerfile                        production image (added in Phase 1)
 drizzle.config.ts                 drizzle-kit configuration
 vitest.config.ts                  unit tests (node, no container)
@@ -456,7 +456,7 @@ git commit -m "feat: add validated environment configuration"
 ### Task 3: Development environment
 
 **Files:**
-- Create: `docker-compose.dev.yml`
+- Create: `compose.dev.yaml`
 - Create: `tools/dev-idp/server.js`
 - Create: `tools/dev-idp/package.json`
 - Create: `tools/dev-idp/Dockerfile`
@@ -571,7 +571,7 @@ CMD ["node", "server.js"]
 
 - [ ] **Step 2: Write the compose file**
 
-`docker-compose.dev.yml`:
+`compose.dev.yaml`:
 
 ```yaml
 services:
@@ -612,7 +612,7 @@ volumes:
 - [ ] **Step 3: Bring the environment up**
 
 ```bash
-docker compose -f docker-compose.dev.yml up -d --build
+docker compose -f compose.dev.yaml up -d --build
 ```
 
 - [ ] **Step 4: Verify all three services, including the groups claim support**
@@ -2269,7 +2269,7 @@ Expected: FAIL — `/admin` does not exist.
 Before running, ensure the development environment is up and `.env` exists:
 
 ```bash
-docker compose -f docker-compose.dev.yml up -d
+docker compose -f compose.dev.yaml up -d
 cp -n .env.example .env
 pnpm exec drizzle-kit migrate
 ```
@@ -2364,7 +2364,7 @@ If the stub provider's interaction form uses different field labels than `Login`
 In `.github/workflows/ci.yml`, append to the `verify` job's steps:
 
 ```yaml
-      - run: docker compose -f docker-compose.dev.yml up -d --build
+      - run: docker compose -f compose.dev.yaml up -d --build
       - run: pnpm exec playwright install --with-deps chromium
       - run: cp .env.example .env
       - run: pnpm exec drizzle-kit migrate
@@ -2382,7 +2382,7 @@ git commit -m "feat: add guarded admin shell with end-to-end OIDC login coverage
 
 ## Phase 0 completion criteria
 
-- [ ] `docker compose -f docker-compose.dev.yml up -d` brings up Postgres, Mailpit, and the stub IdP
+- [ ] `docker compose -f compose.dev.yaml up -d` brings up Postgres, Mailpit, and the stub IdP
 - [ ] `pnpm dev` serves `/` in German and `/en` in English
 - [ ] The public portal sets zero cookies, enforced by a permanent test
 - [ ] An admin signs in through OIDC and reaches `/admin`; an unmapped user is refused with 403

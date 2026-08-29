@@ -8,7 +8,7 @@ import { auditEvent } from '../../src/lib/server/db/schema';
 // read the real audit_event table, hence a direct DB connection here rather
 // than only asserting on browser-visible state. `DATABASE_URL` is loaded via
 // `test:e2e`'s `--env-file-if-exists=.env` (see package.json), pointing at
-// the same dev Postgres docker-compose.dev.yml starts.
+// the same dev Postgres compose.dev.yaml starts.
 const databaseUrl = process.env.DATABASE_URL;
 if (!databaseUrl) {
 	throw new Error(

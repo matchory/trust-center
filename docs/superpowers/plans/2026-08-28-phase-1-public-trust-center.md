@@ -95,7 +95,7 @@ route directory.
 
 ```
 Dockerfile                                  production image, multi-stage, distroless runtime
-docker-compose.yml                          production example: app + postgres
+compose.yaml                          production example: app + postgres
 docs/self-hosting.md                        deployment guide, every environment variable
 vite.config.ts                              MODIFIED: adapter-node, vitePreprocess, kit.csp
 .env.example / .env                         MODIFIED: renamed vars, STORAGE_DIR, MAX_UPLOAD_MB
@@ -790,7 +790,7 @@ Replace `.env.example` with:
 # --- Database ---------------------------------------------------------------
 DATABASE_URL=postgres://trustcenter:trustcenter@localhost:5432/trustcenter
 
-# Host port docker-compose.dev.yml publishes Postgres on. If you change this
+# Host port compose.dev.yaml publishes Postgres on. If you change this
 # because 5432 is taken, you must also update the port in DATABASE_URL above
 # to match, or the app will fail to connect.
 POSTGRES_PORT=5432
@@ -816,7 +816,7 @@ MAX_UPLOAD_MB=25
 
 # --- Staff authentication (OIDC) --------------------------------------------
 OIDC_ISSUER=http://localhost:5556
-# Host port docker-compose.dev.yml publishes the dev OIDC provider on. If you
+# Host port compose.dev.yaml publishes the dev OIDC provider on. If you
 # change this, you must also update the port in OIDC_ISSUER above to match.
 DEV_IDP_PORT=5556
 OIDC_CLIENT_ID=trust-center
@@ -950,7 +950,7 @@ In `tests/e2e/auth.spec.ts`, update the two URL assertions that assumed unprefix
 - [x] **Step 15: Run the whole suite**
 
 ```bash
-docker compose -f docker-compose.dev.yml up -d --wait
+docker compose -f compose.dev.yaml up -d --wait
 pnpm db:migrate
 pnpm lint && pnpm check && pnpm build
 pnpm test:unit && pnpm test:integration && pnpm test:e2e
@@ -7522,7 +7522,7 @@ a self-hosted Postgres, with no external service beyond SMTP and an OIDC issuer.
 the container to this phase; this closes it.
 
 **Files:**
-- Create: `Dockerfile`, `docker-compose.yml`, `docs/self-hosting.md`
+- Create: `Dockerfile`, `compose.yaml`, `docs/self-hosting.md`
 - Modify: `vite.config.ts`, `package.json`, `src/hooks.server.ts`, `.dockerignore`, `.github/workflows/ci.yml`, `playwright.config.ts`, `README.md`
 - Test: the CI image build itself, plus a documented smoke run
 
@@ -7642,7 +7642,7 @@ docs
 - [x] **Step 4: Write the production compose file**
 
 ```yaml
-# docker-compose.yml — a complete single-host deployment.
+# compose.yaml — a complete single-host deployment.
 # See docs/self-hosting.md for every variable and for the OIDC setup.
 services:
   app:
@@ -7838,7 +7838,7 @@ Phase 1 is complete when all of the following hold:
 
 - `pnpm lint && pnpm check && pnpm test:unit && pnpm test:integration && pnpm test:e2e` is green
   from a clean checkout, and `pnpm build` succeeds with no `.env` present.
-- `docker compose up -d` from `docker-compose.yml` serves the portal, and a staff member can sign
+- `docker compose up -d` from `compose.yaml` serves the portal, and a staff member can sign
   in through a real OIDC issuer, create content in both locales, and see it published.
 - The permanent security tests pass: no cookies on the portal, no third-party requests, a CSP with
   no `unsafe-inline`, a gated document absent from HTML and from the sitemap, and every download

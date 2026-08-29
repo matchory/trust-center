@@ -1,0 +1,59 @@
+services:
+  postgres:
+    image: postgres:18-alpine
+    environment:
+      POSTGRES_USER: trustcenter
+      POSTGRES_PASSWORD: trustcenter
+      POSTGRES_DB: trustcenter
+    ports:
+      - host_ip: 127.0.0.1
+        target: 5432
+        published: ${POSTGRES_PORT:-5432}
+        protocol: tcp
+        name: PostgreSQL
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U trustcenter']
+      interval: 2s
+      timeout: 3s
+      retries: 15
+    volumes:
+      - type: volume
+        source: pgdata
+        target: /var/lib/postgresql/data
+        volume:
+          labels:
+            database: ~
+
+  mailpit:
+    image: axllent/mailpit:v1.31.0
+    ports:
+      - host_ip: 127.0.0.1
+        target: 1025
+        published: ${MAILPIT_SMTP_PORT:-1025}
+        protocol: tcp
+        name: Mailpit SMTP
+        app_protocol: smtp
+      - host_ip: 127.0.0.1
+        target: 8025
+        published: ${MAILPIT_UI_PORT:-8025}
+        protocol: tcp
+        name: Mailpit UI
+        app_protocol: http
+
+  dev-idp:
+    build: ./tools/dev-idp
+    environment:
+      ISSUER: http://localhost:5556
+      # Accepts both the `pnpm dev` origin (5173) and the Playwright e2e preview server (4173):
+      # See playwright.config.ts's `webServer.env`.
+      REDIRECT_URIS: http://localhost:5173/auth/callback,http://localhost:4173/auth/callback
+    ports:
+      - host_ip: 127.0.0.1
+        target: 5556
+        published: ${DEV_IDP_PORT:-5556}
+        protocol: tcp
+        name: IdP API
+        app_protocol: http
+
+volumes:
+  pgdata:

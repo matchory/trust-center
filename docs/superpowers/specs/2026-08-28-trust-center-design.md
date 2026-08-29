@@ -186,7 +186,7 @@ No local accounts and no password fields anywhere in the schema.
   on every login so IdP offboarding takes effect immediately. Two roles: **admin** (full rights)
   and **approver** (triage and decide access requests; no configuration rights). This also removes
   the bootstrap problem — there is no seeded first user and no setup wizard.
-- Dex ships in `docker-compose.dev.yml` with static users in both groups. It doubles as the
+- Dex ships in `compose.dev.yaml` with static users in both groups. It doubles as the
   Playwright fixture for admin flows and as a reference configuration for self-hosters.
 - Back-channel logout and multiple simultaneous issuers are out of scope.
 

@@ -21,7 +21,7 @@ export default defineConfig({
 		// Overrides `.env`'s BASE_URL (which targets `pnpm dev`'s port 5173) so
 		// redirectUri() in src/lib/server/auth/oidc.ts matches the port this
 		// preview server actually listens on. The dev-IdP's client registration
-		// (docker-compose.dev.yml) accepts both origins.
+		// (compose.dev.yaml) accepts both origins.
 		env: { BASE_URL: 'http://localhost:4173' }
 	}
 });

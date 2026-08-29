@@ -28,7 +28,7 @@ Requires Node 22+, [pnpm](https://pnpm.io), and Docker.
 cp .env.example .env
 
 # Postgres, Mailpit, and a dev OIDC provider for local staff login
-docker compose -f docker-compose.dev.yml up -d --wait
+docker compose -f compose.dev.yaml up -d --wait
 
 pnpm install
 pnpm db:migrate

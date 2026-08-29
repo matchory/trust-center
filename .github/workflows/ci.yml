@@ -25,7 +25,7 @@ jobs:
       - run: pnpm test:unit
       - run: cp .env.example .env
       - run: pnpm test:integration
-      - run: docker compose -f docker-compose.dev.yml up -d --wait --build
+      - run: docker compose -f compose.dev.yaml up -d --wait --build
       - run: pnpm exec playwright install --with-deps chromium
       - run: pnpm db:migrate
       - run: pnpm test:e2e

@@ -6,7 +6,7 @@ else is contacted at runtime except your OIDC issuer.
 ## 1. What you need
 
 - **Docker** with Compose v2.
-- **Postgres 16.** `docker-compose.yml` provides one; point `DATABASE_URL` at
+- **Postgres 16.** `compose.yaml` provides one; point `DATABASE_URL` at
   your own instead if you already run a managed database.
 - **An OIDC issuer** that can return group memberships — Keycloak, Authentik,
   Entra ID, Okta, and Google Workspace all work. Staff roles come from groups,
@@ -56,7 +56,7 @@ refusal is recorded in the audit log.
 | `ADDRESS_HEADER` | behind a proxy | — | Header to read the client address from. Set to `X-Forwarded-For`. See §8 — without it every audit event records your proxy's address. |
 | `XFF_DEPTH` | behind a proxy | `1` | How many proxies you trust in front of the app. |
 
-`POSTGRES_PASSWORD` is read by `docker-compose.yml` only, to build
+`POSTGRES_PASSWORD` is read by `compose.yaml` only, to build
 `DATABASE_URL` and to initialise the bundled Postgres.
 
 ## 4. Setting up the OIDC issuer
