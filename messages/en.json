@@ -1,5 +1,10 @@
 {
 	"$schema": "https://inlang.com/schema/inlang-message-format",
+	"access_empty": "You have no active document access.",
+	"access_intro": "These documents are available to you until {expiresAt}.",
+	"access_sign_out": "Sign out",
+	"access_signed_in_as": "Signed in as {email}",
+	"access_title": "Your documents",
 	"access_verify_confirm": "Confirm request",
 	"access_verify_failed": "This link is invalid, expired, or already used. Please submit a new request.",
 	"access_verify_intro": "Select the button to confirm your request. The link works once.",

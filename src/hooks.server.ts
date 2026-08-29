@@ -4,8 +4,8 @@ import { SESSION_COOKIE, validateStaffSession } from '$lib/server/auth/session';
 import { getConfig } from '$lib/server/config';
 import { getDb } from '$lib/server/db/instance';
 import {
-	accessCookiePath,
 	REQUESTER_SESSION_COOKIE,
+	requesterCookieOptions,
 	validateRequesterSession
 } from '$lib/server/identity/requester';
 import { COMPILED_LOCALES } from '$lib/i18n/compiled';
@@ -112,10 +112,9 @@ export const handle: Handle = async ({ event, resolve }) => {
 				company: session.requester.company
 			};
 		} else {
-			// Path must match how it was set, or the delete silently does nothing.
-			event.cookies.delete(REQUESTER_SESSION_COOKIE, {
-				path: accessCookiePath(event.locals.locale)
-			});
+			// Every attribute must match how it was set, or the delete silently
+			// does nothing — see requesterCookieOptions.
+			event.cookies.delete(REQUESTER_SESSION_COOKIE, requesterCookieOptions(event.locals.locale));
 		}
 	}
 

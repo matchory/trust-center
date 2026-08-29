@@ -5,9 +5,9 @@ import { getConfig } from '$lib/server/config';
 import { getDb } from '$lib/server/db/instance';
 import { clientIp } from '$lib/server/http/client-ip';
 import {
-	accessCookiePath,
 	createRequesterSession,
-	REQUESTER_SESSION_COOKIE
+	REQUESTER_SESSION_COOKIE,
+	requesterCookieOptions
 } from '$lib/server/identity/requester';
 import { consumeRateLimit, rateLimitKey } from '$lib/server/ratelimit';
 import type { Actions, PageServerLoad } from './$types';
@@ -17,10 +17,10 @@ import type { Actions, PageServerLoad } from './$types';
  * mail gateway's link scanner burn a single-use link before the person ever
  * sees it (spec §9.2).
  */
-export const load: PageServerLoad = async ({ url, setHeaders }) => {
-	// Carries a token, so it is nobody's business but this visitor's.
-	setHeaders({ 'cache-control': 'no-store' });
-
+export const load: PageServerLoad = async ({ url }) => {
+	// `no-store` comes from the subtree's layout, which owns it for everything
+	// under /access. Setting it here too makes SvelteKit throw: the same header
+	// may not be set twice for one response.
 	return { token: url.searchParams.get('token') ?? '' };
 };
 
@@ -67,12 +67,7 @@ export const actions: Actions = {
 		});
 
 		event.cookies.set(REQUESTER_SESSION_COOKIE, sessionToken, {
-			path: accessCookiePath(event.locals.locale),
-			httpOnly: true,
-			sameSite: 'lax',
-			// Required by the __Secure- prefix. Browsers accept it on
-			// http://localhost; a plain-HTTP deployment will not.
-			secure: true,
+			...requesterCookieOptions(event.locals.locale),
 			expires: expiresAt
 		});
 

@@ -1,5 +1,10 @@
 {
 	"$schema": "https://inlang.com/schema/inlang-message-format",
+	"access_empty": "Für Sie ist derzeit kein Dokumentenzugriff freigeschaltet.",
+	"access_intro": "Diese Dokumente stehen Ihnen bis zum {expiresAt} zur Verfügung.",
+	"access_sign_out": "Abmelden",
+	"access_signed_in_as": "Angemeldet als {email}",
+	"access_title": "Ihre Dokumente",
 	"access_verify_confirm": "Anfrage bestätigen",
 	"access_verify_failed": "Dieser Link ist ungültig, abgelaufen oder wurde bereits verwendet. Bitte stellen Sie eine neue Anfrage.",
 	"access_verify_intro": "Klicken Sie auf die Schaltfläche, um Ihre Anfrage zu bestätigen. Der Link ist einmalig gültig.",

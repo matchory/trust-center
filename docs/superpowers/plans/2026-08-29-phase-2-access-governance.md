@@ -142,10 +142,12 @@ Six admin route groups follow the Phase 1 pattern exactly: a `DataTable` list pa
 
 ## Execution log
 
-Tasks 1–10 are complete (commits `b9fef02`..`HEAD`, all signed).
+Tasks 1–11 are complete (commits `b9fef02`..`HEAD`, all signed).
 
-**Resume at Task 11.** Verification redirects to `/{locale}/access`, which Task
-11 builds — until it lands, a verified requester reaches a 404.
+**Resume at Task 12.** The gated portal lists a grant holder's documents and
+links each to `/api/documents/{fileId}`, which still refuses every gated file
+with a 404 — Task 12 rewrites that endpoint to honour a grant and stamp the
+watermark. Until it lands, the download link on `/{locale}/access` 404s.
 
 **Signing.** The phase's commits were re-signed on 2026-08-29 by rebasing onto
 `04d8449`, which rewrote every hash from `b9fef02` onward. `commit.gpgsign` is
@@ -247,7 +249,43 @@ Tasks 1–10 are complete (commits `b9fef02`..`HEAD`, all signed).
   `/de/request`, and `/de/access/verify`. It asserts each route returns 200 as
   well, so a route that 500s cannot pass by setting no cookie on its error page.
 
+- **Task 11 — sign-out is an endpoint, not a form action.** The plan put it in
+  `logout/+page.server.ts`. A `+page.server.ts` exporting actions with no
+  `+page.svelte` beside it is not a valid page route, and the subtree's
+  `+layout.server.ts` guard does not run for endpoints — which is what lets
+  someone sign out when the session being revoked has already expired. It now
+  mirrors the staff sign-out at `src/routes/auth/logout/+server.ts`.
+
+- **Task 11 Step 5 — the plan's e2e tests were replaced.** Its second test
+  asserted only that a response was not null, which cannot fail; its third used
+  a regex that matches any `/api/documents/<uuid>` and so would have caught a
+  legitimate *public* download link, as the plan itself notes a line later. The
+  spec now drives the real flow — verify, land, list, sign out, replay — and
+  submits through `submitRequest` rather than the form, so it does not spend
+  the submission limiter's shared per-address budget that `request.spec.ts`
+  asserts on.
+
+- **Task 11 Step 3 — four of the listed strings were not added.**
+  `access_pending_title`, `access_pending_body`, `access_denied_title`, and
+  `access_expires_soon` have no call site: the plan's own note says the empty
+  state is what a pending requester sees, and per-row expiry is not in the
+  load's output. `access_verify_*` already landed with Task 10.
+
 ### Found while executing
+
+- **A `__Secure-` cookie cannot be deleted without `Secure`.** The browser
+  rejects any `Set-Cookie` for a `__Secure-` prefixed name that omits the
+  attribute — deletions included — so `cookies.delete(name, { path })` left the
+  session cookie in place and sign-out did nothing at the client. Caught by the
+  e2e sign-out test. The plan had the same defect in Task 10's hooks block, so
+  an expired session would never have had its cookie cleared either. Set and
+  delete now share `requesterCookieOptions(locale)`.
+
+- **`setHeaders` throws on a repeated header.** The verify page set
+  `cache-control: no-store` in its own load, and Task 11's subtree layout sets
+  it for everything under `/access`. Two `setHeaders` calls naming one header
+  is an error in SvelteKit, not a last-write-wins, so every `/access/verify`
+  render 500'd the moment the layout landed. The layout owns the header.
 
 - **Optional env vars rejected a blank value.** A `.env` spells "unset" as
   `KEY=`, which reaches Zod as `''` and fails `.optional()`. `.env.example`
@@ -4213,7 +4251,7 @@ Spec §6.2's "same shell, content filtered by the viewer's active grants", reali
 - Consumes: `locals.requester` (Task 10), `grantedDocuments` (Task 10).
 - Produces: the gated document list, whose `fileId` values Task 12's endpoint authorizes.
 
-- [ ] **Step 1: Guard the subtree**
+- [x] **Step 1: Guard the subtree**
 
 `src/routes/(portal)/access/+layout.server.ts`:
 
@@ -4241,7 +4279,7 @@ export const load: LayoutServerLoad = async ({ locals, url, setHeaders }) => {
 
 `+layout.svelte` reuses the portal shell components — `SectionHeading`, the locale switcher, branding — so the "same shell" claim is real rather than nominal. It adds a small header naming the signed-in requester and a sign-out form, and sets `noindex` on every page beneath it.
 
-- [ ] **Step 2: Write the landing page's load**
+- [x] **Step 2: Write the landing page's load**
 
 `src/routes/(portal)/access/+page.server.ts`:
 
@@ -4311,7 +4349,7 @@ export const load: PageServerLoad = async ({ locals }) => {
 
 A document whose locale has no current file renders with `m.documents_no_file()` rather than a broken link — the same fallback the public documents page already uses.
 
-- [ ] **Step 3: Add the strings and write the component**
+- [x] **Step 3: Add the strings and write the component**
 
 New keys in both catalogs:
 
@@ -4333,11 +4371,11 @@ New keys in both catalogs:
 
 `+page.svelte` renders `m.access_empty()` when the list is empty — which is also what a requester whose request is still `pending` sees, so the page needs no separate pending state. Each row links to `/api/documents/{fileId}` with `m.documents_download()`.
 
-- [ ] **Step 4: Write the sign-out route**
+- [x] **Step 4: Write the sign-out route**
 
 `src/routes/(portal)/access/logout/+page.server.ts` — a POST-only action that calls `revokeRequesterSession`, deletes the cookie at `accessCookiePath(locals.locale)`, records `requester.signed_out`, and redirects to the localized portal root.
 
-- [ ] **Step 5: Write the end-to-end test**
+- [x] **Step 5: Write the end-to-end test**
 
 `tests/e2e/access-portal.spec.ts`:
 
@@ -4367,7 +4405,7 @@ test('gated documents do not appear in the public documents page HTML', async ({
 
 The third test needs a public-tier document to be absent from the fixture set, or it will match a legitimate public download link. Scope it to the request-tier row instead: locate the row by its `m.documents_tier_request()` badge and assert that row contains no `<a href="/api/documents/...">`.
 
-- [ ] **Step 6: Run and commit**
+- [x] **Step 6: Run and commit**
 
 ```bash
 pnpm test:e2e -- --project=app access-portal

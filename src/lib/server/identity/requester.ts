@@ -15,6 +15,25 @@ export function accessCookiePath(locale: string): string {
 	return `/${locale}/access`;
 }
 
+/**
+ * The attributes the requester cookie is set with and — just as importantly —
+ * deleted with. A browser rejects any `Set-Cookie` for a `__Secure-` prefixed
+ * name that omits `Secure`, deletions included, so a delete that drops the
+ * attribute silently leaves the session cookie in place. Kept in one function
+ * so the two can never drift.
+ *
+ * `secure: true` is why this works on `http://localhost` but not on a
+ * plain-HTTP deployment: browsers treat localhost as a trustworthy origin.
+ */
+export function requesterCookieOptions(locale: string) {
+	return {
+		path: accessCookiePath(locale),
+		httpOnly: true,
+		sameSite: 'lax',
+		secure: true
+	} as const;
+}
+
 export type Requester = typeof requester.$inferSelect;
 
 /**
