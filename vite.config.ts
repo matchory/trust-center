@@ -10,9 +10,9 @@ export default defineConfig({
 		paraglideVitePlugin({
 			project: './project.inlang',
 			outdir: './src/lib/paraglide'
-			// No `strategy`: hooks.server.ts and hooks.client.ts both overwrite
-			// Paraglide's locale resolver, so any strategy configured here is
-			// dead configuration. See src/lib/i18n/compiled.ts.
+			// No `strategy`: hooks.server.ts and hooks.client.ts both overwrite Paraglide's locale
+			// resolver, so any strategy configured here is dead configuration.
+			// See src/lib/i18n/compiled.ts.
 		}),
 		tailwindcss(),
 		sveltekit({
@@ -38,8 +38,8 @@ export default defineConfig({
 					filename.split(/[/\\]/).includes('node_modules') ? undefined : true
 			},
 
-			// adapter-node: the product ships as one container behind whatever
-			// reverse proxy the operator already runs.
+			// adapter-node: the product ships as one container behind whatever reverse proxy the operator
+			// already runs.
 			adapter: adapter()
 		})
 	]
