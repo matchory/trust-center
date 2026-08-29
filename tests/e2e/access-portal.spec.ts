@@ -13,6 +13,7 @@ import {
 import { createDb, type Db } from '../../src/lib/server/db';
 import { accessRule, documentCategory, document } from '../../src/lib/server/db/schema';
 import { createLocalStorage, newStorageKey } from '../../src/lib/server/storage/local';
+import { blankPdf, drawnText } from '../helpers/pdf';
 
 const databaseUrl = process.env.DATABASE_URL;
 if (!databaseUrl) {
@@ -46,11 +47,11 @@ test.beforeAll(async () => {
 	});
 	await updateDocument(db, documentId, { status: 'published' });
 
+	// A real PDF, not a plausible-looking string: the watermarker refuses bytes
+	// it cannot parse, so a fake fixture would fail the download rather than
+	// exercise it.
 	const storage = createLocalStorage(process.env.STORAGE_DIR ?? './data/storage');
-	const stored = await storage.put(
-		newStorageKey(),
-		new TextEncoder().encode('%PDF-1.7 portal-gated-fixture')
-	);
+	const stored = await storage.put(newStorageKey(), await blankPdf(2));
 
 	await addDocumentFile(db, {
 		documentId,
@@ -186,4 +187,27 @@ test('a spent verification link cannot be replayed', async ({ page }) => {
 	await page.goto(url);
 	await page.getByTestId('verify-confirm').click();
 	await expect(page.getByTestId('verify-failed')).toBeVisible();
+});
+
+test('a grant holder downloads a watermarked copy that names them', async ({ page }) => {
+	const email = await signIn(page, AUTO_DOMAIN);
+
+	const href = await page.getByTestId('access-download-portal-gated-fixture').getAttribute('href');
+	if (!href) throw new Error('no download link on the gated portal');
+
+	const response = await page.request.get(href);
+	expect(response.status()).toBe(200);
+	expect(response.headers()['content-disposition']).toMatch(/attachment/);
+	// Every download is audited, so no cache may satisfy one on our behalf.
+	expect(response.headers()['cache-control']).toMatch(/no-store/);
+
+	const body = await response.body();
+
+	// The stored size would truncate the response at the byte the unstamped
+	// file ended, and a browser would report a corrupt download.
+	expect(Number(response.headers()['content-length'])).toBe(body.byteLength);
+
+	const drawn = drawnText(body);
+	expect(drawn).toContain(email);
+	expect(drawn).toContain('Acme');
 });

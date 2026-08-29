@@ -50,6 +50,7 @@
 		"drizzle-orm": "^0.45.2",
 		"nodemailer": "^9.0.6",
 		"openid-client": "^6.8.7",
+		"pdf-lib": "^1.17.1",
 		"postgres": "^3.4.9",
 		"zod": "^4.4.3"
 	}

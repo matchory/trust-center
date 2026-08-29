@@ -90,6 +90,7 @@
 	"documents_tier_request": "Auf Anfrage",
 	"documents_valid_until": "Gültig bis {date}",
 	"documents_version": "Version {version}",
+	"download_confidentiality_notice": "Vertraulich. Bereitgestellt im Rahmen einer Zugriffsfreigabe für die genannte Person; keine Weitergabe.",
 	"faq_empty": "Es wurden noch keine Fragen veröffentlicht.",
 	"faq_intro": "Antworten auf die Fragen, die uns am häufigsten gestellt werden.",
 	"mail_grant_expiring_body": "Ihr Zugriff auf {documentCount} Dokument(e) läuft am {expiresAt} ab.\n\nFalls Sie ihn weiterhin benötigen, antworten Sie auf diese Nachricht — wir verlängern ihn dann.",

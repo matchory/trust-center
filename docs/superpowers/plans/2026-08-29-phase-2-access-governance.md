@@ -142,17 +142,12 @@ Six admin route groups follow the Phase 1 pattern exactly: a `DataTable` list pa
 
 ## Execution log
 
-Tasks 1–11 are complete (commits `b9fef02`..`HEAD`, all signed).
+Tasks 1–12 are complete (commits `b9fef02`..`HEAD`, all signed).
 
-**Resume at Task 12.** The gated portal lists a grant holder's documents and
-links each to `/api/documents/{fileId}`, which still refuses every gated file
-with a 404 — Task 12 rewrites that endpoint to honour a grant and stamp the
-watermark. Until it lands, the download link on `/{locale}/access` 404s.
-
-**Signing.** The phase's commits were re-signed on 2026-08-29 by rebasing onto
-`04d8449`, which rewrote every hash from `b9fef02` onward. `commit.gpgsign` is
-`true`, so an ordinary `pick` signs on its own; the `--exec 'git commit --amend
--S'` originally suggested here was redundant and doubled the agent prompts.
+**Resume at Task 13.** The prospect's whole journey now works end to end:
+request, verify, auto-approval by rule, the gated portal, and a watermarked
+download. What is missing is the staff half — nothing can triage a `pending`
+request yet, so a domain with no matching rule reaches a queue that has no page.
 
 ### Departures from this plan, and why
 
@@ -271,7 +266,41 @@ watermark. Until it lands, the download link on `/{locale}/access` 404s.
   state is what a pending requester sees, and per-row expiry is not in the
   load's output. `access_verify_*` already landed with Task 10.
 
+- **Task 12 — gated delivery moved to `/{locale}/access/documents/{fileId}`.**
+  The plan added the gated branch to `/api/documents/{fileId}` and authorized it
+  from `locals.requester`. That cannot work: the requester cookie is scoped to
+  `/{locale}/access` (Task 10 Step 7), so the browser never sends it to
+  `/api/...` and every gated request arrives anonymous — a guaranteed 404, which
+  is exactly what the new e2e download test saw. The two tiers now live at two
+  paths, sharing one implementation in `src/lib/server/delivery/serve.ts` that
+  takes the tier as an argument and applies it as an equality in the query.
+
+  The alternative was widening the cookie to `Path=/`, which would have cost the
+  portal its "public pages set no cookies" guarantee and made every public
+  response vary by cookie. The path split keeps both properties and leaves
+  `/api/documents/{fileId}` behaving exactly as it did in Phase 1 — the
+  permanent test asserting a gated file 404s there still passes unchanged.
+
+- **Task 12 Step 8 — an e2e download test was added beyond the plan's list.**
+  The integration matrix asserts `mayDownload` and nothing else, so it cannot
+  see the endpoint. The plan names `content-length` as this task's likeliest
+  bug, and only a real download can catch it; the same test is what surfaced
+  the cookie-path defect above.
+
 ### Found while executing
+
+- **The plan's watermark assertion could never pass.** It grepped the saved
+  bytes for the recipient's company. pdf-lib Flate-compresses every content
+  stream and writes standard-font text as hex strings, so no drawn text ever
+  appears literally. `tests/helpers/pdf.ts` inflates the streams and decodes the
+  `<hex> Tj` operators instead, which is what makes the assertion mean "this is
+  page content" rather than "these bytes exist somewhere".
+
+- **Helvetica cannot encode beyond WinAnsi.** pdf-lib throws on a glyph the
+  standard font lacks, so a requester named with a CJK character or an emoji
+  would have failed the whole download rather than the stamp. `toWinAnsi`
+  reduces the text to what the font can draw. The email address, which is the
+  identifying part, is ASCII by the time it reaches the stamper.
 
 - **A `__Secure-` cookie cannot be deleted without `Secure`.** The browser
   rejects any `Set-Cookie` for a `__Secure-` prefixed name that omits the
@@ -4430,13 +4459,13 @@ Spec §6.5 and §9.7. The endpoint that already exists gains a second path; the 
 - Produces: `stampPdf(bytes, {name, company, email, at, notice})` → `Uint8Array`.
 - Consumes: `mayDownload` (Task 10), `clientIp` (Task 1), `consumeRateLimit` (Task 6).
 
-- [ ] **Step 1: Add pdf-lib**
+- [x] **Step 1: Add pdf-lib**
 
 ```bash
 pnpm add pdf-lib
 ```
 
-- [ ] **Step 2: Write the failing watermark test**
+- [x] **Step 2: Write the failing watermark test**
 
 `tests/unit/watermark.test.ts`:
 
@@ -4501,12 +4530,12 @@ describe('stampPdf', () => {
 });
 ```
 
-- [ ] **Step 3: Run it and watch it fail**
+- [x] **Step 3: Run it and watch it fail**
 
 Run: `pnpm test:unit -- watermark`
 Expected: FAIL — cannot resolve the module.
 
-- [ ] **Step 4: Implement the stamper**
+- [x] **Step 4: Implement the stamper**
 
 `src/lib/server/delivery/watermark.ts`:
 
@@ -4583,18 +4612,18 @@ export async function stampPdf(
 }
 ```
 
-- [ ] **Step 5: Run it and watch it pass**
+- [x] **Step 5: Run it and watch it pass**
 
 Run: `pnpm test:unit -- watermark`
 Expected: PASS, 5 tests.
 
-- [ ] **Step 6: Add the notice string**
+- [x] **Step 6: Add the notice string**
 
 ```json
 	"download_confidentiality_notice": "Confidential. Provided under an access grant to the named recipient; do not redistribute."
 ```
 
-- [ ] **Step 7: Rewrite the download endpoint**
+- [x] **Step 7: Rewrite the download endpoint**
 
 `src/routes/api/documents/[fileId]/+server.ts`:
 
@@ -4735,7 +4764,7 @@ export const GET: RequestHandler = async (event) => {
 
 `content-length` for the gated path is the *stamped* length, not `row.sizeBytes` — sending the stored size would truncate every watermarked download. That is the single most likely bug in this task.
 
-- [ ] **Step 8: Write the integration test**
+- [x] **Step 8: Write the integration test**
 
 `tests/integration/download.test.ts` covers the authorization matrix directly against the module boundary, because the route needs a full SvelteKit event:
 
@@ -4748,7 +4777,7 @@ export const GET: RequestHandler = async (event) => {
 
 Each case calls `mayDownload(db, requesterId, documentId)` and asserts the boolean, with fixtures built the way `access-verify.test.ts` builds them.
 
-- [ ] **Step 9: Run everything and commit**
+- [x] **Step 9: Run everything and commit**
 
 ```bash
 pnpm test:unit -- watermark

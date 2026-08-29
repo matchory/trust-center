@@ -2,6 +2,7 @@
 	import SectionHeading from '$lib/components/portal/SectionHeading.svelte';
 	import Seo from '$lib/components/portal/Seo.svelte';
 	import { formatDate } from '$lib/format';
+	import { localizePath } from '$lib/i18n/locale';
 	import { m } from '$lib/paraglide/messages.js';
 	import type { PageProps } from './$types';
 
@@ -48,7 +49,7 @@
 					</span>
 					<a
 						data-testid="access-download-{doc.slug}"
-						href="/api/documents/{doc.fileId}"
+						href={localizePath(`/access/documents/${doc.fileId}`, data.locale)}
 						class="rounded bg-[var(--tc-primary,#171717)] px-3 py-1.5 text-sm font-medium text-white"
 					>
 						{m.documents_download()}

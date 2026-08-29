@@ -90,6 +90,7 @@
 	"documents_tier_request": "On request",
 	"documents_valid_until": "Valid until {date}",
 	"documents_version": "Version {version}",
+	"download_confidentiality_notice": "Confidential. Provided under an access grant to the named recipient; do not redistribute.",
 	"faq_empty": "No questions have been published yet.",
 	"faq_intro": "Answers to the questions we are asked most often.",
 	"mail_grant_expiring_body": "Your access to {documentCount} document(s) expires on {expiresAt}.\n\nIf you still need it, reply to this message and we will extend it.",
