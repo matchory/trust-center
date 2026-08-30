@@ -142,11 +142,11 @@ Six admin route groups follow the Phase 1 pattern exactly: a `DataTable` list pa
 
 ## Execution log
 
-Tasks 1–17 are complete (commits `b9fef02`..`HEAD`, all signed).
+Tasks 1–18 are complete (commits `b9fef02`..`HEAD`, all signed).
 
-**Resume at Task 18** — expiry, reminders, and lapse. Everything the access
-journey needs is in place and the Phase 1 auth carry-overs are closed. What
-remains is the expiry and reminder job and the phase close.
+**Resume at Task 19** — the full journey, documentation, and phase close.
+Every feature this phase owes is built; what remains is the end-to-end proof
+that they compose, the operator documentation, and the carry-over.
 
 Decision 5 (`__Host-` on the staff cookie, and the HTTPS requirement it
 imposes) was **signed off before Task 17 ran**, on the evidence that Task 10
@@ -438,6 +438,34 @@ two cookies inconsistent rather than kept anything working.
 - **Task 17 — the sign-in helper's URL assertion waits 20s, not the default 5.**
   Signing in is three cross-origin navigations plus a token exchange, and the
   first test of a run pays the preview server's cold start on top.
+
+- **Task 18 — `sendExpiryReminders` takes `reminderDays`.** The step's code
+  calls `getConfig()`. Same reason as Tasks 7, 8, 10 and 13: the integration
+  setup provides `TEST_DATABASE_URL` and nothing else, so that call makes every
+  case in `expiry.test.ts` unrunnable. The job owns the lookup.
+
+- **Task 18 — no `url` in the payload.** The step queues one, but
+  `grant_expiring` renders only `documentCount` and `expiresAt`; the mail asks
+  the requester to reply rather than linking anywhere. Queueing a field nothing
+  renders is dead data in a table that keeps rows.
+
+- **Task 18 — `documentCount` is the grant's scope, not the requester's.** The
+  step offers `grantedDocuments(db, requesterId).length`, which counts every
+  document the person can currently reach across *all* their live grants. A
+  requester holding two grants would be told the wrong number about the one that
+  is lapsing. `countGrantDocuments(db, grantId)` answers the question actually
+  being asked, and the scope predicate it shares with `grantedDocuments` is now
+  written once — two copies of that could disagree about what someone was
+  granted.
+
+- **Task 18 — a purged-requester case was added beyond the step's list.** The
+  step's own query filters on `isNull(requester.purgedAt)` but names no case for
+  it, and mailing whatever is left in a purged row is the one thing erasure must
+  not do.
+
+- **Task 18 — `docs/self-hosting.md` §7a said "four jobs" over a table of
+  three.** Stale since it was written; the row this task adds makes the sentence
+  true rather than needing its own correction.
 
 ### Found while executing
 
@@ -5665,7 +5693,7 @@ Spec §9.8. A grant ends by itself; a reminder precedes it.
 - Produces: `sendExpiryReminders(db)`, registered in `JOBS`.
 - Consumes: `enqueueEmail` (Task 7), `runJob` (Task 8).
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 `tests/integration/expiry.test.ts`:
 
@@ -5693,7 +5721,7 @@ describe('sendExpiryReminders', () => {
 
 Each case builds a grant with a chosen `expiresAt`, runs the job, and counts `outbound_email` rows with template `grant_expiring` for that requester.
 
-- [ ] **Step 2: Implement**
+- [x] **Step 2: Implement**
 
 `src/lib/server/access/expiry.ts`:
 
@@ -5763,7 +5791,7 @@ export async function sendExpiryReminders(db: Db): Promise<{ queued: number }> {
 
 `documentCount` needs the real figure — call `grantedDocuments(db, requesterId)` per row and use its length, or drop the placeholder from the template. Do not ship a mail that says "0 documents".
 
-- [ ] **Step 3: Register the job and add the config**
+- [x] **Step 3: Register the job and add the config**
 
 In `src/lib/server/jobs/index.ts`, add to `JOBS`:
 
@@ -5773,7 +5801,7 @@ In `src/lib/server/jobs/index.ts`, add to `JOBS`:
 
 Add `ACCESS_GRANT_REMINDER_DAYS` (default `7`) to `parse.ts` and `.env.example`.
 
-- [ ] **Step 4: Run and commit**
+- [x] **Step 4: Run and commit**
 
 ```bash
 pnpm test:integration -- expiry
