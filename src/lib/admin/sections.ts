@@ -7,6 +7,7 @@ export interface AdminSection {
 
 /** One entry per content type, in the order the admin nav shows them. */
 export const ADMIN_SECTIONS: AdminSection[] = [
+	{ path: '/admin/requests', label: () => m.nav_requests() },
 	{ path: '/admin/documents', label: () => m.nav_documents() },
 	{ path: '/admin/controls', label: () => m.nav_controls() },
 	{ path: '/admin/certifications', label: () => m.nav_certifications() },

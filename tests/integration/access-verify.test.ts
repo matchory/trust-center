@@ -2,7 +2,8 @@ import { randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { submitRequest } from '../../src/lib/server/access/requests';
-import { verifyRequest } from '../../src/lib/server/access/verify';
+import { issueMagicLink } from '../../src/lib/server/identity/magic-link';
+import { consumeSignInLink, verifyRequest } from '../../src/lib/server/access/verify';
 import { createDb, type Db } from '../../src/lib/server/db';
 import {
 	accessGrant,
@@ -158,5 +159,36 @@ describe('verifyRequest', () => {
 		await verify(approved.magicLinkToken, notify);
 
 		expect(await db.select().from(outboundEmail)).toHaveLength(1);
+	});
+});
+
+describe('consumeSignInLink', () => {
+	it('mints an identity for a known requester and refuses a replay', async () => {
+		// Issued when staff decide a request: the requester's original session is
+		// long gone by then.
+		const { requestId, magicLinkToken } = await submitFrom(`signin${Date.now()}.example`);
+		const verified = await verify(magicLinkToken);
+		if (!verified.ok) throw new Error('fixture request did not verify');
+
+		const { token } = await issueMagicLink(db, {
+			purpose: 'sign_in',
+			requesterId: verified.requesterId,
+			ttlMinutes: 60
+		});
+
+		expect((await consumeSignInLink(db, { token, ip: null, ua: null }))?.requesterId).toBe(
+			verified.requesterId
+		);
+		expect(await consumeSignInLink(db, { token, ip: null, ua: null })).toBeNull();
+		expect(requestId).toBeTruthy();
+	});
+
+	it('does not consume a verification link presented as a sign-in link', async () => {
+		// Purpose is part of the consuming UPDATE's predicate, so the wrong-purpose
+		// attempt must leave the token usable.
+		const { magicLinkToken } = await submitFrom(`purpose${Date.now()}.example`);
+
+		expect(await consumeSignInLink(db, { token: magicLinkToken, ip: null, ua: null })).toBeNull();
+		expect((await verify(magicLinkToken)).ok).toBe(true);
 	});
 });

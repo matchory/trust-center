@@ -1,6 +1,6 @@
 import { redirect } from '@sveltejs/kit';
 import { localizePath } from '$lib/i18n/locale';
-import { verifyRequest } from '$lib/server/access/verify';
+import { consumeSignInLink, verifyRequest } from '$lib/server/access/verify';
 import { getConfig } from '$lib/server/config';
 import { getDb } from '$lib/server/db/instance';
 import { clientIp } from '$lib/server/http/client-ip';
@@ -56,11 +56,20 @@ export const actions: Actions = {
 				: null
 		});
 
+		// One route, two kinds of link: the verification link a submission
+		// produces, and the sign-in link a staff decision produces. The purpose is
+		// part of the consuming UPDATE's predicate, so the first attempt cannot
+		// burn a token belonging to the second.
+		const requesterId = outcome.ok
+			? outcome.requesterId
+			: ((await consumeSignInLink(db, { token, ip, ua: event.request.headers.get('user-agent') }))
+					?.requesterId ?? null);
+
 		// A spent, expired, or unknown token all end here, saying the same thing.
-		if (!outcome.ok) return { failed: true };
+		if (!requesterId) return { failed: true };
 
 		const { token: sessionToken, expiresAt } = await createRequesterSession(db, {
-			requesterId: outcome.requesterId,
+			requesterId,
 			ttlHours: config.requesterSessionTtlHours,
 			ip,
 			ua: event.request.headers.get('user-agent')

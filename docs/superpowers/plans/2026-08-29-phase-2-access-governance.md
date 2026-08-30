@@ -142,12 +142,14 @@ Six admin route groups follow the Phase 1 pattern exactly: a `DataTable` list pa
 
 ## Execution log
 
-Tasks 1–12 are complete (commits `b9fef02`..`HEAD`, all signed).
+Tasks 1–13 are complete (commits `b9fef02`..`HEAD`, all signed).
 
-**Resume at Task 13.** The prospect's whole journey now works end to end:
-request, verify, auto-approval by rule, the gated portal, and a watermarked
-download. What is missing is the staff half — nothing can triage a `pending`
-request yet, so a domain with no matching rule reaches a queue that has no page.
+**Resume at Task 14** — grants, rules, and access settings, the remaining admin
+CRUD. Both halves of the journey now work: a prospect requests, verifies, and
+downloads; staff triage what the rules did not decide. What has no surface yet
+is everything *after* a decision — a granted requester cannot be found, a grant
+cannot be revoked from the UI, and rules can only be written directly to the
+database.
 
 ### Departures from this plan, and why
 
@@ -286,6 +288,25 @@ request yet, so a domain with no matching rule reaches a queue that has no page.
   see the endpoint. The plan names `content-length` as this task's likeliest
   bug, and only a real download can catch it; the same test is what surfaced
   the cookie-path defect above.
+
+- **Task 13 — `decideRequest` takes `defaultTtlDays` rather than reading it.**
+  Same reason as `createGrant` and `verifyRequest`: the module would otherwise
+  need a configured environment to be testable. The route owns the lookup.
+
+- **Task 13 Step 6 — `requester.locale` already existed.** The plan offered to
+  add it here if Task 3 was already committed; Task 3's own departure added it
+  at the time, for exactly the reason given. The decision mail renders in it.
+
+- **Task 13 — `info_requested` sends no mail.** The plan's mail step names
+  `request_approved` and `request_denied` only, and `MAIL_TEMPLATES` has no
+  entry for a question, so asking for more information is recorded and left for
+  the operator to follow up out of band. `decidedAt` and `decidedByStaffId` stay
+  null: a question is not a decision, and the request stays in the queue.
+
+- **Task 13 Step 7 — `signInAsAdmin` moved to `tests/helpers/admin.ts`.**
+  Playwright refuses to let one test file import another, and it lived in
+  `admin-content.spec.ts`. `admin-documents.spec.ts` keeps its own private copy;
+  that duplication predates this task.
 
 ### Found while executing
 
@@ -4803,7 +4824,7 @@ Spec §9.4. Three outcomes: approve with an explicit scope and expiry, deny with
 - Produces: `decideRequest(db, {requestId, staffUserId, decision, documentIds, allRequestTier, expiresAt, reason})` → `{status, grantId}`.
 - Consumes: `createGrant` (Task 10), `enqueueEmail` (Task 7).
 
-- [ ] **Step 1: Write the failing decision test**
+- [x] **Step 1: Write the failing decision test**
 
 `tests/integration/access-decisions.test.ts` asserts:
 
@@ -4816,12 +4837,12 @@ Spec §9.4. Three outcomes: approve with an explicit scope and expiry, deny with
 
 Build fixtures the way `access-verify.test.ts` does, driving each request through `submitRequest` then `verifyRequest` so the rows are in a realistic state.
 
-- [ ] **Step 2: Run it and watch it fail**
+- [x] **Step 2: Run it and watch it fail**
 
 Run: `pnpm test:integration -- access-decisions`
 Expected: FAIL — `decideRequest` is not exported.
 
-- [ ] **Step 3: Implement `decideRequest`**
+- [x] **Step 3: Implement `decideRequest`**
 
 Add to `src/lib/server/access/requests.ts`:
 
@@ -4931,16 +4952,16 @@ export async function decideRequest(
 
 Import `createGrant`, `document`, `inArray`, and `AccessRequestStatus` at the top of the file.
 
-- [ ] **Step 4: Run it and watch it pass**
+- [x] **Step 4: Run it and watch it pass**
 
 Run: `pnpm test:integration -- access-decisions`
 Expected: PASS, 6 tests.
 
-- [ ] **Step 5: Build the queue page**
+- [x] **Step 5: Build the queue page**
 
 `/admin/requests` is a `DataTable` following the pattern in `src/routes/(admin)/admin/faq/+page.server.ts` exactly. Columns: requester email, company, status, requested scope size, submitted date. Default filter `status='pending'`, with the other statuses selectable. `unverified` rows are **not** listed — nobody has proven they control that address, and showing them would put unverified email in front of staff for no decision they can make.
 
-- [ ] **Step 6: Build the decision page**
+- [x] **Step 6: Build the decision page**
 
 `/admin/requests/[id]` loads the request, its requester, its requested documents, and the full `requestableDocuments` list so staff can narrow or widen. Three form actions — `approve`, `deny`, `requestInfo` — each calling `decideRequest`, then `recordEvent` with `access_request.approved` / `.denied` / `.info_requested`, then `enqueueEmail` to the requester with `request_approved` or `request_denied` in **the requester's** locale.
 
@@ -4950,11 +4971,11 @@ The approval mail's `url` is a `sign_in` magic link, not a bare portal URL: the 
 
 Which locale is "the requester's"? Nothing records it yet. Add `locale` to the `requester` table in Task 3's schema — set from `locals.locale` at verification — or, if Task 3 is already committed, add it in this task's migration. **Do this rather than defaulting to `DEFAULT_LOCALE`:** a German prospect who used the German portal must not receive English mail, and this is the only place the information exists.
 
-- [ ] **Step 7: Add the admin nav entry and strings, then write the e2e test**
+- [x] **Step 7: Add the admin nav entry and strings, then write the e2e test**
 
 `tests/e2e/admin-requests.spec.ts` signs in through the dev IdP the way `tests/e2e/admin-content.spec.ts` does, then: seeds a pending request through the database, opens `/admin/requests`, approves it with an explicit single-document scope, and asserts the request shows as approved and exactly one `outbound_email` row exists with template `request_approved`.
 
-- [ ] **Step 8: Run and commit**
+- [x] **Step 8: Run and commit**
 
 ```bash
 pnpm test:integration -- access-decisions

@@ -157,3 +157,31 @@ export async function verifyRequest(
 
 	return outcome;
 }
+
+/**
+ * A sign-in link, issued when staff approve or deny a request: by the time a
+ * human decides, the requester's original session is long gone. It mints
+ * nothing but an identity — there is no request to adopt and no rule to
+ * evaluate, because both already happened at verification.
+ *
+ * Single-use and purpose-scoped by `consumeMagicLink`, so a `verify_request`
+ * token presented here is not consumed by the attempt, and vice versa.
+ */
+export async function consumeSignInLink(
+	db: Db,
+	input: { token: string; ip: string | null; ua: string | null }
+): Promise<{ requesterId: string } | null> {
+	const link = await consumeMagicLink(db, input.token, 'sign_in');
+	if (!link?.requesterId) return null;
+
+	await recordEvent(db, {
+		action: 'requester.signed_in',
+		actor: { type: 'requester', id: link.requesterId },
+		subjectType: 'requester',
+		subjectId: link.requesterId,
+		ip: input.ip ?? undefined,
+		ua: input.ua ?? undefined
+	});
+
+	return { requesterId: link.requesterId };
+}
