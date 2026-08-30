@@ -23,7 +23,7 @@ export const actions: Actions = {
 		read: (form) => ({
 			pattern: form.get('pattern'),
 			action: form.get('action'),
-			maxTier: form.get('maxTier'),
+			tiers: form.getAll('tiers').map(String),
 			priority: form.get('priority') ?? 100,
 			note: form.get('note') ?? ''
 		}),
@@ -49,7 +49,7 @@ export const actions: Actions = {
 			meta: {
 				pattern: rule.pattern,
 				action: rule.action,
-				maxTier: rule.maxTier,
+				tiers: rule.tiers,
 				priority: rule.priority,
 				note: rule.note
 			}

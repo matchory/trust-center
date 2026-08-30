@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { expect, test } from '@playwright/test';
 import { eq, like } from 'drizzle-orm';
 import { createGrant, GRANT_DEFAULT_DAYS_SETTING_KEY } from '../../src/lib/server/access/grants';
+import { ruleTiers } from '../../src/lib/server/access/scope';
 import { createDb, type Db } from '../../src/lib/server/db';
 import { accessGrant, accessRule, requester, setting } from '../../src/lib/server/db/schema';
 import { gotoAdmin, signInAsAdmin } from '../helpers/admin';
@@ -62,6 +63,8 @@ test('a new rule appears in the list and is stored as written', async ({ page })
 
 	await page.getByTestId('rule-pattern').fill(pattern);
 	await page.getByTestId('rule-action').selectOption('auto_approve');
+	await page.getByTestId('rule-tier-request').check();
+	await page.getByTestId('rule-tier-nda').check();
 	await page.getByTestId('rule-priority').fill('10');
 	await page.getByTestId('rule-note').fill('E2E');
 	await page.getByTestId('rule-create').click();
@@ -70,7 +73,11 @@ test('a new rule appears in the list and is stored as written', async ({ page })
 	await expect(page.getByText(pattern)).toBeVisible();
 
 	const [row] = await db.select().from(accessRule).where(eq(accessRule.pattern, pattern));
-	expect(row).toMatchObject({ action: 'auto_approve', maxTier: 'request', priority: 10 });
+	// `nda` is storable and not yet granted, so an operator naming it must find
+	// it still named when they come back — the set is what was written, and
+	// `max_tier` is the bridge until it is dropped.
+	expect(row).toMatchObject({ action: 'auto_approve', maxTier: 'nda', priority: 10 });
+	expect(await ruleTiers(db, row!.id)).toEqual(['nda', 'request']);
 });
 
 test('a pattern that could never match is refused at entry', async ({ page }) => {

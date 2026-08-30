@@ -15,7 +15,7 @@
 	let columns = $derived([
 		{ key: 'pattern', header: m.admin_rule_pattern() },
 		{ key: 'action', header: m.admin_rule_action() },
-		{ key: 'maxTier', header: m.admin_tier() },
+		{ key: 'tiers', header: m.admin_rule_tiers() },
 		{ key: 'priority', header: m.admin_priority() },
 		{ key: 'note', header: m.admin_note() }
 	]);
@@ -49,10 +49,10 @@
 				{row.pattern}
 			</a>
 		{:else if key === 'action'}{ACTION_LABEL[row.action]?.() ?? row.action}
-		{:else if key === 'maxTier'}
-			<!-- Only `auto_approve` reads the ceiling; showing it elsewhere would
+		{:else if key === 'tiers'}
+			<!-- Only `auto_approve` reads the tier set; showing it elsewhere would
 			     suggest it decides something. -->
-			{row.action === 'auto_approve' ? row.maxTier : '—'}
+			{row.action === 'auto_approve' && row.tiers.length > 0 ? row.tiers.join(', ') : '—'}
 		{:else if key === 'priority'}{row.priority}
 		{:else if key === 'note'}{row.note ?? ''}{/if}
 	{/snippet}

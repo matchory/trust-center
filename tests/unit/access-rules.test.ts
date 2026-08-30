@@ -12,7 +12,7 @@ function rule(partial: Partial<RuleForMatching> & { pattern: string }): RuleForM
 		id: partial.pattern,
 		pattern: partial.pattern,
 		action: partial.action ?? 'review',
-		maxTier: partial.maxTier ?? 'request',
+		tiers: partial.tiers ?? ['request'],
 		priority: partial.priority ?? 100
 	};
 }
@@ -104,35 +104,48 @@ describe('matchRule', () => {
 describe('decideFromRules', () => {
 	it('defaults to review when no rule matches', () => {
 		// The safe default: an unknown domain reaches a human, never a document.
+		// Phase 2 returned a `request` ceiling here; a set makes "review,
+		// granting nothing by pattern" expressible, which is what an unknown
+		// domain deserves.
 		const decision = decideFromRules([], 'stranger.example');
 
 		expect(decision.action).toBe('review');
+		expect(decision.tiers).toEqual([]);
 		expect(decision.ruleId).toBeNull();
 	});
 
 	it('carries the matched rule id so the decision is reconstructible', () => {
 		const decision = decideFromRules(
-			[rule({ pattern: 'acme.example', action: 'auto_approve', maxTier: 'request' })],
+			[rule({ pattern: 'acme.example', action: 'auto_approve', tiers: ['request'] })],
 			'acme.example'
 		);
 
 		expect(decision).toEqual({
 			action: 'auto_approve',
-			maxTier: 'request',
+			tiers: ['request'],
 			ruleId: 'acme.example'
 		});
 	});
 
-	it('never auto-approves above the request tier in this phase', () => {
-		// A rule may name `nda`, because the column allows it and Phase 3 will
-		// honour it. This phase must clamp, or an NDA-tier document reaches a
-		// requester with no acceptance on file.
+	it('drops a tier this phase does not honour', () => {
+		// A rule may name `nda`, because the table admits it and the backfill
+		// preserved it. Dropping it here is what stops an NDA-tier document
+		// reaching a requester with no acceptance on file.
 		const decision = decideFromRules(
-			[rule({ pattern: 'acme.example', action: 'auto_approve', maxTier: 'nda' })],
+			[rule({ pattern: 'acme.example', action: 'auto_approve', tiers: ['request', 'nda'] })],
 			'acme.example'
 		);
 
-		expect(decision.maxTier).toBe('request');
+		expect(decision.tiers).toEqual(['request']);
+	});
+
+	it('drops the whole blanket when a rule names only nda', () => {
+		const decision = decideFromRules(
+			[rule({ pattern: 'acme.example', action: 'auto_approve', tiers: ['nda'] })],
+			'acme.example'
+		);
+
+		expect(decision.tiers).toEqual([]);
 	});
 });
 

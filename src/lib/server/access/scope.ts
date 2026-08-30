@@ -1,10 +1,14 @@
 import { asc, eq } from 'drizzle-orm';
+import { SCOPE_TIERS } from '../../access-types';
 import { accessGrantGroup, accessGrantTier, accessRequestTier, accessRuleTier } from '../db/schema';
+import type { ScopeTier } from '../../access-types';
 import type { Db } from '../db';
 
-/** The tiers a scope may name. `public` needs no grant and is not one of them. */
-export const SCOPE_TIERS = ['request', 'nda'] as const;
-export type ScopeTier = (typeof SCOPE_TIERS)[number];
+// Re-exported so every consumer below the route layer keeps importing scope
+// vocabulary from one place; the constant itself lives in `access-types`
+// because the rule and decision forms need it client-side.
+export { SCOPE_TIERS };
+export type { ScopeTier };
 
 /**
  * What this phase actually honours. `nda` is storable — the backfill preserves

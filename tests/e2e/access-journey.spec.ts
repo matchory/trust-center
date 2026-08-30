@@ -9,6 +9,7 @@ import {
 	setDocumentTranslation,
 	updateDocument
 } from '../../src/lib/server/content/documents';
+import { setRuleTiers } from '../../src/lib/server/access/scope';
 import { createDb, type Db } from '../../src/lib/server/db';
 import {
 	accessGrant,
@@ -84,9 +85,12 @@ test.beforeAll(async () => {
 
 	const [rule] = await db
 		.insert(accessRule)
-		.values({ pattern: AUTO_DOMAIN, action: 'auto_approve', maxTier: 'request', priority: 4 })
+		.values({ pattern: AUTO_DOMAIN, action: 'auto_approve', priority: 4 })
 		.returning({ id: accessRule.id });
 	ruleId = rule!.id;
+	// The tier set is what a rule is scoped by now; `max_tier` keeps its
+	// default until the contract migration drops it.
+	await setRuleTiers(db, ruleId, ['request']);
 });
 
 test.afterAll(async () => {

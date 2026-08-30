@@ -12,7 +12,7 @@ export const actions: Actions = {
 		const parsed = ruleSchema.safeParse({
 			pattern: form.get('pattern'),
 			action: form.get('action'),
-			maxTier: form.get('maxTier'),
+			tiers: form.getAll('tiers').map(String),
 			priority: form.get('priority') ?? 100,
 			note: form.get('note') ?? ''
 		});

@@ -1,12 +1,13 @@
 import { eq } from 'drizzle-orm';
 import { recordEvent } from '../audit';
-import { accessRequest, accessRequestDocument, accessRule } from '../db/schema';
+import { accessRequest, accessRequestDocument, accessRule, accessRuleTier } from '../db/schema';
 import { consumeMagicLink } from '../identity/magic-link';
 import { domainOf, upsertRequester } from '../identity/requester';
 import { enqueueEmail } from '../mail/queue';
 import { createGrant } from './grants';
 import { decideFromRules } from './rules';
 import { honouredTiers, requestTiers } from './scope';
+import type { ScopeTier } from './scope';
 import type { AccessRequestStatus, AccessRuleAction } from '../../access-types';
 import type { Db } from '../db';
 
@@ -76,13 +77,28 @@ export async function verifyRequest(
 				id: accessRule.id,
 				pattern: accessRule.pattern,
 				action: accessRule.action,
-				maxTier: accessRule.maxTier,
 				priority: accessRule.priority
 			})
 			.from(accessRule);
 
+		// One query for every rule's tiers rather than one per rule: matching is
+		// a read on the verification path, and a rule table is small but not
+		// bounded.
+		const tierRows = await tx
+			.select({ ruleId: accessRuleTier.ruleId, tier: accessRuleTier.tier })
+			.from(accessRuleTier);
+
+		const tiersByRule = new Map<string, ScopeTier[]>();
+		for (const row of tierRows) {
+			tiersByRule.set(row.ruleId, [...(tiersByRule.get(row.ruleId) ?? []), row.tier as ScopeTier]);
+		}
+
 		const decision = decideFromRules(
-			rules.map((rule) => ({ ...rule, action: rule.action as AccessRuleAction })),
+			rules.map((rule) => ({
+				...rule,
+				action: rule.action as AccessRuleAction,
+				tiers: tiersByRule.get(rule.id) ?? []
+			})),
 			domainOf(requester.email)
 		);
 

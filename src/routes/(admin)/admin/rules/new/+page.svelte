@@ -1,8 +1,7 @@
 <script lang="ts">
 	import { enhance } from '$app/forms';
-	import { ACCESS_RULE_ACTIONS } from '$lib/access-types';
+	import { ACCESS_RULE_ACTIONS, SCOPE_TIERS } from '$lib/access-types';
 	import FormField from '$lib/components/admin/FormField.svelte';
-	import { DOCUMENT_TIERS } from '$lib/content-types';
 	import { m } from '$lib/paraglide/messages.js';
 	import type { PageProps } from './$types';
 
@@ -39,14 +38,25 @@
 		</select>
 	</FormField>
 
-	<FormField label={m.admin_tier()}>
-		<select data-testid="rule-max-tier" name="maxTier" class="rounded border px-2 py-1">
-			{#each DOCUMENT_TIERS as tier (tier)}
-				<option value={tier} selected={tier === 'request'}>{tier}</option>
-			{/each}
-		</select>
-		<span class="text-xs text-neutral-500">{m.admin_rule_max_tier_hint()}</span>
-	</FormField>
+	<fieldset class="grid gap-1">
+		<legend class="text-sm font-medium">{m.admin_rule_tiers()}</legend>
+		{#each SCOPE_TIERS as tier (tier)}
+			<label class="flex items-center gap-2 text-sm">
+				<input
+					data-testid="rule-tier-{tier}"
+					type="checkbox"
+					name="tiers"
+					value={tier}
+					checked={tier === 'request'}
+				/>
+				{tier}
+				{#if tier === 'nda'}
+					<span class="text-neutral-500">{m.admin_rule_tier_nda_pending()}</span>
+				{/if}
+			</label>
+		{/each}
+		<span class="text-xs text-neutral-500">{m.admin_rule_tiers_hint()}</span>
+	</fieldset>
 
 	<FormField label={m.admin_priority()}>
 		<input

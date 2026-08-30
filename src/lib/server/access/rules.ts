@@ -1,8 +1,9 @@
-import { asc, eq } from 'drizzle-orm';
+import { asc, eq, inArray } from 'drizzle-orm';
 import { z } from 'zod';
 import { ACCESS_RULE_ACTIONS } from '../../access-types';
-import { DOCUMENT_TIERS } from '../../content-types';
-import { accessRule } from '../db/schema';
+import { accessRule, accessRuleTier } from '../db/schema';
+import { honouredTiers, ruleTiers, SCOPE_TIERS, setRuleTiers } from './scope';
+import type { ScopeTier } from './scope';
 import type { AccessRuleAction } from '../../access-types';
 import type { DocumentTier } from '../../content-types';
 import type { Db } from '../db';
@@ -11,7 +12,7 @@ export interface RuleForMatching {
 	id: string;
 	pattern: string;
 	action: AccessRuleAction;
-	maxTier: string;
+	tiers: ScopeTier[];
 	priority: number;
 }
 
@@ -68,26 +69,25 @@ export function matchRule(
 
 export interface RuleDecision {
 	action: AccessRuleAction;
-	maxTier: DocumentTier;
+	/** The blanket tiers this decision may grant. Empty means explicit documents only. */
+	tiers: ScopeTier[];
 	ruleId: string | null;
 }
-
-/** This phase gates the request tier only; Phase 3 raises the ceiling. */
-const PHASE_CEILING: DocumentTier = 'request';
 
 export function decideFromRules(rules: readonly RuleForMatching[], domain: string): RuleDecision {
 	const matched = matchRule(rules, domain);
 
 	// No rule is not an error and not an approval. An unknown domain reaches a
-	// human, which is spec §9.3's "everything else becomes pending".
-	if (!matched) return { action: 'review', maxTier: PHASE_CEILING, ruleId: null };
+	// human, which is spec §9.3's "everything else becomes pending" — and it
+	// carries no blanket, because nothing decided one.
+	if (!matched) return { action: 'review', tiers: [], ruleId: null };
 
 	return {
 		action: matched.action,
-		// A rule may name `nda` — the column allows it and Phase 3 will honour it.
-		// Clamping here is what stops an NDA-tier document reaching a requester
-		// with no acceptance on file, in a phase that cannot record one.
-		maxTier: matched.maxTier === 'nda' ? PHASE_CEILING : (matched.maxTier as DocumentTier),
+		// A rule may name `nda` — the table admits it and the backfill preserved
+		// it. `honouredTiers` is the one place this phase refuses to grant it,
+		// and Phase 3b deletes that filter rather than hunting for clamps.
+		tiers: honouredTiers(matched.tiers),
 		ruleId: matched.id
 	};
 }
@@ -96,7 +96,7 @@ export interface AdminRuleRow {
 	id: string;
 	pattern: string;
 	action: AccessRuleAction;
-	maxTier: DocumentTier;
+	tiers: ScopeTier[];
 	priority: number;
 	note: string | null;
 	createdAt: Date;
@@ -112,7 +112,7 @@ export interface AdminRuleRow {
 export const ruleSchema = z.object({
 	pattern: z.string().trim().toLowerCase().regex(RULE_PATTERN),
 	action: z.enum(ACCESS_RULE_ACTIONS),
-	maxTier: z.enum(DOCUMENT_TIERS),
+	tiers: z.array(z.enum(SCOPE_TIERS)).default([]),
 	priority: z.coerce.number().int().min(0).max(10_000),
 	note: z
 		.string()
@@ -135,30 +135,86 @@ export async function listRules(db: Db): Promise<AdminRuleRow[]> {
 		.from(accessRule)
 		.orderBy(asc(accessRule.priority), asc(accessRule.pattern));
 
-	return rows.map(toAdminRow);
+	if (rows.length === 0) return [];
+
+	// One query for every rule's tiers, not one per rule.
+	const tierRows = await db
+		.select({ ruleId: accessRuleTier.ruleId, tier: accessRuleTier.tier })
+		.from(accessRuleTier)
+		.where(
+			inArray(
+				accessRuleTier.ruleId,
+				rows.map((row) => row.id)
+			)
+		)
+		.orderBy(asc(accessRuleTier.tier));
+
+	const tiers = new Map<string, ScopeTier[]>();
+	for (const row of tierRows) {
+		tiers.set(row.ruleId, [...(tiers.get(row.ruleId) ?? []), row.tier as ScopeTier]);
+	}
+
+	return rows.map((row) => toAdminRow(row, tiers.get(row.id) ?? []));
 }
 
 export async function getRule(db: Db, id: string): Promise<AdminRuleRow | null> {
 	const [row] = await db.select().from(accessRule).where(eq(accessRule.id, id)).limit(1);
-	return row ? toAdminRow(row) : null;
+	return row ? toAdminRow(row, await ruleTiers(db, id)) : null;
 }
 
-function toAdminRow(row: typeof accessRule.$inferSelect): AdminRuleRow {
+function toAdminRow(row: typeof accessRule.$inferSelect, tiers: ScopeTier[]): AdminRuleRow {
 	return {
 		...row,
 		action: row.action as AccessRuleAction,
-		maxTier: row.maxTier as DocumentTier
+		tiers
 	};
 }
 
+/**
+ * The old ceiling, in the terms the column still speaks. A bridge until Task 9
+ * drops `max_tier`: the highest tier the set names, or `public` for a rule that
+ * names none — which is the ceiling's own way of saying "no blanket".
+ */
+function ceilingOf(tiers: readonly ScopeTier[]): DocumentTier {
+	if (tiers.includes('nda')) return 'nda';
+	return tiers.includes('request') ? 'request' : 'public';
+}
+
 export async function createRule(db: Db, input: RuleInput): Promise<string> {
-	const [row] = await db.insert(accessRule).values(input).returning({ id: accessRule.id });
-	if (!row) throw new Error('failed to create rule');
-	return row.id;
+	return db.transaction(async (tx) => {
+		const [row] = await tx
+			.insert(accessRule)
+			.values({
+				pattern: input.pattern,
+				action: input.action,
+				priority: input.priority,
+				note: input.note,
+				maxTier: ceilingOf(input.tiers)
+			})
+			.returning({ id: accessRule.id });
+
+		if (!row) throw new Error('failed to create rule');
+
+		await setRuleTiers(tx, row.id, input.tiers);
+		return row.id;
+	});
 }
 
 export async function updateRule(db: Db, id: string, input: RuleInput): Promise<void> {
-	await db.update(accessRule).set(input).where(eq(accessRule.id, id));
+	await db.transaction(async (tx) => {
+		await tx
+			.update(accessRule)
+			.set({
+				pattern: input.pattern,
+				action: input.action,
+				priority: input.priority,
+				note: input.note,
+				maxTier: ceilingOf(input.tiers)
+			})
+			.where(eq(accessRule.id, id));
+
+		await setRuleTiers(tx, id, input.tiers);
+	});
 }
 
 export async function deleteRule(db: Db, id: string): Promise<void> {

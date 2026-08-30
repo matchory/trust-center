@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { expect, test, type Page } from '@playwright/test';
 import { eq } from 'drizzle-orm';
 import { submitRequest } from '../../src/lib/server/access/requests';
+import { setRuleTiers } from '../../src/lib/server/access/scope';
 import {
 	addDocumentFile,
 	createCategory,
@@ -68,9 +69,12 @@ test.beforeAll(async () => {
 
 	const [rule] = await db
 		.insert(accessRule)
-		.values({ pattern: AUTO_DOMAIN, action: 'auto_approve', maxTier: 'request', priority: 5 })
+		.values({ pattern: AUTO_DOMAIN, action: 'auto_approve', priority: 5 })
 		.returning({ id: accessRule.id });
 	ruleId = rule!.id;
+	// The tier set is what a rule is scoped by now; `max_tier` keeps its
+	// default until the contract migration drops it.
+	await setRuleTiers(db, ruleId, ['request']);
 });
 
 test.afterAll(async () => {

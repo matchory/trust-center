@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { and, desc, eq } from 'drizzle-orm';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { submitRequest } from '../../src/lib/server/access/requests';
+import { setRuleTiers } from '../../src/lib/server/access/scope';
 import { issueMagicLink } from '../../src/lib/server/identity/magic-link';
 import { consumeSignInLink, verifyRequest } from '../../src/lib/server/access/verify';
 import { createDb, type Db } from '../../src/lib/server/db';
@@ -110,10 +111,13 @@ describe('verifyRequest', () => {
 			.values({
 				pattern: domain,
 				action: 'auto_approve',
-				maxTier: 'request',
 				priority: 10
 			})
 			.returning({ id: accessRule.id });
+
+		// The tier set is what a rule is scoped by now; `max_tier` keeps its
+		// default until the contract migration drops it.
+		await setRuleTiers(db, rule!.id, ['request']);
 
 		const { requestId, magicLinkToken } = await submitFrom(domain);
 		const outcome = await verify(magicLinkToken);
