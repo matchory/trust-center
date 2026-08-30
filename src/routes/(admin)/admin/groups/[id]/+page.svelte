@@ -4,7 +4,7 @@
 	import { m } from '$lib/paraglide/messages.js';
 	import type { PageProps } from './$types';
 
-	let { data }: PageProps = $props();
+	let { data, form }: PageProps = $props();
 </script>
 
 <h1 class="mb-6 text-2xl font-semibold">
@@ -70,6 +70,9 @@
 </section>
 
 <form method="POST" action="?/remove" use:enhance>
+	{#if form?.message === 'in_use'}
+		<p data-testid="group-in-use" class="mb-2 text-sm text-red-700">{m.admin_group_in_use()}</p>
+	{/if}
 	<button
 		data-testid="group-delete"
 		class="rounded border border-red-300 px-3 py-1.5 text-sm text-red-700"

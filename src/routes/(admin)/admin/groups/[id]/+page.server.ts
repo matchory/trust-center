@@ -1,4 +1,4 @@
-import { error, redirect } from '@sveltejs/kit';
+import { error, fail, redirect } from '@sveltejs/kit';
 import { localizePath } from '$lib/i18n/locale';
 import {
 	deleteGroup,
@@ -7,6 +7,7 @@ import {
 	setGroupTranslation,
 	updateGroup
 } from '$lib/server/access/groups';
+import { ScopeGroupInUse } from '$lib/server/access/scope';
 import { saveMetaAction, translationAction } from '$lib/server/admin/actions';
 import { saveTranslationsFromForm } from '$lib/server/content/translations';
 import { recordEvent } from '$lib/server/audit';
@@ -75,7 +76,14 @@ export const actions: Actions = {
 		const group = await getGroup(db, event.params.id);
 		if (!group) error(404, 'Group not found');
 
-		await deleteGroup(db, event.params.id);
+		try {
+			await deleteGroup(db, event.params.id);
+		} catch (cause) {
+			// A grant still names this group, and deleting it would silently
+			// narrow that grant. The operator revokes or re-scopes first.
+			if (cause instanceof ScopeGroupInUse) return fail(409, { field: 'group', message: 'in_use' });
+			throw cause;
+		}
 
 		await recordEvent(db, {
 			action: 'access_group.deleted',

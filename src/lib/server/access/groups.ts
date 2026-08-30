@@ -1,6 +1,7 @@
 import { asc, eq, inArray, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { accessGroup, accessGroupTranslation, documentGroup } from '../db/schema';
+import { ScopeGroupInUse } from './scope';
 import type { Db } from '../db';
 
 export interface AdminGroupRow {
@@ -103,8 +104,21 @@ export async function updateGroup(db: Db, id: string, input: GroupInput): Promis
 	await db.update(accessGroup).set(input).where(eq(accessGroup.id, id));
 }
 
+/**
+ * `access_grant_group.group_id` is ON DELETE RESTRICT, so a group a live grant
+ * names cannot be removed. The Postgres error code is translated here rather
+ * than in the route: which constraint fires is a fact about the tables, and a
+ * route that has to know `23503` knows something it has no way to verify.
+ */
 export async function deleteGroup(db: Db, id: string): Promise<void> {
-	await db.delete(accessGroup).where(eq(accessGroup.id, id));
+	try {
+		await db.delete(accessGroup).where(eq(accessGroup.id, id));
+	} catch (cause) {
+		if (typeof cause === 'object' && cause !== null && 'code' in cause && cause.code === '23503') {
+			throw new ScopeGroupInUse('a grant still includes this group', { cause });
+		}
+		throw cause;
+	}
 }
 
 export async function setGroupTranslation(

@@ -16,6 +16,7 @@ import type {
 	AccessRuleAction
 } from '../../../access-types';
 import { document } from './documents';
+import { accessGroup } from './groups';
 import { requester } from './requesters';
 import { staffUser } from './staff';
 
@@ -123,6 +124,13 @@ export const accessGrant = pgTable(
 		// The request this grant answers. Null for a staff-initiated invite.
 		requestId: uuid('request_id').references(() => accessRequest.id, { onDelete: 'set null' }),
 		allRequestTier: boolean('all_request_tier').notNull().default(false),
+		// Nullable until Task 9's contract migration backfills every row and
+		// tightens it. The clock a grant runs on once it starts, in days,
+		// recorded because the approver chose it — re-deriving it from
+		// `defaultGrantDays()` later would silently substitute whatever the
+		// setting says then, and /admin/settings/access exists precisely so
+		// operators change it.
+		termDays: integer('term_days'),
 		grantedAt: timestamp('granted_at', { withTimezone: true }).notNull().defaultNow(),
 		expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
 		revokedAt: timestamp('revoked_at', { withTimezone: true }),
@@ -150,4 +158,81 @@ export const accessGrantDocument = pgTable(
 			.references(() => document.id, { onDelete: 'cascade' })
 	},
 	(table) => [primaryKey({ columns: [table.grantId, table.documentId] })]
+);
+
+/**
+ * A scope's blanket tiers: "everything at this tier, including documents
+ * published later". Three parallel sets — documents, tiers, groups — and
+ * nothing implies anything else.
+ *
+ * A ranked ceiling was rejected because it recomputes: inserting a tier below
+ * an existing one would retroactively widen every live grant above it, which
+ * is the failure spec §9's domain-drift rule forbids.
+ *
+ * `public` is not admitted: a public document needs no grant, so a public
+ * entry would be a scope row that grants nothing. `nda` is admitted because
+ * `access_rule.max_tier` already stores it and the backfill must preserve what
+ * an operator wrote; the application refuses to honour it until Phase 3b.
+ */
+const scopeTierCheck = sql`tier IN ('request', 'nda')`;
+
+export const accessRequestTier = pgTable(
+	'access_request_tier',
+	{
+		requestId: uuid('request_id')
+			.notNull()
+			.references(() => accessRequest.id, { onDelete: 'cascade' }),
+		tier: text('tier').notNull()
+	},
+	(table) => [
+		primaryKey({ columns: [table.requestId, table.tier] }),
+		check('access_request_tier_check', scopeTierCheck)
+	]
+);
+
+export const accessGrantTier = pgTable(
+	'access_grant_tier',
+	{
+		grantId: uuid('grant_id')
+			.notNull()
+			.references(() => accessGrant.id, { onDelete: 'cascade' }),
+		tier: text('tier').notNull()
+	},
+	(table) => [
+		primaryKey({ columns: [table.grantId, table.tier] }),
+		check('access_grant_tier_check', scopeTierCheck)
+	]
+);
+
+/**
+ * `restrict` on the group, deliberately unlike every other join here. A cascade
+ * would silently narrow a live grant when an operator deleted a group, and the
+ * requester would lose documents with nothing recording why. Restricting makes
+ * the operator revoke or re-scope first.
+ */
+export const accessGrantGroup = pgTable(
+	'access_grant_group',
+	{
+		grantId: uuid('grant_id')
+			.notNull()
+			.references(() => accessGrant.id, { onDelete: 'cascade' }),
+		groupId: uuid('group_id')
+			.notNull()
+			.references(() => accessGroup.id, { onDelete: 'restrict' })
+	},
+	(table) => [primaryKey({ columns: [table.grantId, table.groupId] })]
+);
+
+export const accessRuleTier = pgTable(
+	'access_rule_tier',
+	{
+		ruleId: uuid('rule_id')
+			.notNull()
+			.references(() => accessRule.id, { onDelete: 'cascade' }),
+		tier: text('tier').notNull()
+	},
+	(table) => [
+		primaryKey({ columns: [table.ruleId, table.tier] }),
+		check('access_rule_tier_check', scopeTierCheck)
+	]
 );
