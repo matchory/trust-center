@@ -142,11 +142,20 @@ Six admin route groups follow the Phase 1 pattern exactly: a `DataTable` list pa
 
 ## Execution log
 
-Tasks 1–18 are complete (commits `b9fef02`..`HEAD`, all signed).
+**Phase 2 is complete.** Tasks 1–19 all landed (commits `b9fef02`..`HEAD`, all
+signed), and every completion criterion below is met and checked.
 
-**Resume at Task 19** — the full journey, documentation, and phase close.
-Every feature this phase owes is built; what remains is the end-to-end proof
-that they compose, the operator documentation, and the carry-over.
+The final verification ran from a destroyed and recreated dev stack
+(`compose.dev.yaml down -v`, `up -d --wait`, `pnpm db:migrate`): `pnpm lint`
+clean, `pnpm check` **0 errors and 0 warnings**, `pnpm build` succeeds with
+`DATABASE_URL`/`OIDC_*`/`BASE_URL` all unset, and 106 unit, 133 integration and
+72 end-to-end tests pass.
+
+What Phase 3 should read first is `docs/superpowers/phase-3-carryover.md`, and
+in particular its measured answer to the buffered-download question: the cost of
+watermarking is dominated by page count rather than bytes, so `MAX_UPLOAD_MB`
+bounds the wrong dimension, and Phase 3's NDA generation inherits that exposure
+the moment it binds an NDA to a customer-supplied PDF.
 
 Decision 5 (`__Host-` on the staff cookie, and the HTTPS requirement it
 imposes) was **signed off before Task 17 ran**, on the evidence that Task 10
@@ -466,6 +475,33 @@ two cookies inconsistent rather than kept anything working.
 - **Task 18 — `docs/self-hosting.md` §7a said "four jobs" over a table of
   three.** Stale since it was written; the row this task adds makes the sentence
   true rather than needing its own correction.
+
+- **Task 19 Step 2 — most of the documentation already existed.** Mail, the job
+  runner, and erasure were written in Tasks 8, 15 and 18 as the code landed, and
+  the HTTPS requirement in Task 17. What was genuinely missing was the access
+  governance narrative, added as `docs/self-hosting.md` §7b — the local
+  precedent for §7a rather than renumbering four sections and the
+  cross-references into them.
+
+- **Task 19 Step 2 — the README had no feature list to add a bullet to.** It
+  opened with one prose paragraph. A "What it does" list was added, describing
+  only what Phase 2 actually ships; the paragraph's existing mention of NDA
+  gating was left alone rather than quietly corrected, since Phase 3 makes it
+  true.
+
+- **Task 19 — one completion criterion was not yet testable.** "An access rule
+  auto-approves a matching domain and denies another, **with the matched rule
+  recorded in the audit event**" — `verifyRequest` has written `meta.ruleId`
+  since Task 10 and nothing ever read it back. The assertion was added to
+  `tests/integration/access-verify.test.ts` rather than the criterion being
+  ticked on the strength of the production code alone.
+
+- **Task 19 Step 4 — the buffered-download cost was measured twice.** The first
+  attempt built the fixture in the same process that stamped it, so peak RSS was
+  the PDF *generator's* 3.4 GB and the delta came out negative. The number in
+  the carry-over comes from a fresh process reading a fixture off disk, at two
+  page counts, because the first honest measurement showed page count and not
+  file size is what the cost tracks.
 
 ### Found while executing
 
@@ -5822,7 +5858,7 @@ The end-to-end proof that the pieces compose, plus the operator-facing documenta
 - Modify: `docs/self-hosting.md`, `README.md`
 - Create: `docs/superpowers/phase-3-carryover.md`
 
-- [ ] **Step 1: Write the journey test**
+- [x] **Step 1: Write the journey test**
 
 `tests/e2e/access-journey.spec.ts` walks the whole of spec §9 in one test, reading the magic link out of the database rather than out of Mailpit — the queue is what the app writes, and depending on SMTP delivery inside a Playwright test buys flakiness for nothing:
 
@@ -5840,7 +5876,7 @@ The end-to-end proof that the pieces compose, plus the operator-facing documenta
 
 Step 5's "still unconsumed" check is the one most likely to be dropped as fiddly. Keep it: it is the only automated evidence for decision 4.
 
-- [ ] **Step 2: Write the operator documentation**
+- [x] **Step 2: Write the operator documentation**
 
 `docs/self-hosting.md` gains:
 
@@ -5852,7 +5888,7 @@ Step 5's "still unconsumed" check is the one most likely to be dropped as fiddly
 
 `README.md` gains the access-governance bullet in its feature list and Mailpit's UI port in the local-development section.
 
-- [ ] **Step 3: Run everything, from clean**
+- [x] **Step 3: Run everything, from clean**
 
 ```bash
 docker compose -f compose.dev.yaml down -v
@@ -5870,7 +5906,7 @@ Every one of these must pass before the phase is closed. `pnpm build` must succe
 env -u DATABASE_URL -u OIDC_ISSUER pnpm build
 ```
 
-- [ ] **Step 4: Write the Phase 3 carry-over**
+- [x] **Step 4: Write the Phase 3 carry-over**
 
 `docs/superpowers/phase-3-carryover.md`, in the same shape as its predecessors. It must answer, from the evidence this phase produced:
 
@@ -5888,7 +5924,7 @@ Known items to carry forward unless this phase closed them:
 - `access_grant.nda_acceptance_id` is deliberately absent and is Phase 3's first migration.
 - The return-visit fast path (spec §9.9) exists as a `sign_in` magic link but has no self-service entry point — a returning requester whose session lapsed has no way to ask for a new link without filing a fresh request.
 
-- [ ] **Step 5: Commit and close**
+- [x] **Step 5: Commit and close**
 
 ```bash
 git add tests/e2e/access-journey.spec.ts docs/self-hosting.md README.md \
@@ -5900,14 +5936,14 @@ git commit -m "test(e2e): cover the full access-governance journey, and document
 
 ## Phase 2 completion criteria
 
-- [ ] `pnpm lint && pnpm check && pnpm test:unit && pnpm test:integration && pnpm test:e2e` is green from a clean checkout, and `pnpm check` emits **zero** warnings.
-- [ ] `pnpm build` succeeds with no `.env` and no database reachable.
-- [ ] A prospect can request a request-tier document, verify by magic link, and download a watermarked copy whose footer names them.
-- [ ] Staff can triage a pending request, approve it with a narrowed scope, and the requester receives a sign-in link.
-- [ ] An access rule auto-approves a matching domain and denies another, with the matched rule recorded in the audit event.
-- [ ] Revoking a grant makes the next download attempt 404, with no restart and no cache invalidation.
-- [ ] A grant expires by itself, and a reminder precedes it exactly once.
-- [ ] Purging a requester blanks their identity, pseudonymizes their audit events without deleting them, and writes its own audit event.
-- [ ] The permanent security tests still pass: **public** pages set no cookies, the gated subtree sets exactly one, no third-party requests, a CSP with no `unsafe-inline`, a gated document exposes no file id in HTML or the sitemap, and every download writes an audit event.
-- [ ] `docs/self-hosting.md` documents every new environment variable, the job runner, the HTTPS requirement, and the erasure path.
-- [ ] `docs/superpowers/phase-3-carryover.md` exists and answers the three questions in Task 19 Step 4.
+- [x] `pnpm lint && pnpm check && pnpm test:unit && pnpm test:integration && pnpm test:e2e` is green from a clean checkout, and `pnpm check` emits **zero** warnings.
+- [x] `pnpm build` succeeds with no `.env` and no database reachable.
+- [x] A prospect can request a request-tier document, verify by magic link, and download a watermarked copy whose footer names them.
+- [x] Staff can triage a pending request, approve it with a narrowed scope, and the requester receives a sign-in link.
+- [x] An access rule auto-approves a matching domain and denies another, with the matched rule recorded in the audit event.
+- [x] Revoking a grant makes the next download attempt 404, with no restart and no cache invalidation.
+- [x] A grant expires by itself, and a reminder precedes it exactly once.
+- [x] Purging a requester blanks their identity, pseudonymizes their audit events without deleting them, and writes its own audit event.
+- [x] The permanent security tests still pass: **public** pages set no cookies, the gated subtree sets exactly one, no third-party requests, a CSP with no `unsafe-inline`, a gated document exposes no file id in HTML or the sitemap, and every download writes an audit event.
+- [x] `docs/self-hosting.md` documents every new environment variable, the job runner, the HTTPS requirement, and the erasure path.
+- [x] `docs/superpowers/phase-3-carryover.md` exists and answers the three questions in Task 19 Step 4.
