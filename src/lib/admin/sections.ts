@@ -16,6 +16,7 @@ export const ADMIN_SECTIONS: AdminSection[] = [
 	{ path: '/admin/requests', label: () => m.nav_requests() },
 	{ path: '/admin/grants', label: () => m.nav_grants() },
 	{ path: '/admin/rules', label: () => m.nav_rules() },
+	{ path: '/admin/groups', label: () => m.nav_groups() },
 	{ path: '/admin/requesters', label: () => m.nav_requesters() },
 	{ path: '/admin/documents', label: () => m.nav_documents() },
 	{ path: '/admin/controls', label: () => m.nav_controls() },
