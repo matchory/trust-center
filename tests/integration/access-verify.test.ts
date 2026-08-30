@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { eq } from 'drizzle-orm';
+import { and, desc, eq } from 'drizzle-orm';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { submitRequest } from '../../src/lib/server/access/requests';
 import { issueMagicLink } from '../../src/lib/server/identity/magic-link';
@@ -9,6 +9,7 @@ import {
 	accessGrant,
 	accessRequest,
 	accessRule,
+	auditEvent,
 	documentCategory,
 	document as documentTable,
 	outboundEmail
@@ -104,12 +105,15 @@ describe('verifyRequest', () => {
 
 	it('auto-approves a matching domain and creates a grant', async () => {
 		const domain = `auto${Date.now()}.example`;
-		await db.insert(accessRule).values({
-			pattern: domain,
-			action: 'auto_approve',
-			maxTier: 'request',
-			priority: 10
-		});
+		const [rule] = await db
+			.insert(accessRule)
+			.values({
+				pattern: domain,
+				action: 'auto_approve',
+				maxTier: 'request',
+				priority: 10
+			})
+			.returning({ id: accessRule.id });
 
 		const { requestId, magicLinkToken } = await submitFrom(domain);
 		const outcome = await verify(magicLinkToken);
@@ -119,6 +123,18 @@ describe('verifyRequest', () => {
 		const grants = await db.select().from(accessGrant).where(eq(accessGrant.requestId, requestId));
 		expect(grants).toHaveLength(1);
 		expect(grants[0]!.expiresAt.getTime()).toBeGreaterThan(Date.now());
+
+		// Which rule decided is the question asked afterwards, and the audit log
+		// is the only place it can be answered — the rule itself can be edited or
+		// deleted, and `access_rule.deleted` is elsewhere in the same table.
+		const [event] = await db
+			.select({ meta: auditEvent.meta })
+			.from(auditEvent)
+			.where(and(eq(auditEvent.subjectType, 'access_request'), eq(auditEvent.subjectId, requestId)))
+			.orderBy(desc(auditEvent.seq))
+			.limit(1);
+
+		expect(event?.meta).toMatchObject({ ruleId: rule!.id, grantId: grants[0]!.id });
 	});
 
 	it('denies a matching deny rule and creates no grant', async () => {
