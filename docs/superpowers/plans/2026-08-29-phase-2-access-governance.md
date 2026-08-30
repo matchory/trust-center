@@ -142,12 +142,11 @@ Six admin route groups follow the Phase 1 pattern exactly: a `DataTable` list pa
 
 ## Execution log
 
-Tasks 1–15 are complete (commits `b9fef02`..`HEAD`, all signed).
+Tasks 1–16 are complete (commits `b9fef02`..`HEAD`, all signed).
 
-**Resume at Task 16** — the audit log viewer. The access journey and its
-erasure path are both complete. What remains is the audit viewer, the auth
-hardening carried over from Phase 1, the expiry and reminder job, and the
-phase close.
+**Resume at Task 17** — auth hardening. The access journey, its erasure path
+and the audit viewer are all complete. What remains is the auth hardening
+carried over from Phase 1, the expiry and reminder job, and the phase close.
 
 ### Departures from this plan, and why
 
@@ -362,6 +361,34 @@ phase close.
   staff session is "the only cookie the product sets", which stopped being true
   in Task 10. Corrected to name both cookies and their scopes while adding §10.
 
+- **Task 16 — `ACTOR_TYPES` is not exported.** SvelteKit validates the export
+  surface of a `+page.server.ts` and refuses anything outside `load`,
+  `actions`, the page options, and `_`-prefixed names. The list reaches the
+  page through the load's return value instead, which is where the page needed
+  it anyway.
+
+- **Task 16 — the admin nav gained a per-section role.** The step guards the
+  route and nothing else, which leaves every approver looking at a nav link
+  that 403s. `AdminSection` now carries an optional `role` and the layout
+  filters on it, so the nav shows only what the routes will serve. The union is
+  spelled inline, as `app.d.ts` already spells it: `sections.ts` is imported by
+  a `.svelte` file and must not reach into `$lib/server`.
+
+- **Task 16 — the details panel also shows `ua` and `request_id`.** The step
+  named `meta` alone. Both other columns are recorded on nearly every event and
+  surfaced nowhere else in the product; an audit viewer that hides the user
+  agent it stored is not one.
+
+- **Task 16 — `formatDateTime` added, pinned to UTC and rendering the zone.**
+  `formatDate` drops the time, which an audit log cannot. The zone is part of
+  the string rather than implied, so a reader correlating rows against server
+  logs is not silently shifted by their own offset.
+
+- **Task 16 — spec §10 needed no change.** It already states that staff
+  identifiers are outside the requester purge and may appear in `meta`, which
+  is exactly the decision Step 1 settles. The rationale went to the
+  `recordEvent` call site instead, where the next reader will meet it.
+
 ### Found while executing
 
 - **The plan's watermark assertion could never pass.** It grepped the saved
@@ -416,6 +443,16 @@ phase close.
   hreflang alternates along with adding the robots meta — a submission surface
   has nothing for a crawler to prefer. Tasks 10 and 11 need it for the whole
   `/access` subtree.
+
+- **`pnpm test:e2e -- --project=app <filter>` runs both Playwright projects.**
+  The stray `--` is passed through to the Playwright CLI, which stops treating
+  the rest as project selection — so `admin-access.spec.ts` ran concurrently
+  under `app` and `origin` against the one shared database, and its `afterAll`
+  deleted the grant-duration setting while its own last assertion was still
+  reading it. It fails as `expected "14", received "90"` (the environment
+  default) and passes in isolation, which reads exactly like a product bug and
+  is not one. Every Task's Step 5 in this plan prints that form of the command;
+  invoke the CLI directly instead.
 
 - **Migrations are renamed by hand.** `drizzle-kit generate` assigns a random
   name; this repo uses descriptive ones, so each migration needs its file and its
@@ -5367,7 +5404,7 @@ Spec §11 lists it in this phase. A filterable read-only table, not the Phase 5 
 **Interfaces:**
 - Produces: `queryEvents(db, filter)` extended with `action`, `actorType`, `from`, `to`, and keyset pagination.
 
-- [ ] **Step 1: Settle the staff-PII-in-`meta` carry-over item**
+- [x] **Step 1: Settle the staff-PII-in-`meta` carry-over item**
 
 The viewer is what makes this visible, so decide it here. Phase 0 writes `meta: { oidcSub, email, groups }` on staff login. Spec §10 confines *requester* personal data to `ip`/`ua`/`actor_id` and explicitly places staff outside that restriction, so this is permitted — but the table is append-only, so it can never be corrected.
 
@@ -5375,7 +5412,7 @@ The viewer is what makes this visible, so decide it here. Phase 0 writes `meta: 
 
 If the operator disagrees, the change belongs in a migration that stops *future* writes — never in an UPDATE of existing rows.
 
-- [ ] **Step 2: Write the failing query test**
+- [x] **Step 2: Write the failing query test**
 
 `tests/integration/audit-query.test.ts` asserts:
 
@@ -5386,7 +5423,7 @@ If the operator disagrees, the change belongs in a migration that stops *future*
 - keyset pagination on `seq` returns the next page with no overlap and no gap
 - a filter matching nothing returns an empty array rather than throwing
 
-- [ ] **Step 3: Extend `queryEvents`**
+- [x] **Step 3: Extend `queryEvents`**
 
 ```ts
 export interface AuditFilter {
@@ -5426,13 +5463,13 @@ export async function queryEvents(db: Db, filter: AuditFilter): Promise<AuditEve
 
 Keep the existing narrower call sites working — the old `{subjectType, subjectId, actorId, limit}` shape is a subset of this one, so no caller changes.
 
-- [ ] **Step 4: Build the page**
+- [x] **Step 4: Build the page**
 
 A `DataTable` over the result, columns: time, action, actor (type plus id), subject (type plus id), IP, and a details toggle rendering `meta` as formatted JSON. Filters as a GET form so a filtered view is a shareable URL — this is the surface an auditor is pointed at.
 
 `admin` role only, not `approver`: the log carries every actor's IP and the full history of the deployment, which is more than triage needs. Guard it in `+page.server.ts` with `if (locals.staff?.role !== 'admin') error(403, ...)` and add a route-level e2e test for the denial.
 
-- [ ] **Step 5: Run and commit**
+- [x] **Step 5: Run and commit**
 
 ```bash
 pnpm test:integration -- audit-query
