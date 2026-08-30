@@ -52,21 +52,22 @@ is partly *about*, and a `Path=/` session cookie would have cost it.
 
 What it cost, each item observed rather than anticipated:
 
-1. **A verified requester who switches language is silently signed out.**
-   Verified during this write-up, not deduced: on `/de/access` the portal shell
-   renders the locale switcher, whose EN link is `/en/access`. The cookie is
-   scoped to `/de/access`, which is not a prefix of `/en/access`, so the browser
-   sends nothing, the subtree layout finds no requester, and the person lands on
-   `/en/request` being asked to file a fresh request they do not need — their
-   grant is still live. The affordance that breaks the session is rendered
-   directly above the documents it breaks access to.
+1. **A verified requester who switched language was silently signed out.**
+   Verified rather than deduced, and **since fixed**: on `/de/access` the portal
+   shell renders the locale switcher, whose EN link was `/en/access`. The cookie
+   is scoped to `/de/access`, which is not a prefix of `/en/access`, so the
+   browser sent nothing, the subtree layout found no requester, and the person
+   landed on `/en/request` being asked to file a fresh request they did not
+   need — their grant still live. The affordance that broke the session was
+   rendered directly above the documents it broke access to.
 
    A locale-free cookie path cannot fix this: `/de/access` and `/en/access`
-   share no prefix but `/`, which is exactly what the design refuses. The cheap
-   fix is a route **under the current locale's path** that the switcher posts
-   to — that request still carries the cookie, so the server can mint the
-   session cookie at the target locale's path and redirect. Roughly the shape of
-   `access/logout`, which already works for the same reason.
+   share no prefix but `/`, which is exactly what the design refuses. The
+   switcher now goes via `access/switch` **under the locale being left**, whose
+   request does carry the cookie, and which re-issues it at the target locale's
+   path with the session's own expiry before redirecting. Exactly one cookie
+   still exists afterwards. That this needed a route at all is the cost; it is
+   paid, and Phase 3 inherits the pattern rather than the bug.
 
 2. **Gated delivery needed a second route.** Task 12 found that
    `/api/documents/{fileId}` never receives the requester cookie, so every gated
@@ -102,12 +103,15 @@ and two concurrent downloads of it would exhaust a 2 GB container.
 
 Two consequences for Phase 3:
 
-- **Bound page count at upload, not just bytes.** `pdf-lib` reports the count
-  from the loaded document, and the upload path already loads it. This is also
-  the reader that `document_file.page_count` has been waiting for since Phase 1,
-  where it was deferred as "a denormalization with no reader" — the download
-  path could then refuse, or degrade to an unstamped-but-logged delivery,
-  without opening the file first.
+- **Page count is now bounded at upload.** `MAX_PDF_PAGES` (default 1000) is
+  checked by `assertPdfPages` before anything reaches storage, and bytes that
+  will not parse are refused at the same point. **It applies to new uploads
+  only** — a file already in storage from before the limit keeps working, so an
+  operator who lowers it must re-upload to have it enforced.
+
+  `document_file.page_count` is still not stored, and that is what would let the
+  *download* path refuse a pre-existing oversized file without opening it. It
+  remains deferred, now with a named reader rather than none.
 - **Phase 3's NDA generation is safe only while it writes the document itself.**
   It controls the page count, so the 100-page row is the relevant one. The
   moment an NDA is bound to a customer-supplied PDF, the 16,200-page row is back
@@ -115,16 +119,17 @@ Two consequences for Phase 3:
 
 ## Not folded into Phase 2
 
-From `phase-2-carryover.md`, one item remains open, and it is the same one twice:
+Nothing. Every item `phase-2-carryover.md` carried is closed, and so is every
+defect this phase's own review found — see "Fixed after the phase closed" below.
 
-- **Thirteen routes still call `getClientAddress()` raw.** Decision 6 made
-  `clientIp(event)` return `string | null` precisely so a misconfigured
-  `ADDRESS_HEADER` costs an audit attribution rather than the whole mutation,
-  and new code uses it. The Phase 1 routes were never converted:
-  `documents/new`, `documents/categories`, `controls/new`, `controls/groups`,
-  `certifications/new`, `faq/new`, `subprocessors/new`, `updates/new`,
-  `settings/branding`, and `auth/logout`. Each one still loses the *mutation*,
-  not merely its attribution, if the call throws. A one-line change per site.
+The last of them was the **fourteen call sites across ten routes still using
+`getClientAddress()` raw**, which Decision 6 had left half-applied: `clientIp()`
+existed and only new code used it, so those Phase 1 routes still lost the whole
+*mutation* — not merely its attribution — if the call threw. Creating a
+document, a control group, a category, an answer, a subprocessor, an update or a
+certification, saving branding, and signing out were all affected. They now go through the helper, and the
+invariant is a unit test rather than a review habit: nothing under `src/routes`
+may name the raw function.
 
 Everything else that `phase-2-carryover.md` carried is closed:
 the `__Host-` prefix, revoking prior sessions on re-login, auditing failed OIDC
@@ -137,12 +142,13 @@ suppression); the missing migration-only entry point (`tools/migrate.js`); the
 `BASE_URL`-versus-request-host gap (the `origin` Playwright project); and the
 shared action name for meta and translation edits (`translationAction`).
 
-## Found during Phase 2
+## Fixed after the phase closed
 
-- **The locale switcher signs a requester out.** See the second question above.
-  Recorded here as well because it is a user-visible defect, not only a design
-  tension, and it is the single most likely thing in this phase to be reported
-  as a bug by a real prospect.
+Everything under this heading was found by Phase 2's own review, recorded as
+open, and then fixed before Phase 3 started. Kept because the reasoning is what
+Phase 3 needs, not the status.
+
+- **The locale switcher signed a requester out.** See the second question above.
 
 - **Filling a form field before hydration silently submits the server's value.**
   An input rendered as `value={data.x}` has its DOM value written again when
@@ -151,31 +157,46 @@ shared action name for meta and translation edits (`translationAction`).
   it. The grant-duration spec failed roughly one run in three with
   `expected "14", received "90"`, and the row in `setting` really did hold `90`:
   **the test passed its own "saved" assertion while storing the opposite of what
-  it typed.** `awaitHydration()` in `tests/helpers/admin.ts` waits for the entry
-  module to have run. Every admin form spec has the same hazard; it is applied
-  where it has been observed rather than pre-emptively everywhere.
+  it typed.** Every admin spec now navigates through `gotoAdmin`, which waits.
 
-- **`outbound_email` names every address ever mailed, forever.** There is no
-  cleanup job. `purgeRequester` blanks `to` on that requester's rows, so an
-  erasure is honoured — but a requester who never asks is retained
-  indefinitely, which is a retention policy nobody chose. The rows are also the
-  only record that a notification went out, so deleting them is not obviously
-  right either. Decide the policy before the table is large.
+- **`locale.spec.ts:63` was racing the same hydration, differently.** Four
+  sightings across three phases, finally root-caused: the failures took ~226ms
+  rather than the 5s an assertion timeout would, and only the marker check
+  failed while both text assertions passed. Delaying the entry chunk by 3s
+  reproduces it every time — the click lands before SvelteKit's router is
+  listening, the browser does a full document load, `window` resets, and the
+  marker is gone, so the test reports "not a client-side navigation" and is
+  right about the wrong thing. A full load renders English correctly, which is
+  why nothing else noticed. **The general lesson for Phase 3: an e2e step that
+  interacts before hydration does not fail, it lies.**
 
-- **`rate_limit` accumulates a row per key with no sweep.** Harmless at the
-  current scale and unbounded in principle; the e2e suite already deletes the
-  whole table between tests, which is a hint that nothing else ever does.
+- **`admin-documents.spec.ts` kept a private sign-in helper.** It still used the
+  shared `admin` account, so once Task 17 made a login revoke that staff
+  member's other sessions, it raced `auth.spec.ts` for the same identity.
+  Deleted in favour of the shared helper. Duplicated test helpers are how a
+  security property quietly stops being tested.
+
+- **`outbound_email` and `rate_limit` grew without bound.** Both now have a
+  sweep. Counters are deleted — nothing reads one past its window, and deleting
+  can only forgive, never deny. Notifications are *blanked* rather than deleted,
+  the same way `purgeRequester` blanks them, because that a notification went
+  out is a fact about the system rather than about the person. The payload goes
+  too: a `verify_request` payload carries the magic-link URL, and a spent token
+  is still a token.
+
+- **`MAX_UPLOAD_MB` bounded the wrong dimension.** See the third question above.
+
+## Still open
+
+- **No end-to-end test covers the admin file upload at all.** The page-count cap
+  and the size cap are both unit-tested, and the route that applies them has
+  never been driven by a browser. This predates the cap.
 
 - **The e2e run starts two application servers against one database.** The
   `origin` project's server exists only to prove canonical URLs come from
   `BASE_URL`, but it runs migrations and the full job runner too. Nothing has
   gone wrong because of it, and it is the first thing to suspect when something
   does.
-
-- **`tests/e2e/locale.spec.ts:63` flaked twice more,** making four sightings
-  across three phases. It is now the only known flake in the suite;
-  `phase-2-carryover.md` already asked for it to be made robust rather than
-  re-observed, and it has now been re-observed.
 
 ## Known items carried forward
 
