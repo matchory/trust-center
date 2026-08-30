@@ -66,6 +66,12 @@ refusal is recorded in the audit log.
 `POSTGRES_PASSWORD` is read by `compose.yaml` only, to build
 `DATABASE_URL` and to initialise the bundled Postgres.
 
+**HTTPS is required.** Session cookies use the `__Host-` and `__Secure-`
+prefixes, which browsers only accept over HTTPS. Reaching the application over
+plain HTTP — other than at `localhost` — means nobody can sign in, staff or
+requester, with no error message beyond a login that loops back to the login
+page. Terminate TLS at your proxy and set `BASE_URL` to the `https://` origin.
+
 ## 4. Setting up the OIDC issuer
 
 Whatever the issuer, you need: a **confidential** client, the redirect URI
@@ -282,8 +288,9 @@ If a CDN sits in front of nginx, raise `XFF_DEPTH` to match.
   `unsafe-inline` makes the browser enforce it.
 - **No cookies for public visitors.** The product sets exactly two cookies,
   both after someone signs in and neither on a public page: the staff session,
-  scoped to the admin area, and the requester session, scoped to
-  `/{locale}/access`. A visitor who never signs in is never given one.
+  which the `__Host-` prefix requires be scoped to the whole site, and the
+  requester session, scoped to `/{locale}/access`. A visitor who never signs in
+  is never given one.
 
 These are not promises to take on faith. `tests/e2e/security.spec.ts` asserts
 each of them on every run: it records every request the portal makes and fails

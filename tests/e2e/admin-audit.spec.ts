@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { signInAsAdmin, signInAsApprover } from '../helpers/admin';
+import { awaitHydration, signInAsAdmin, signInAsApprover } from '../helpers/admin';
 
 test('an admin reads the audit log and narrows it by action', async ({ page }) => {
 	// Signing in is itself an audited event, so the log is never empty here and
@@ -11,6 +11,9 @@ test('an admin reads the audit log and narrows it by action', async ({ page }) =
 	const unfiltered = await page.getByTestId(/^audit-[0-9a-f-]{36}$/).count();
 	expect(unfiltered).toBeGreaterThan(0);
 
+	// Before typing: hydration writes the load's (empty) filter back over the
+	// typed one, and the form then submits `action=`. See awaitHydration.
+	await awaitHydration(page);
 	await page.getByTestId('audit-filter-action').fill('staff.login.succeeded');
 	await page.getByTestId('audit-filter-apply').click();
 

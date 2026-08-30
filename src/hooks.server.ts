@@ -1,6 +1,10 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { error, type Handle, type HandleServerError, type ServerInit } from '@sveltejs/kit';
-import { SESSION_COOKIE, validateStaffSession } from '$lib/server/auth/session';
+import {
+	SESSION_COOKIE,
+	STAFF_COOKIE_OPTIONS,
+	validateStaffSession
+} from '$lib/server/auth/session';
 import { getConfig } from '$lib/server/config';
 import { getDb } from '$lib/server/db/instance';
 import {
@@ -94,7 +98,9 @@ export const handle: Handle = async ({ event, resolve }) => {
 				role
 			};
 		} else {
-			event.cookies.delete(SESSION_COOKIE, { path: '/' });
+			// As with the requester cookie below, every attribute must match the
+			// set or the deletion is rejected — see STAFF_COOKIE_OPTIONS.
+			event.cookies.delete(SESSION_COOKIE, STAFF_COOKIE_OPTIONS);
 		}
 	}
 

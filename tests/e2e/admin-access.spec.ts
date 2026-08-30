@@ -4,7 +4,7 @@ import { eq, like } from 'drizzle-orm';
 import { createGrant, GRANT_DEFAULT_DAYS_SETTING_KEY } from '../../src/lib/server/access/grants';
 import { createDb, type Db } from '../../src/lib/server/db';
 import { accessGrant, accessRule, requester, setting } from '../../src/lib/server/db/schema';
-import { signInAsAdmin } from '../helpers/admin';
+import { awaitHydration, signInAsAdmin } from '../helpers/admin';
 
 const databaseUrl = process.env.DATABASE_URL;
 if (!databaseUrl) {
@@ -105,6 +105,9 @@ test('the grant duration setting overrides the environment default', async ({ pa
 	await signInAsAdmin(page);
 	await page.goto('/de/admin/settings/access');
 
+	// Before typing: hydration would otherwise write the server's value back
+	// over the typed one and the form would submit 90. See awaitHydration.
+	await awaitHydration(page);
 	await page.getByTestId('access-grant-default-days').fill('14');
 	await page.getByTestId('access-save').click();
 	await expect(page.getByTestId('access-saved')).toBeVisible();

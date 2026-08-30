@@ -30,6 +30,26 @@ const USERS = {
 
 const BY_SUB = Object.fromEntries(Object.values(USERS).map((u) => [u.sub, u]));
 
+// One numbered identity per Playwright parallel slot: `admin0`, `approver3`, …
+// Signing in revokes every other live session for that staff member (see
+// revokeAllStaffSessions — a deliberate security property), so two workers
+// signing in as the same fixture account revoke each other mid-test. The suite
+// gives each slot its own identity rather than giving up its parallelism.
+const SLOT_ACCOUNT = /^(admin|approver)(\d+)$/;
+
+function slotAccount(sub) {
+	const match = SLOT_ACCOUNT.exec(sub);
+	if (!match) return undefined;
+	const [, role, slot] = match;
+
+	return {
+		sub,
+		email: `${sub}@example.test`,
+		name: `${role === 'admin' ? 'Ada Admin' : 'Arno Approver'} ${slot}`,
+		groups: [role === 'admin' ? 'trust-center-admins' : 'trust-center-approvers']
+	};
+}
+
 const provider = new Provider(ISSUER, {
 	clients: [
 		{
@@ -56,7 +76,7 @@ const provider = new Provider(ISSUER, {
 		devInteractions: { enabled: true }
 	},
 	async findAccount(_ctx, id) {
-		const user = BY_SUB[id];
+		const user = BY_SUB[id] ?? slotAccount(id);
 		if (!user) return undefined;
 		return {
 			accountId: id,

@@ -86,7 +86,7 @@ test('a user in no mapped group is refused', async ({ page }) => {
 	// unrelated to our guard. What must not exist is *our* session cookie —
 	// its absence proves no session was created before the role check ran.
 	const cookieNames = (await page.context().cookies()).map((cookie) => cookie.name);
-	expect(cookieNames).not.toContain('tc_staff_session');
+	expect(cookieNames).not.toContain('__Host-tc_staff_session');
 });
 
 test('signing out revokes the session immediately, at the server', async ({ page, context }) => {
@@ -94,9 +94,9 @@ test('signing out revokes the session immediately, at the server', async ({ page
 	await expect(page).toHaveURL(/\/admin$/);
 
 	const sessionCookie = (await context.cookies()).find(
-		(cookie) => cookie.name === 'tc_staff_session'
+		(cookie) => cookie.name === '__Host-tc_staff_session'
 	);
-	if (!sessionCookie) throw new Error('expected a tc_staff_session cookie after signing in');
+	if (!sessionCookie) throw new Error('expected a __Host-tc_staff_session cookie after signing in');
 
 	await page.getByTestId('sign-out').click();
 

@@ -3,6 +3,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createDb, type Db } from '../../src/lib/server/db';
 import {
 	createStaffSession,
+	revokeAllStaffSessions,
 	revokeStaffSession,
 	upsertStaffUser,
 	validateStaffSession
@@ -138,5 +139,46 @@ describe('staff sessions', () => {
 			.where(eq(schema.staffUser.id, user.id));
 
 		expect(await validateStaffSession(db, token)).toBeNull();
+	});
+	it('revokes every live session for a user, and only the ones minted before', async () => {
+		const user = await upsertStaffUser(db, {
+			oidcSub: 'sub-revoke-all',
+			email: 'h@example.test',
+			name: 'H',
+			role: 'admin'
+		});
+
+		const laptop = await createStaffSession(db, { staffUserId: user.id, ttlHours: 12 });
+		const desktop = await createStaffSession(db, { staffUserId: user.id, ttlHours: 12 });
+
+		await revokeAllStaffSessions(db, user.id);
+
+		expect(await validateStaffSession(db, laptop.token)).toBeNull();
+		expect(await validateStaffSession(db, desktop.token)).toBeNull();
+
+		// The session a fresh login mints afterwards must survive — this runs on
+		// every login, so revoking the new one too would lock everybody out.
+		const afterLogin = await createStaffSession(db, { staffUserId: user.id, ttlHours: 12 });
+		expect(await validateStaffSession(db, afterLogin.token)).not.toBeNull();
+	});
+
+	it("leaves another user's sessions alone", async () => {
+		const mine = await upsertStaffUser(db, {
+			oidcSub: 'sub-revoke-mine',
+			email: 'i@example.test',
+			name: 'I',
+			role: 'admin'
+		});
+		const theirs = await upsertStaffUser(db, {
+			oidcSub: 'sub-revoke-theirs',
+			email: 'j@example.test',
+			name: 'J',
+			role: 'approver'
+		});
+
+		const untouched = await createStaffSession(db, { staffUserId: theirs.id, ttlHours: 12 });
+		await revokeAllStaffSessions(db, mine.id);
+
+		expect(await validateStaffSession(db, untouched.token)).not.toBeNull();
 	});
 });
