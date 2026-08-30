@@ -15,10 +15,11 @@ files and the Testcontainers pin.
 rather than streams, Section 8 replaces the opaque `scope` columns with scope join tables, and
 Section 9.2 requires a POST to consume a magic link. No other section changed.
 
-**Amended 2026-08-30 (Phase 3 planning):** Section 8 replaces the tier flags with tier join tables,
-splits `nda_template` into family, version and body, and introduces `access_group`; Section 11
-splits Phase 3 into 3a and 3b and records that auto-approval rules shipped in Phase 2. The full
-reasoning, and every decision this summary compresses, is in
+**Amended 2026-08-30 (Phase 3 planning, revised after adversarial review):** Section 8 replaces the
+tier flags with tier join tables, splits `nda_template` into family, version and body, introduces
+`access_group`, and makes the set of agreements a grant requires a recorded decision rather than a
+derived one; Section 11 splits Phase 3 into 3a, 3b and 3c and records that auto-approval rules
+shipped in Phase 2. The full reasoning, and every decision this summary compresses, is in
 `2026-08-30-phase-3-nda-workflow-design.md`, which governs Phase 3 where the two differ. No other
 section changed.
 
@@ -342,16 +343,16 @@ document_group           (document_id, group_id)
 nda_template        slug
 nda_template_version     template_id, version, effective_from, first_accepted_at?
 nda_template_body        (version_id, locale) body_md, sha256
-nda_acceptance      requester_id, version_id, method(clickthrough),
-                    accepted_at, ip, ua, typed_name, template_sha256,
-                    record_pdf_key
+nda_acceptance      requester_id, version_id, method(clickthrough), accepted_at,
+                    ip, ua, typed_name, email, company, company_domain,
+                    template_sha256, record_pdf_key
 access_grant        requester_id, granted_at, term_days, expires_at?,
-                    acceptance_due_at?, revoked_at, revoked_by
+                    acceptance_due_at?, closed_at?, revoked_at, revoked_by
 access_grant_document    (grant_id, document_id)
 access_grant_tier        (grant_id, tier)
 access_grant_group       (grant_id, group_id)
-access_grant_required_nda (grant_id, nda_template_id)
-access_grant_acceptance   (grant_id, acceptance_id)
+access_grant_nda         (grant_id, nda_template_id) disposition(required|waived)
+access_grant_acceptance  (grant_id, acceptance_id)
 ```
 
 Scope is a set of documents, not an opaque column. A request and a grant each carry explicit
@@ -368,6 +369,13 @@ An `access_group` is a named bundle of documents, not a cohort of people, and it
 NDA — which is how a customer- or purpose-specific agreement is configuration rather than code. A
 grant may therefore be waiting on more than one acceptance, which is why the link between a grant
 and its acceptances is a join table rather than the single column an earlier draft carried.
+
+Which agreements a grant requires is a **decision the approver records**, proposed by the system from
+the documents in scope. Deriving it from the document graph alone attaches the agreement to the
+document when the thing it varies by is the counterparty, and makes a customer-specific NDA
+impossible without duplicating every shared document per customer. Because scope is future-inclusive,
+the recorded set governs *activation* while delivery re-checks live, per document, and may only ever
+narrow what a grant covers — never widen it.
 
 `access_request.requester_id` is nullable, and the three `submitted_*` columns exist, because §9.2
 makes verification the act that creates the `requester`. Between submission and verification a
@@ -490,18 +498,22 @@ new requests, decisions, access links, and expiry reminders; audit log viewer.
 ### Phase 3 — NDA workflow · L
 
 Auto-approval rules with domain allow and deny lists shipped early, in Phase 2. What remains splits
-in two, on the seam between the workflow and the ergonomics of authoring for it. Both halves are
-independently reachable; see `2026-08-30-phase-3-nda-workflow-design.md`.
+in three, each part independently reachable with one reviewable theme; see
+`2026-08-30-phase-3-nda-workflow-design.md`.
 
-**Phase 3a — the NDA workflow.** Access groups; scope as sets on requests, grants and rules; the
-NDA-gated tier; versioned templates whose every locale publishes together; click-through acceptance
-with a PDF record emailed to both parties; grants that stay inert until every required agreement is
-accepted. Templates are authored as typed Markdown.
+**Phase 3a — scope is a set.** Access groups as a content type; scope as sets of documents, tiers and
+groups on requests, grants and rules. The NDA tier stays refused. A mechanical but high-blast-radius
+refactor of the security-critical path, reviewed on its own.
 
-**Phase 3b — authoring ergonomics.** PDF and DOCX import into the same canonical body, a WYSIWYG
-editor, and a preview-before-publish gate. No schema changes.
+**Phase 3b — the NDA workflow.** The NDA-gated tier; versioned templates whose every locale publishes
+together; the approver-recorded requirement set; click-through acceptance with a PDF record emailed
+to both parties; grants that stay inert until every recorded agreement is accepted; the preview.
+Templates are authored as typed Markdown.
 
-At the end of 3a the product matches SafeBase's core proposition.
+**Phase 3c — authoring ergonomics.** PDF and DOCX import into the same canonical body, and a WYSIWYG
+editor. No schema changes.
+
+At the end of 3b the product matches SafeBase's core proposition.
 
 ### Phase 4 — Notifications and subscriptions · M
 
