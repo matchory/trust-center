@@ -1,5 +1,11 @@
+import { asc, eq } from 'drizzle-orm';
+import { z } from 'zod';
+import { ACCESS_RULE_ACTIONS } from '../../access-types';
+import { DOCUMENT_TIERS } from '../../content-types';
+import { accessRule } from '../db/schema';
 import type { AccessRuleAction } from '../../access-types';
 import type { DocumentTier } from '../../content-types';
+import type { Db } from '../db';
 
 export interface RuleForMatching {
 	id: string;
@@ -84,4 +90,77 @@ export function decideFromRules(rules: readonly RuleForMatching[], domain: strin
 		maxTier: matched.maxTier === 'nda' ? PHASE_CEILING : (matched.maxTier as DocumentTier),
 		ruleId: matched.id
 	};
+}
+
+export interface AdminRuleRow {
+	id: string;
+	pattern: string;
+	action: AccessRuleAction;
+	maxTier: DocumentTier;
+	priority: number;
+	note: string | null;
+	createdAt: Date;
+}
+
+/**
+ * The values a rule form may set; `id` and `createdAt` are the database's.
+ * Shared by the create and edit routes because a rule that is valid on one is
+ * valid on the other, and the pattern check is the point of the whole schema:
+ * a rule that can never match is rejected at entry rather than discovered at
+ * decision time, when a stranger is being handed documents.
+ */
+export const ruleSchema = z.object({
+	pattern: z.string().trim().toLowerCase().regex(RULE_PATTERN),
+	action: z.enum(ACCESS_RULE_ACTIONS),
+	maxTier: z.enum(DOCUMENT_TIERS),
+	priority: z.coerce.number().int().min(0).max(10_000),
+	note: z
+		.string()
+		.trim()
+		.max(500)
+		.transform((value) => value || null)
+		.nullable()
+});
+
+export type RuleInput = z.output<typeof ruleSchema>;
+
+/**
+ * Listed in the order `matchRule` considers them, so the page reads the way the
+ * evaluation runs. The tie-break is more specific than "then by pattern", but
+ * showing the priority order is what an operator needs to see.
+ */
+export async function listRules(db: Db): Promise<AdminRuleRow[]> {
+	const rows = await db
+		.select()
+		.from(accessRule)
+		.orderBy(asc(accessRule.priority), asc(accessRule.pattern));
+
+	return rows.map(toAdminRow);
+}
+
+export async function getRule(db: Db, id: string): Promise<AdminRuleRow | null> {
+	const [row] = await db.select().from(accessRule).where(eq(accessRule.id, id)).limit(1);
+	return row ? toAdminRow(row) : null;
+}
+
+function toAdminRow(row: typeof accessRule.$inferSelect): AdminRuleRow {
+	return {
+		...row,
+		action: row.action as AccessRuleAction,
+		maxTier: row.maxTier as DocumentTier
+	};
+}
+
+export async function createRule(db: Db, input: RuleInput): Promise<string> {
+	const [row] = await db.insert(accessRule).values(input).returning({ id: accessRule.id });
+	if (!row) throw new Error('failed to create rule');
+	return row.id;
+}
+
+export async function updateRule(db: Db, id: string, input: RuleInput): Promise<void> {
+	await db.update(accessRule).set(input).where(eq(accessRule.id, id));
+}
+
+export async function deleteRule(db: Db, id: string): Promise<void> {
+	await db.delete(accessRule).where(eq(accessRule.id, id));
 }

@@ -142,14 +142,13 @@ Six admin route groups follow the Phase 1 pattern exactly: a `DataTable` list pa
 
 ## Execution log
 
-Tasks 1–13 are complete (commits `b9fef02`..`HEAD`, all signed).
+Tasks 1–14 are complete (commits `b9fef02`..`HEAD`, all signed).
 
-**Resume at Task 14** — grants, rules, and access settings, the remaining admin
-CRUD. Both halves of the journey now work: a prospect requests, verifies, and
-downloads; staff triage what the rules did not decide. What has no surface yet
-is everything *after* a decision — a granted requester cannot be found, a grant
-cannot be revoked from the UI, and rules can only be written directly to the
-database.
+**Resume at Task 15** — the requester purge. Every surface the access journey
+needs now exists: a prospect requests, verifies, and downloads; staff triage
+what the rules did not decide, revoke a grant, write the rules themselves, and
+set the default term. What is still missing is the erasure path, the audit log
+viewer, the auth hardening carried over from Phase 1, and the expiry job.
 
 ### Departures from this plan, and why
 
@@ -307,6 +306,39 @@ database.
   Playwright refuses to let one test file import another, and it lived in
   `admin-content.spec.ts`. `admin-documents.spec.ts` keeps its own private copy;
   that duplication predates this task.
+
+- **Task 14 Step 2's unit test already existed.** `tests/unit/access-rules.test.ts`
+  landed with Task 5 and already asserts `RULE_PATTERN` against the exact accept
+  and reject lists this step names. Nothing was added.
+
+- **Task 14 Step 3 — `defaultGrantDays` takes its fallback, and the routes call
+  it.** The step asked for `defaultGrantDays(db)` reading `getConfig()` and for
+  `createGrant` to call it "instead of reading config directly". `createGrant`
+  does not read config: Task 10's departure made `expiresAt` a required
+  argument, so it has no default to replace. The helper is
+  `defaultGrantDays(db, fallback)` — the setting when one is stored, the
+  argument otherwise — and it is called from the two routes that resolve a term,
+  the decision page and the verify page. That keeps the invariant Tasks 7, 8,
+  10 and 13 all established, and still makes the setting effective everywhere a
+  grant is minted, including rule auto-approval. A stored value that fails
+  validation falls back rather than throwing: it is reachable only by editing
+  the table by hand, and it must not take the decision page down with it.
+
+- **Task 14 — `ruleSchema` lives in `rules.ts`, not in each route.** The create
+  and edit routes validate the same five fields against the same rules, and the
+  pattern check is the point of the whole schema. Duplicating it per route, as
+  `faq/new` and `faq/[id]` do for their two fields, would put the "a rule that
+  can never match is rejected at entry" guarantee in two places that could
+  drift apart.
+
+- **Task 14 — revoke is offered on active grants only.** `revokeGrant` would
+  accept an expired one, but revoking it changes nothing any download path
+  reads, and offering the button suggests otherwise. The list shows `expired`
+  with no action.
+
+- **Task 14 — the rule list shows `maxTier` only for `auto_approve`.** The
+  column is meaningless for `review` and `deny` and is ignored there by
+  `decideFromRules`; rendering it anyway would suggest it decides something.
 
 ### Found while executing
 
@@ -5003,13 +5035,13 @@ Three admin surfaces, all following the Phase 1 `DataTable` + meta-form pattern.
 **Interfaces:**
 - Consumes: `revokeGrant` (Task 10), `saveMetaAction` (Task 1), the `setting` table (Phase 1).
 
-- [ ] **Step 1: Build the grant list**
+- [x] **Step 1: Build the grant list**
 
 Columns: requester email, company, scope (either "all request tier" or a document count), granted, expires, state. State is derived, not stored: `revoked` if `revokedAt`, else `expired` if `expiresAt <= now()`, else `active`. One `revoke` action per row calling `revokeGrant` and recording `access_grant.revoked`.
 
 Revocation must take effect immediately — `grantedDocuments` filters on `revokedAt` on every call, so no cache invalidation is needed. Task 19's end-to-end test proves it.
 
-- [ ] **Step 2: Build the rules CRUD**
+- [x] **Step 2: Build the rules CRUD**
 
 `access_rule` has no translations, so this is a list plus a plain meta form — the simplest surface in the admin. Fields: `pattern`, `action` (select over `ACCESS_RULE_ACTIONS`), `maxTier` (select over `DOCUMENT_TIERS`), `priority`, `note`.
 
@@ -5023,13 +5055,13 @@ Add a unit test for that regex in `tests/unit/access-rules.test.ts` asserting it
 
 Rules decide who gets documents without a human, so every mutation records `access_rule.created` / `.updated` / `.deleted` with the full rule in `meta` — it is operator configuration, not requester data, so `meta` is the right place.
 
-- [ ] **Step 3: Build the access settings page**
+- [x] **Step 3: Build the access settings page**
 
 One field: the default grant duration in days, stored in `setting` under key `access.grant_default_days`, following `src/routes/(admin)/admin/settings/branding/+page.server.ts`.
 
 `getConfig().accessGrantDefaultDays` is the environment default; the setting overrides it when present. Add a `defaultGrantDays(db)` helper in `src/lib/server/access/grants.ts` that reads the setting and falls back to config, and call it from `createGrant` instead of reading config directly.
 
-- [ ] **Step 4: Write the e2e test and commit**
+- [x] **Step 4: Write the e2e test and commit**
 
 `tests/e2e/admin-access.spec.ts`: sign in, create a rule with an auto-approve action, confirm it appears in the list, revoke a seeded grant, and confirm the row shows as revoked.
 

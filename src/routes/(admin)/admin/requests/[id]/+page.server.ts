@@ -7,6 +7,7 @@ import {
 	requestableDocuments,
 	type Decision
 } from '$lib/server/access/requests';
+import { defaultGrantDays } from '$lib/server/access/grants';
 import { recordEvent } from '$lib/server/audit';
 import { getConfig } from '$lib/server/config';
 import { getDb } from '$lib/server/db/instance';
@@ -97,7 +98,8 @@ async function decide(event: Parameters<Actions[string]>[0], decision: Decision)
 			documentIds,
 			allRequestTier,
 			expiresAt,
-			defaultTtlDays: config.accessGrantDefaultDays,
+			// The operator's setting when one is stored, the environment otherwise.
+			defaultTtlDays: await defaultGrantDays(db, config.accessGrantDefaultDays),
 			reason
 		});
 	} catch (cause) {

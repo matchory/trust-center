@@ -1,5 +1,6 @@
 import { redirect } from '@sveltejs/kit';
 import { localizePath } from '$lib/i18n/locale';
+import { defaultGrantDays } from '$lib/server/access/grants';
 import { consumeSignInLink, verifyRequest } from '$lib/server/access/verify';
 import { getConfig } from '$lib/server/config';
 import { getDb } from '$lib/server/db/instance';
@@ -46,7 +47,8 @@ export const actions: Actions = {
 			ip,
 			ua: event.request.headers.get('user-agent'),
 			locale: event.locals.locale,
-			grantTtlDays: config.accessGrantDefaultDays,
+			// Auto-approval by rule uses the same term a human approval would.
+			grantTtlDays: await defaultGrantDays(db, config.accessGrantDefaultDays),
 			staffNotification: config.mail.staffNotificationEmail
 				? {
 						to: config.mail.staffNotificationEmail,

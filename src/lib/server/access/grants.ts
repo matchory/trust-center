@@ -1,5 +1,6 @@
-import { and, eq, gt, isNull, or, sql } from 'drizzle-orm';
-import { accessGrant, accessGrantDocument, document } from '../db/schema';
+import { and, desc, eq, gt, inArray, isNull, or, sql } from 'drizzle-orm';
+import { z } from 'zod';
+import { accessGrant, accessGrantDocument, document, requester, setting } from '../db/schema';
 import type { Db } from '../db';
 
 /**
@@ -112,4 +113,113 @@ export async function revokeGrant(db: Db, grantId: string, staffUserId: string):
 		.update(accessGrant)
 		.set({ revokedAt: new Date(), revokedByStaffId: staffUserId })
 		.where(and(eq(accessGrant.id, grantId), isNull(accessGrant.revokedAt)));
+}
+
+export type GrantState = 'active' | 'expired' | 'revoked';
+
+export interface AdminGrantRow {
+	id: string;
+	requesterId: string;
+	email: string;
+	name: string;
+	company: string;
+	allRequestTier: boolean;
+	documentCount: number;
+	grantedAt: Date;
+	expiresAt: Date;
+	revokedAt: Date | null;
+	state: GrantState;
+}
+
+/**
+ * State is derived rather than stored: a grant that lapses does so by the clock
+ * passing its expiry, and a column would have to be written by something to
+ * stay true. Revocation wins over expiry — a revoked grant that later passes
+ * its expiry was still ended by a person, and that is what an auditor asks
+ * about.
+ */
+export function grantState(
+	row: { revokedAt: Date | null; expiresAt: Date },
+	now: Date
+): GrantState {
+	if (row.revokedAt) return 'revoked';
+	return row.expiresAt <= now ? 'expired' : 'active';
+}
+
+export async function listGrantsForAdmin(db: Db, now = new Date()): Promise<AdminGrantRow[]> {
+	const rows = await db
+		.select({
+			id: accessGrant.id,
+			requesterId: accessGrant.requesterId,
+			allRequestTier: accessGrant.allRequestTier,
+			grantedAt: accessGrant.grantedAt,
+			expiresAt: accessGrant.expiresAt,
+			revokedAt: accessGrant.revokedAt,
+			email: requester.email,
+			name: requester.name,
+			company: requester.company
+		})
+		.from(accessGrant)
+		.innerJoin(requester, eq(accessGrant.requesterId, requester.id))
+		.orderBy(desc(accessGrant.grantedAt));
+
+	if (rows.length === 0) return [];
+
+	const scopes = await db
+		.select({ grantId: accessGrantDocument.grantId })
+		.from(accessGrantDocument)
+		.where(
+			inArray(
+				accessGrantDocument.grantId,
+				rows.map((row) => row.id)
+			)
+		);
+
+	const counts = new Map<string, number>();
+	for (const scope of scopes) counts.set(scope.grantId, (counts.get(scope.grantId) ?? 0) + 1);
+
+	return rows.map((row) => ({
+		...row,
+		documentCount: counts.get(row.id) ?? 0,
+		state: grantState(row, now)
+	}));
+}
+
+export const GRANT_DEFAULT_DAYS_SETTING_KEY = 'access.grant_default_days';
+
+const grantDays = z.number().int().positive().max(3650);
+
+/**
+ * How long a grant lasts when nobody names an expiry. The stored setting wins
+ * over the environment's `ACCESS_GRANT_DEFAULT_DAYS`, so an operator can change
+ * the term without a redeploy.
+ *
+ * `fallback` is an argument rather than a `getConfig()` call, for the same
+ * reason `createGrant` requires `expiresAt`: a module that needs a fully
+ * configured environment to answer a question about a row is untestable, and
+ * the routes already own the lookup.
+ *
+ * A stored value that fails validation falls back rather than throwing. It is
+ * reachable only by editing the table by hand, and a malformed one must not
+ * take the decision page down with it.
+ */
+export async function defaultGrantDays(db: Db, fallback: number): Promise<number> {
+	const [row] = await db
+		.select()
+		.from(setting)
+		.where(eq(setting.key, GRANT_DEFAULT_DAYS_SETTING_KEY))
+		.limit(1);
+
+	const parsed = grantDays.safeParse(row?.value);
+	return parsed.success ? parsed.data : fallback;
+}
+
+export async function setDefaultGrantDays(db: Db, days: number): Promise<void> {
+	await db
+		.insert(setting)
+		.values({ key: GRANT_DEFAULT_DAYS_SETTING_KEY, value: grantDays.parse(days) })
+		.onConflictDoUpdate({
+			target: setting.key,
+			set: { value: grantDays.parse(days), updatedAt: new Date() }
+		});
 }

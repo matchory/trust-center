@@ -8,11 +8,14 @@ export interface AdminSection {
 /** One entry per content type, in the order the admin nav shows them. */
 export const ADMIN_SECTIONS: AdminSection[] = [
 	{ path: '/admin/requests', label: () => m.nav_requests() },
+	{ path: '/admin/grants', label: () => m.nav_grants() },
+	{ path: '/admin/rules', label: () => m.nav_rules() },
 	{ path: '/admin/documents', label: () => m.nav_documents() },
 	{ path: '/admin/controls', label: () => m.nav_controls() },
 	{ path: '/admin/certifications', label: () => m.nav_certifications() },
 	{ path: '/admin/subprocessors', label: () => m.nav_subprocessors() },
 	{ path: '/admin/faq', label: () => m.nav_faq() },
 	{ path: '/admin/updates', label: () => m.nav_updates() },
-	{ path: '/admin/settings/branding', label: () => m.admin_branding() }
+	{ path: '/admin/settings/branding', label: () => m.admin_branding() },
+	{ path: '/admin/settings/access', label: () => m.admin_access_settings() }
 ];
