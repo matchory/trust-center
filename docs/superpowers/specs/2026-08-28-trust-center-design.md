@@ -15,6 +15,13 @@ files and the Testcontainers pin.
 rather than streams, Section 8 replaces the opaque `scope` columns with scope join tables, and
 Section 9.2 requires a POST to consume a magic link. No other section changed.
 
+**Amended 2026-08-30 (Phase 3 planning):** Section 8 replaces the tier flags with tier join tables,
+splits `nda_template` into family, version and body, and introduces `access_group`; Section 11
+splits Phase 3 into 3a and 3b and records that auto-approval rules shipped in Phase 2. The full
+reasoning, and every decision this summary compresses, is in
+`2026-08-30-phase-3-nda-workflow-design.md`, which governs Phase 3 where the two differ. No other
+section changed.
+
 ---
 
 ## 1. Summary
@@ -323,25 +330,44 @@ re-authenticates a known one on the §9.9 return path.
 ### Access governance
 
 ```
-access_rule         pattern, action(auto_approve|review|deny), max_tier, priority
-access_request      requester_id?, status, all_request_tier, justification,
+access_rule         pattern, action(auto_approve|review|deny), priority
+access_rule_tier         (rule_id, tier)
+access_request      requester_id?, status, justification,
                     decided_by, decided_at, reason, source(portal|invite),
                     submitted_email?, submitted_name?, submitted_company?
 access_request_document  (request_id, document_id)
-nda_template        version, locale, body_md | file_key, effective_from
-nda_acceptance      requester_id, nda_template_version, method(clickthrough|esign),
+access_request_tier      (request_id, tier)
+access_group        slug, position, nda_template_id?   + translations
+document_group           (document_id, group_id)
+nda_template        slug
+nda_template_version     template_id, version, effective_from, first_accepted_at?
+nda_template_body        (version_id, locale) body_md, sha256
+nda_acceptance      requester_id, version_id, method(clickthrough),
                     accepted_at, ip, ua, typed_name, template_sha256,
-                    record_pdf_key, envelope_id
-access_grant        requester_id, all_request_tier, nda_acceptance_id, granted_at,
-                    expires_at, revoked_at, revoked_by
+                    record_pdf_key
+access_grant        requester_id, granted_at, term_days, expires_at?,
+                    acceptance_due_at?, revoked_at, revoked_by
 access_grant_document    (grant_id, document_id)
+access_grant_tier        (grant_id, tier)
+access_grant_group       (grant_id, group_id)
+access_grant_required_nda (grant_id, nda_template_id)
+access_grant_acceptance   (grant_id, acceptance_id)
 ```
 
 Scope is a set of documents, not an opaque column. A request and a grant each carry explicit
-document ids in a join table, plus an `all_request_tier` flag meaning "everything at that tier,
-including documents published later". Real foreign keys mean a deleted document cannot leave a
-dangling scope behind, and resolving what a requester may download is one join rather than a
-containment test over JSON.
+document ids in a join table, plus whole tiers and whole groups as further sets, each meaning
+"everything in that set, including documents published later". Real foreign keys mean a deleted
+document cannot leave a dangling scope behind, and resolving what a requester may download is one
+join rather than a containment test over JSON.
+
+Scope is never expressed as a ranked ceiling. A ceiling recomputes: inserting a tier below an
+existing one would retroactively widen every live grant above it, which the domain-drift rule below
+forbids. Nothing in a scope implies anything else.
+
+An `access_group` is a named bundle of documents, not a cohort of people, and it may carry its own
+NDA — which is how a customer- or purpose-specific agreement is configuration rather than code. A
+grant may therefore be waiting on more than one acceptance, which is why the link between a grant
+and its acceptances is a join table rather than the single column an earlier draft carried.
 
 `access_request.requester_id` is nullable, and the three `submitted_*` columns exist, because §9.2
 makes verification the act that creates the `requester`. Between submission and verification a
@@ -461,12 +487,21 @@ Request-gated tier; requester identity and magic links; request form; staff tria
 with scope and expiry; gated portal view; watermarked downloads; notification emails for
 new requests, decisions, access links, and expiry reminders; audit log viewer.
 
-### Phase 3 — NDA workflow · M
+### Phase 3 — NDA workflow · L
 
-Versioned NDA templates per locale; click-through acceptance with a PDF record emailed to both
-parties; auto-approval rules with domain allow and deny lists; the NDA-gated tier.
+Auto-approval rules with domain allow and deny lists shipped early, in Phase 2. What remains splits
+in two, on the seam between the workflow and the ergonomics of authoring for it. Both halves are
+independently reachable; see `2026-08-30-phase-3-nda-workflow-design.md`.
 
-At the end of this phase the product matches SafeBase's core proposition.
+**Phase 3a — the NDA workflow.** Access groups; scope as sets on requests, grants and rules; the
+NDA-gated tier; versioned templates whose every locale publishes together; click-through acceptance
+with a PDF record emailed to both parties; grants that stay inert until every required agreement is
+accepted. Templates are authored as typed Markdown.
+
+**Phase 3b — authoring ergonomics.** PDF and DOCX import into the same canonical body, a WYSIWYG
+editor, and a preview-before-publish gate. No schema changes.
+
+At the end of 3a the product matches SafeBase's core proposition.
 
 ### Phase 4 — Notifications and subscriptions · M
 
