@@ -5,6 +5,7 @@ import { sendExpiryReminders } from '../access/expiry';
 import { accessRequest, requesterSession, staffSession } from '../db/schema';
 import { getMailer, MailNotConfigured } from '../mail';
 import { drainOutbox } from '../mail/queue';
+import { redactDeliveredMail, sweepRateLimits } from '../retention';
 import { runJob } from './runner';
 import type { Db } from '../db';
 
@@ -67,6 +68,16 @@ export const JOBS: readonly Job[] = [
 		everyMs: 6 * 60 * 60 * 1000,
 		run: async (db) => {
 			await sendExpiryReminders(db, { reminderDays: getConfig().accessGrantReminderDays });
+		}
+	},
+	{
+		name: 'retention:sweep',
+		everyMs: 6 * 60 * 60 * 1000,
+		run: async (db) => {
+			// A day, not an hour: no limiter here uses a window longer than an
+			// hour, and deleting a counter can only forgive, never deny.
+			await sweepRateLimits(db, { olderThanHours: 24 });
+			await redactDeliveredMail(db, { retentionDays: getConfig().mailRetentionDays });
 		}
 	}
 ];

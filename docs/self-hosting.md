@@ -55,6 +55,7 @@ refusal is recorded in the audit log.
 | `RUN_JOBS` | no | `true` | Whether the server runs background jobs — see §7a. |
 | `SMTP_URL` | for mail | — | e.g. `smtp://user:pass@host:587`. Unset means queued mail is never sent. |
 | `MAIL_FROM` | for mail | `trust-center@localhost` | Envelope sender for every message. |
+| `MAIL_RETENTION_DAYS` | no | `90` | After this many days a delivered or failed notification is stripped of its address and payload. The row stays. |
 | `STAFF_NOTIFICATION_EMAIL` | no | — | Where "a new request is waiting for triage" notices go. Unset means none are sent. |
 | `REQUESTER_SESSION_TTL_HOURS` | no | `72` | How long a verified requester stays signed in. |
 | `MAGIC_LINK_TTL_MINUTES` | no | `30` | Lifetime of a single-use verification or sign-in link. |
@@ -215,7 +216,7 @@ Take a database backup before upgrading. Migrations are not reversible.
 
 ## 7a. Background jobs
 
-The server runs four jobs in-process on a timer. There is nothing to install and
+The server runs five jobs in-process on a timer. There is nothing to install and
 no scheduler to configure.
 
 | Job | Every | What it does |
@@ -224,6 +225,7 @@ no scheduler to configure.
 | `sessions:cleanup` | 1h | Deletes expired staff and requester sessions. |
 | `requests:sweep` | 15m | Deletes access requests whose verification link expired unused. |
 | `grants:remind` | 6h | Mails a requester once, shortly before their access expires. |
+| `retention:sweep` | 6h | Drops spent rate-limit counters and strips settled notifications of their address and payload. |
 
 Every tick takes a Postgres advisory lock named for its job, so running more
 than one replica is safe: a second instance whose tick overlaps skips that round

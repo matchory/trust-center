@@ -29,6 +29,7 @@ export interface AppConfig {
 	storageDir: string;
 	maxUploadBytes: number;
 	maxPdfPages: number;
+	mailRetentionDays: number;
 	sessionTtlHours: number;
 	requesterSessionTtlHours: number;
 	magicLinkTtlMinutes: number;
@@ -81,6 +82,7 @@ function buildSchema(compiledLocales: readonly string[]) {
 			// without it, rather than the application refusing to start.
 			SMTP_URL: blankAsUndefined(z.string().url()),
 			MAIL_FROM: z.string().min(1).default('trust-center@localhost'),
+			MAIL_RETENTION_DAYS: z.coerce.number().int().positive().default(90),
 			STAFF_NOTIFICATION_EMAIL: blankAsUndefined(z.string().email())
 		})
 		.superRefine((value, ctx) => {
@@ -135,6 +137,7 @@ export function parseConfig(
 		storageDir: parsed.STORAGE_DIR,
 		maxUploadBytes: parsed.MAX_UPLOAD_MB * 1024 * 1024,
 		maxPdfPages: parsed.MAX_PDF_PAGES,
+		mailRetentionDays: parsed.MAIL_RETENTION_DAYS,
 		sessionTtlHours: parsed.SESSION_TTL_HOURS,
 		requesterSessionTtlHours: parsed.REQUESTER_SESSION_TTL_HOURS,
 		magicLinkTtlMinutes: parsed.MAGIC_LINK_TTL_MINUTES,
