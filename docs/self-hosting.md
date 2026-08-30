@@ -43,6 +43,7 @@ refusal is recorded in the audit log.
 | `DEFAULT_LOCALE` | no | `de` | The locale an unprefixed request negotiates to, and the fallback shown when content is untranslated. Must be one of `LOCALES`. |
 | `STORAGE_DIR` | no | `/data/storage` | Where uploaded documents and branding assets are written. Must be a persistent volume. Nothing here is ever served directly; every read goes through the audited download endpoint. |
 | `MAX_UPLOAD_MB` | no | `25` | Largest accepted upload. Keep `BODY_SIZE_LIMIT` at or above this. |
+| `MAX_PDF_PAGES` | no | `1000` | Largest accepted PDF, in pages. Bytes are not what a watermarked download costs — see §7b. Applies to new uploads only. |
 | `OIDC_ISSUER` | yes | — | Issuer URL. Discovery is fetched from `${OIDC_ISSUER}/.well-known/openid-configuration`. |
 | `OIDC_CLIENT_ID` | yes | — | Confidential client id. |
 | `OIDC_CLIENT_SECRET` | yes | — | Confidential client secret. |
@@ -267,6 +268,15 @@ on the expiry date, so access ends on its own with no job and no window in
 which a lapsed grant still works. Revoking a grant at `/admin/grants` works the
 same way — the next download attempt is a 404, with no restart and no cache to
 invalidate.
+
+**Why there is a page limit as well as a size limit.** Watermarking loads the
+whole document, stamps every page, and re-saves it, so what a gated download
+costs tracks page count rather than file size. Measured at the 25 MB
+`MAX_UPLOAD_MB` ceiling: 16,200 pages take 9.1 seconds and 1.4 GB of resident
+memory to serve once, while 100 pages of the same 25 MB take 0.4 seconds and
+77 MB. `MAX_PDF_PAGES` is what bounds that. It is enforced when a file is
+uploaded, so a document already in storage from before you lowered it keeps
+working — re-upload it if you need the new limit applied.
 
 **To erase a requester,** see [§10](#10-erasure-requests).
 

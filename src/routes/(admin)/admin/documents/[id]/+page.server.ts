@@ -18,7 +18,7 @@ import {
 import { getDb } from '$lib/server/db/instance';
 import { clientIp } from '$lib/server/http/client-ip';
 import { getStorage, newStorageKey } from '$lib/server/storage';
-import { readUpload, UploadRejected } from '$lib/server/upload';
+import { assertPdfPages, readUpload, UploadRejected } from '$lib/server/upload';
 import type { Actions, PageServerLoad } from './$types';
 
 const ALLOWED_UPLOAD_TYPES = ['application/pdf'] as const;
@@ -108,6 +108,10 @@ export const actions: Actions = {
 				maxBytes: getConfig().maxUploadBytes,
 				allowedTypes: ALLOWED_UPLOAD_TYPES
 			});
+			// Bytes are not what watermarking costs — see assertPdfPages. Checked
+			// here rather than at download time, so a file that would be expensive
+			// to serve never reaches storage in the first place.
+			await assertPdfPages(upload.bytes, getConfig().maxPdfPages);
 		} catch (cause) {
 			if (cause instanceof UploadRejected)
 				return fail<AdminActionFailure>(400, { field: 'file', message: cause.message });

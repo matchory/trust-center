@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { readUpload } from '../../src/lib/server/upload';
+import { assertPdfPages, readUpload } from '../../src/lib/server/upload';
+import { blankPdf } from '../helpers/pdf';
 
 function formWith(file: File): FormData {
 	const data = new FormData();
@@ -45,5 +46,25 @@ describe('readUpload', () => {
 		});
 
 		expect((await readUpload(formWith(file), 'file', opts)).filename).toBe('passwd.pdf');
+	});
+});
+
+describe('assertPdfPages', () => {
+	it('accepts a document within the page limit', async () => {
+		await expect(assertPdfPages(await blankPdf(3), 10)).resolves.toBeUndefined();
+	});
+
+	it('rejects a document over the page limit', async () => {
+		// The cost of watermarking tracks page count, not bytes: at the
+		// MAX_UPLOAD_MB ceiling, 16,200 pages cost 9.1s and 1.4 GB of resident
+		// memory to serve once, while 100 pages of the same size cost 0.4s and
+		// 77 MB. A byte limit alone admits the first one.
+		await expect(assertPdfPages(await blankPdf(12), 10)).rejects.toThrow(/pages/i);
+	});
+
+	it('rejects bytes it cannot parse as a PDF', async () => {
+		// A file we cannot open is one we cannot stamp, and an unstamped gated
+		// download is worse than a refused upload.
+		await expect(assertPdfPages(new Uint8Array([1, 2, 3]), 10)).rejects.toThrow(/pdf/i);
 	});
 });

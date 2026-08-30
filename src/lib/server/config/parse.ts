@@ -28,6 +28,7 @@ export interface AppConfig {
 	defaultLocale: string;
 	storageDir: string;
 	maxUploadBytes: number;
+	maxPdfPages: number;
 	sessionTtlHours: number;
 	requesterSessionTtlHours: number;
 	magicLinkTtlMinutes: number;
@@ -63,6 +64,7 @@ function buildSchema(compiledLocales: readonly string[]) {
 			DEFAULT_LOCALE: z.string().min(1),
 			STORAGE_DIR: z.string().min(1).default('./data/storage'),
 			MAX_UPLOAD_MB: z.coerce.number().int().positive().default(25),
+			MAX_PDF_PAGES: z.coerce.number().int().positive().default(1000),
 			OIDC_ISSUER: z.string().url(),
 			OIDC_CLIENT_ID: z.string().min(1),
 			OIDC_CLIENT_SECRET: z.string().min(1),
@@ -132,6 +134,7 @@ export function parseConfig(
 		defaultLocale: parsed.DEFAULT_LOCALE,
 		storageDir: parsed.STORAGE_DIR,
 		maxUploadBytes: parsed.MAX_UPLOAD_MB * 1024 * 1024,
+		maxPdfPages: parsed.MAX_PDF_PAGES,
 		sessionTtlHours: parsed.SESSION_TTL_HOURS,
 		requesterSessionTtlHours: parsed.REQUESTER_SESSION_TTL_HOURS,
 		magicLinkTtlMinutes: parsed.MAGIC_LINK_TTL_MINUTES,
