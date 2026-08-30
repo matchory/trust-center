@@ -37,6 +37,15 @@ export const GET: RequestHandler = async ({ url, cookies, locals, getClientAddre
 		// someone we just refused), so there is no staff_user id to use as the
 		// actor/subject — the OIDC subject lives only in `meta`, never in an
 		// identifier column shared with real staff_user ids.
+		//
+		// Naming the staff member's email, OIDC subject and groups here is
+		// deliberate and permanent. Spec §10 confines *requester* personal data
+		// to ip/ua/actor_id and places staff outside that restriction, because
+		// an access review has to answer "which IdP identity was this, and what
+		// did the IdP claim" long after the staff_user row is gone — which
+		// actor_id alone cannot. The table is append-only, so these rows can
+		// never be corrected or redacted; changing the policy means a migration
+		// that stops *future* writes, never an UPDATE of what is already here.
 		await recordEvent(db, {
 			action: 'staff.login.denied',
 			actor: { type: 'staff-unresolved', id: null },

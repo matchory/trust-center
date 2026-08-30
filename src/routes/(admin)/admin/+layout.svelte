@@ -29,7 +29,7 @@
 
 	<nav class="border-b border-neutral-200 bg-white px-6" aria-label={m.nav_admin()}>
 		<ul class="mx-auto flex max-w-5xl gap-4 py-2 text-sm">
-			{#each ADMIN_SECTIONS as section (section.path)}
+			{#each ADMIN_SECTIONS.filter((section) => !section.role || section.role === data.staff.role) as section (section.path)}
 				<li>
 					<a
 						href={localizePath(section.path, data.locale)}

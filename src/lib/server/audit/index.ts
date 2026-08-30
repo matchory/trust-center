@@ -1,4 +1,4 @@
-import { and, desc, eq } from 'drizzle-orm';
+import { and, desc, eq, gte, lt, lte } from 'drizzle-orm';
 import { auditEvent } from '../db/schema';
 import type { Db } from '../db';
 
@@ -48,24 +48,39 @@ export async function recordEvent(db: Db, input: AuditEventInput): Promise<void>
 	});
 }
 
-export async function queryEvents(
-	db: Db,
-	filter: {
-		subjectType?: string;
-		subjectId?: string;
-		actorId?: string;
-		limit?: number;
-	}
-): Promise<AuditEventRow[]> {
+export interface AuditFilter {
+	action?: string;
+	actorType?: string;
+	actorId?: string;
+	subjectType?: string;
+	subjectId?: string;
+	from?: Date;
+	to?: Date;
+	/** Keyset cursor: return events with `seq` strictly below this. */
+	beforeSeq?: bigint;
+	limit?: number;
+}
+
+/** Above this a page stops being a table and starts being an export. */
+const MAX_LIMIT = 500;
+
+export async function queryEvents(db: Db, filter: AuditFilter): Promise<AuditEventRow[]> {
 	const conditions = [];
+	if (filter.action) conditions.push(eq(auditEvent.action, filter.action));
+	if (filter.actorType) conditions.push(eq(auditEvent.actorType, filter.actorType));
+	if (filter.actorId) conditions.push(eq(auditEvent.actorId, filter.actorId));
 	if (filter.subjectType) conditions.push(eq(auditEvent.subjectType, filter.subjectType));
 	if (filter.subjectId) conditions.push(eq(auditEvent.subjectId, filter.subjectId));
-	if (filter.actorId) conditions.push(eq(auditEvent.actorId, filter.actorId));
+	if (filter.from) conditions.push(gte(auditEvent.at, filter.from));
+	if (filter.to) conditions.push(lte(auditEvent.at, filter.to));
+	// Keyset rather than OFFSET: the log only grows, and OFFSET over a growing
+	// table both slows down and skips rows as new events arrive mid-paging.
+	if (filter.beforeSeq !== undefined) conditions.push(lt(auditEvent.seq, filter.beforeSeq));
 
 	return db
 		.select()
 		.from(auditEvent)
 		.where(conditions.length > 0 ? and(...conditions) : undefined)
 		.orderBy(desc(auditEvent.seq))
-		.limit(filter.limit ?? 100);
+		.limit(Math.min(filter.limit ?? 100, MAX_LIMIT));
 }

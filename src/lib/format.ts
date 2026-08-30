@@ -38,3 +38,21 @@ export function formatDate(date: Date, locale: string): string {
 		timeZone: 'UTC'
 	}).format(date);
 }
+
+/**
+ * Audit timestamps, always in UTC and always saying so. A log read by someone
+ * correlating it with server logs must not silently shift by the reader's
+ * offset, so the zone is part of the rendered string rather than implied.
+ */
+export function formatDateTime(date: Date, locale: string): string {
+	return new Intl.DateTimeFormat(locale, {
+		year: 'numeric',
+		month: '2-digit',
+		day: '2-digit',
+		hour: '2-digit',
+		minute: '2-digit',
+		second: '2-digit',
+		timeZone: 'UTC',
+		timeZoneName: 'short'
+	}).format(date);
+}
