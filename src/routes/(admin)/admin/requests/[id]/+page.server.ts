@@ -7,7 +7,9 @@ import {
 	requestableDocuments,
 	type Decision
 } from '$lib/server/access/requests';
-import { defaultGrantDays } from '$lib/server/access/grants';
+import { countGrantDocuments, defaultGrantDays } from '$lib/server/access/grants';
+import { listGroups } from '$lib/server/access/groups';
+import { PHASE_TIERS } from '$lib/server/access/scope';
 import { recordEvent } from '$lib/server/audit';
 import { getConfig } from '$lib/server/config';
 import { getDb } from '$lib/server/db/instance';
@@ -25,7 +27,10 @@ export const load: PageServerLoad = async ({ params, locals }) => {
 		request,
 		// The full list, not just what was asked for: §9.4 lets an approver
 		// narrow *or* widen.
-		documents: await requestableDocuments(db, locals.locale)
+		documents: await requestableDocuments(db, locals.locale),
+		groups: await listGroups(db),
+		tiers: [...PHASE_TIERS],
+		defaultTermDays: await defaultGrantDays(db, getConfig().accessGrantDefaultDays)
 	};
 };
 
@@ -79,23 +84,23 @@ async function decide(event: Parameters<Actions[string]>[0], decision: Decision)
 
 	const form = await event.request.formData();
 	const reason = String(form.get('reason') ?? '').trim() || null;
-	const expiresRaw = String(form.get('expiresAt') ?? '').trim();
-	const expiresAt = expiresRaw ? new Date(expiresRaw) : null;
 
-	if (expiresAt && Number.isNaN(expiresAt.getTime())) {
+	// A term in days, not an absolute date. In Phase 3b a grant's clock starts
+	// at acceptance rather than at approval, and a date chosen today would land
+	// wherever that happened to fall; days is also the unit the default setting
+	// is already stored in.
+	const termRaw = String(form.get('termDays') ?? '').trim();
+	const termDays = termRaw
+		? Number(termRaw)
+		: await defaultGrantDays(db, config.accessGrantDefaultDays);
+
+	if (!Number.isInteger(termDays) || termDays < 1 || termDays > 3650) {
 		return fail<DecisionFailure>(400, { failed: true });
 	}
 
 	const documentIds = form.getAll('documentIds').map(String).filter(Boolean);
-	const allRequestTier = form.get('allRequestTier') === 'on';
-
-	// The form still posts an absolute date; Task 8 replaces it with a term in
-	// days and adds the tier and group pickers. Until then the term is derived
-	// from whatever date was posted, or the configured default.
-	const defaultTtlDays = await defaultGrantDays(db, config.accessGrantDefaultDays);
-	const termDays = expiresAt
-		? Math.max(1, Math.ceil((expiresAt.getTime() - Date.now()) / (24 * 60 * 60 * 1000)))
-		: defaultTtlDays;
+	const tiers = form.getAll('tiers').map(String).filter(Boolean);
+	const groupIds = form.getAll('groupIds').map(String).filter(Boolean);
 
 	let outcome;
 	try {
@@ -104,8 +109,8 @@ async function decide(event: Parameters<Actions[string]>[0], decision: Decision)
 			staffUserId: staff.id,
 			decision,
 			documentIds,
-			tiers: allRequestTier ? ['request'] : [],
-			groupIds: [],
+			tiers,
+			groupIds,
 			termDays,
 			reason
 		});
@@ -128,7 +133,9 @@ async function decide(event: Parameters<Actions[string]>[0], decision: Decision)
 		meta: {
 			domain: request.companyDomain,
 			grantId: outcome.grantId,
-			allRequestTier,
+			tiers,
+			groupIds,
+			termDays,
 			documentCount: documentIds.length
 		}
 	});
@@ -142,8 +149,12 @@ async function decide(event: Parameters<Actions[string]>[0], decision: Decision)
 			request.requesterLocale,
 			outcome.status === 'approved' ? 'request_approved' : 'request_denied',
 			{
-				documentCount: allRequestTier ? 0 : documentIds.length,
-				expiresAt: expiresAt ? expiresAt.toISOString().slice(0, 10) : '',
+				// What the grant actually covers, asked of the grant. The form's
+				// document list is only one of three scope sources now, so counting
+				// it here would tell a requester granted a tier or a group that they
+				// have nothing.
+				documentCount: outcome.grantId ? await countGrantDocuments(db, outcome.grantId) : 0,
+				expiresAt: new Date(Date.now() + termDays * 24 * 60 * 60 * 1000).toISOString().slice(0, 10),
 				reason: reason ?? ''
 			}
 		);

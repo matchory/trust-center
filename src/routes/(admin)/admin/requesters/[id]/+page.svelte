@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { enhance } from '$app/forms';
+	import ScopeSummary from '$lib/components/admin/ScopeSummary.svelte';
 	import { formatDate } from '$lib/format';
 	import { localizePath } from '$lib/i18n/locale';
 	import { m } from '$lib/paraglide/messages.js';
@@ -37,6 +38,7 @@
 				class="underline underline-offset-4">{formatDate(request.createdAt, data.locale)}</a
 			>
 			· {request.status}
+			· <ScopeSummary tiers={request.tiers} documentCount={request.documentCount} />
 		</li>
 	{:else}
 		<li class="text-neutral-500">{m.admin_no_entries()}</li>
@@ -48,6 +50,12 @@
 	{#each data.requester.grants as grant (grant.id)}
 		<li>
 			{formatDate(grant.grantedAt, data.locale)} → {formatDate(grant.expiresAt, data.locale)}
+			· <ScopeSummary
+				tiers={grant.tiers}
+				groupIds={grant.groupIds}
+				documentCount={grant.documentCount}
+				groupNames={data.groupNames}
+			/>
 			{#if grant.revokedAt}· {m.admin_grant_state_revoked()}{/if}
 		</li>
 	{:else}

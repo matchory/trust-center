@@ -1,6 +1,17 @@
 import { createHash, randomBytes } from 'node:crypto';
-import { and, desc, eq, isNull, sql } from 'drizzle-orm';
-import { accessGrant, accessRequest, requester, requesterSession } from '../db/schema';
+import { and, asc, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
+import {
+	accessGrant,
+	accessGrantDocument,
+	accessGrantGroup,
+	accessGrantTier,
+	accessRequest,
+	accessRequestDocument,
+	accessRequestTier,
+	requester,
+	requesterSession
+} from '../db/schema';
+import type { ScopeTier } from '../../access-types';
 import type { Db } from '../db';
 
 export const REQUESTER_SESSION_COOKIE = '__Secure-tc_requester_session';
@@ -177,13 +188,16 @@ export interface AdminRequesterDetail extends AdminRequesterRow {
 	requests: {
 		id: string;
 		status: string;
-		allRequestTier: boolean;
+		tiers: ScopeTier[];
+		documentCount: number;
 		createdAt: Date;
 		decidedAt: Date | null;
 	}[];
 	grants: {
 		id: string;
-		allRequestTier: boolean;
+		tiers: ScopeTier[];
+		groupIds: string[];
+		documentCount: number;
 		grantedAt: Date;
 		expiresAt: Date;
 		revokedAt: Date | null;
@@ -197,29 +211,113 @@ export async function getRequesterForAdmin(
 	const [row] = await db.select().from(requester).where(eq(requester.id, id)).limit(1);
 	if (!row) return null;
 
-	const requests = await db
-		.select({
-			id: accessRequest.id,
-			status: accessRequest.status,
-			allRequestTier: accessRequest.allRequestTier,
-			createdAt: accessRequest.createdAt,
-			decidedAt: accessRequest.decidedAt
-		})
-		.from(accessRequest)
-		.where(eq(accessRequest.requesterId, id))
-		.orderBy(desc(accessRequest.createdAt));
+	const [requestRows, grantRows] = await Promise.all([
+		db
+			.select({
+				id: accessRequest.id,
+				status: accessRequest.status,
+				createdAt: accessRequest.createdAt,
+				decidedAt: accessRequest.decidedAt
+			})
+			.from(accessRequest)
+			.where(eq(accessRequest.requesterId, id))
+			.orderBy(desc(accessRequest.createdAt)),
+		db
+			.select({
+				id: accessGrant.id,
+				grantedAt: accessGrant.grantedAt,
+				expiresAt: accessGrant.expiresAt,
+				revokedAt: accessGrant.revokedAt
+			})
+			.from(accessGrant)
+			.where(eq(accessGrant.requesterId, id))
+			.orderBy(desc(accessGrant.grantedAt))
+	]);
 
-	const grants = await db
-		.select({
-			id: accessGrant.id,
-			allRequestTier: accessGrant.allRequestTier,
-			grantedAt: accessGrant.grantedAt,
-			expiresAt: accessGrant.expiresAt,
-			revokedAt: accessGrant.revokedAt
-		})
-		.from(accessGrant)
-		.where(eq(accessGrant.requesterId, id))
-		.orderBy(desc(accessGrant.grantedAt));
+	// Every scope set for this page in three queries rather than three per row.
+	// A requester with a long history is exactly who this page is opened for.
+	const requestIds = requestRows.map((request) => request.id);
+	const grantIds = grantRows.map((grant) => grant.id);
+
+	const [requestTierRows, requestDocumentRows, grantTierRows, grantGroupRows, grantDocumentRows] =
+		await Promise.all([
+			requestIds.length > 0
+				? db
+						.select({ requestId: accessRequestTier.requestId, tier: accessRequestTier.tier })
+						.from(accessRequestTier)
+						.where(inArray(accessRequestTier.requestId, requestIds))
+						.orderBy(asc(accessRequestTier.tier))
+				: [],
+			requestIds.length > 0
+				? db
+						.select({ requestId: accessRequestDocument.requestId })
+						.from(accessRequestDocument)
+						.where(inArray(accessRequestDocument.requestId, requestIds))
+				: [],
+			grantIds.length > 0
+				? db
+						.select({ grantId: accessGrantTier.grantId, tier: accessGrantTier.tier })
+						.from(accessGrantTier)
+						.where(inArray(accessGrantTier.grantId, grantIds))
+						.orderBy(asc(accessGrantTier.tier))
+				: [],
+			grantIds.length > 0
+				? db
+						.select({ grantId: accessGrantGroup.grantId, groupId: accessGrantGroup.groupId })
+						.from(accessGrantGroup)
+						.where(inArray(accessGrantGroup.grantId, grantIds))
+				: [],
+			grantIds.length > 0
+				? db
+						.select({ grantId: accessGrantDocument.grantId })
+						.from(accessGrantDocument)
+						.where(inArray(accessGrantDocument.grantId, grantIds))
+				: []
+		]);
+
+	const requestTiers = new Map<string, ScopeTier[]>();
+	for (const entry of requestTierRows) {
+		requestTiers.set(entry.requestId, [
+			...(requestTiers.get(entry.requestId) ?? []),
+			entry.tier as ScopeTier
+		]);
+	}
+
+	const grantTiers = new Map<string, ScopeTier[]>();
+	for (const entry of grantTierRows) {
+		grantTiers.set(entry.grantId, [
+			...(grantTiers.get(entry.grantId) ?? []),
+			entry.tier as ScopeTier
+		]);
+	}
+
+	const grantGroups = new Map<string, string[]>();
+	for (const entry of grantGroupRows) {
+		grantGroups.set(entry.grantId, [...(grantGroups.get(entry.grantId) ?? []), entry.groupId]);
+	}
+
+	const grantDocuments = new Map<string, number>();
+	for (const entry of grantDocumentRows) {
+		grantDocuments.set(entry.grantId, (grantDocuments.get(entry.grantId) ?? 0) + 1);
+	}
+
+	const requestDocuments = new Map<string, number>();
+	for (const entry of requestDocumentRows) {
+		requestDocuments.set(entry.requestId, (requestDocuments.get(entry.requestId) ?? 0) + 1);
+	}
+
+	const requests = requestRows.map((request) => ({
+		...request,
+		tiers: requestTiers.get(request.id) ?? [],
+		documentCount: requestDocuments.get(request.id) ?? 0
+	}));
+
+	const grants = grantRows.map((grant) => ({
+		...grant,
+		tiers: grantTiers.get(grant.id) ?? [],
+		groupIds: grantGroups.get(grant.id) ?? [],
+		documentCount: grantDocuments.get(grant.id) ?? 0
+	}));
 
 	return { ...row, grantCount: grants.length, requests, grants };
 }

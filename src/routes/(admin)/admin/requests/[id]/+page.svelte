@@ -1,4 +1,5 @@
 <script lang="ts">
+	import ScopeSummary from '$lib/components/admin/ScopeSummary.svelte';
 	import { formatDate } from '$lib/format';
 	import { localizePath } from '$lib/i18n/locale';
 	import { m } from '$lib/paraglide/messages.js';
@@ -11,6 +12,11 @@
 		info_requested: () => m.admin_request_status_info_requested(),
 		approved: () => m.admin_request_status_approved(),
 		denied: () => m.admin_request_status_denied()
+	};
+
+	const TIER_LABEL: Record<string, () => string> = {
+		request: () => m.request_tier_request(),
+		nda: () => m.request_tier_nda()
 	};
 
 	// A decided request is read-only: `decideRequest` refuses a second decision,
@@ -39,9 +45,7 @@
 
 	<dt class="text-neutral-500">{m.admin_scope()}</dt>
 	<dd>
-		{data.request.requestedTiers.includes('request')
-			? m.admin_scope_all_request_tier()
-			: `${data.request.documentCount} · ${m.admin_scope_documents()}`}
+		<ScopeSummary tiers={data.request.requestedTiers} documentCount={data.request.documentCount} />
 	</dd>
 
 	{#if data.request.justification}
@@ -71,15 +75,18 @@
 		<fieldset>
 			<legend class="mb-2 text-sm font-medium">{m.admin_scope()}</legend>
 
-			<label class="mb-2 flex items-center gap-2">
-				<input
-					type="checkbox"
-					name="allRequestTier"
-					checked={data.request.requestedTiers.includes('request')}
-					data-testid="decision-all-request-tier"
-				/>
-				<span>{m.admin_scope_all_request_tier()}</span>
-			</label>
+			{#each data.tiers as tier (tier)}
+				<label class="mb-2 flex items-center gap-2">
+					<input
+						type="checkbox"
+						name="tiers"
+						value={tier}
+						data-testid="decision-tier-{tier}"
+						checked={data.request.requestedTiers.includes(tier)}
+					/>
+					<span>{TIER_LABEL[tier]?.() ?? tier}</span>
+				</label>
+			{/each}
 
 			{#each data.documents as doc (doc.id)}
 				<label class="flex items-center gap-2">
@@ -95,15 +102,40 @@
 			{/each}
 		</fieldset>
 
+		<fieldset>
+			<legend class="mb-2 text-sm font-medium">{m.admin_decision_groups()}</legend>
+
+			{#if data.groups.length === 0}
+				<p class="text-sm text-neutral-500">{m.admin_no_entries()}</p>
+			{/if}
+
+			<!-- Not pre-checked from the request: nobody asked for a group. They are
+			     the approver's own instrument, and §4.2 keeps them off the public
+			     form entirely. -->
+			{#each data.groups as group (group.id)}
+				<label class="flex items-center gap-2">
+					<input
+						type="checkbox"
+						name="groupIds"
+						value={group.id}
+						data-testid="decision-group-{group.slug}"
+					/>
+					<span>{group.names[data.locale] ?? group.slug}</span>
+				</label>
+			{/each}
+		</fieldset>
+
 		<label class="block">
-			<span class="mb-1 block text-sm font-medium">{m.admin_expires_at()}</span>
+			<span class="mb-1 block text-sm font-medium">{m.admin_decision_term_days()}</span>
 			<input
-				type="date"
-				name="expiresAt"
-				data-testid="decision-expires"
+				type="number"
+				min="1"
+				max="3650"
+				name="termDays"
+				value={data.defaultTermDays}
+				data-testid="decision-term-days"
 				class="rounded border px-2 py-1"
 			/>
-			<span class="mt-1 block text-xs text-neutral-500">{m.admin_expires_at_hint()}</span>
 		</label>
 
 		<label class="block">

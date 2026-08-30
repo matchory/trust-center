@@ -1,5 +1,6 @@
 import { expect, test } from '@playwright/test';
 import { desc, eq } from 'drizzle-orm';
+import { requestTiers } from '../../src/lib/server/access/scope';
 import { createDb, type Db } from '../../src/lib/server/db';
 import {
 	accessRequest,
@@ -42,7 +43,7 @@ async function fillAndSubmit(page: import('@playwright/test').Page, email: strin
 	await page.fill('input[name="email"]', email);
 	await page.fill('input[name="name"]', 'E2E Person');
 	await page.fill('input[name="company"]', 'Acme');
-	await page.check('input[name="allRequestTier"]');
+	await page.getByTestId('request-tier-request').check();
 	await page.click('button[type="submit"]');
 }
 
@@ -91,7 +92,7 @@ test('a malformed email is rejected without claiming anything was sent', async (
 	await page.fill('input[name="email"]', 'not-an-email');
 	await page.fill('input[name="name"]', 'E2E Person');
 	await page.fill('input[name="company"]', 'Acme');
-	await page.check('input[name="allRequestTier"]');
+	await page.getByTestId('request-tier-request').check();
 	await page.click('button[type="submit"]');
 
 	await expect(page.getByTestId('request-submitted')).toHaveCount(0);
@@ -151,7 +152,16 @@ test('an unverified request holds the submission and names no requester', async 
 	expect(row).toBeDefined();
 	expect(row!.status).toBe('unverified');
 	expect(row!.requesterId).toBeNull();
-	expect(row!.allRequestTier).toBe(true);
+	expect(await requestTiers(db, row!.id)).toEqual(['request']);
+});
+
+test('the form does not offer a tier this phase cannot honour', async ({ page }) => {
+	// Not rendered at all rather than rendered-and-refused: `load` returns only
+	// the tiers this phase honours, so there is no conditional to delete.
+	await page.goto('/de/request');
+
+	await expect(page.getByTestId('request-tier-request')).toBeVisible();
+	await expect(page.getByTestId('request-tier-nda')).toHaveCount(0);
 });
 
 test('the submission limiter refuses a flood from one address', async ({ page }) => {

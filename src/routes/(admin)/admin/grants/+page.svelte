@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { enhance } from '$app/forms';
 	import DataTable from '$lib/components/admin/DataTable.svelte';
+	import ScopeSummary from '$lib/components/admin/ScopeSummary.svelte';
 	import { formatDate } from '$lib/format';
 	import { m } from '$lib/paraglide/messages.js';
 	import type { PageProps } from './$types';
@@ -40,7 +41,12 @@
 			<span class="ml-2 text-xs text-neutral-500">{row.name}</span>
 		{:else if key === 'company'}{row.company}
 		{:else if key === 'scope'}
-			{row.tiers.includes('request') ? m.admin_scope_all_request_tier() : row.documentCount}
+			<ScopeSummary
+				tiers={row.tiers}
+				groupIds={row.groupIds}
+				documentCount={row.documentCount}
+				groupNames={data.groupNames}
+			/>
 		{:else if key === 'grantedAt'}{formatDate(row.grantedAt, data.locale)}
 		{:else if key === 'expiresAt'}{formatDate(row.expiresAt, data.locale)}
 		{:else if key === 'state'}

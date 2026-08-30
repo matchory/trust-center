@@ -1,7 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import { expect, test } from '@playwright/test';
 import { eq } from 'drizzle-orm';
+import { createGroup } from '../../src/lib/server/access/groups';
 import { submitRequest } from '../../src/lib/server/access/requests';
+import { grantGroups } from '../../src/lib/server/access/scope';
 import { verifyRequest } from '../../src/lib/server/access/verify';
 import { createDb, type Db } from '../../src/lib/server/db';
 import {
@@ -118,6 +120,35 @@ test('an approver narrows a pending request and the requester is told', async ({
 	);
 	// The requester's locale, recorded at verification — not the operator's.
 	expect(mail[0]?.locale).toBe('de');
+});
+
+test('an approver grants a group and a term in days', async ({ page }) => {
+	// The scope the approver chooses is not the one that was asked for: the
+	// prospect named two documents, and the approver replaces them with a saved
+	// bundle, which is the whole point of a group.
+	const { requestId } = await pendingRequest();
+	const slug = `e2e-pack-${randomUUID().slice(0, 8)}`;
+	const groupId = await createGroup(db, { slug, position: 0 });
+
+	await signInAsAdmin(page);
+	await gotoAdmin(page, `/de/admin/requests/${requestId}`);
+
+	await page.getByTestId('decision-document-triage-fixture-a').uncheck();
+	await page.getByTestId('decision-document-triage-fixture-b').uncheck();
+	await page.getByTestId(`decision-group-${slug}`).check();
+	await page.getByTestId('decision-term-days').fill('14');
+	await page.getByTestId('decision-approve').click();
+
+	await expect(page.getByTestId('request-detail-status')).toHaveText('Genehmigt');
+
+	const [grant] = await db.select().from(accessGrant).where(eq(accessGrant.requestId, requestId));
+	expect(await grantGroups(db, grant!.id)).toEqual([groupId]);
+	expect(grant?.termDays).toBe(14);
+
+	// The term is what the approver chose; the expiry is derived from it.
+	const days = (grant!.expiresAt.getTime() - Date.now()) / (24 * 60 * 60 * 1000);
+	expect(days).toBeGreaterThan(13);
+	expect(days).toBeLessThanOrEqual(14);
 });
 
 test('a denial records a reason, mints no grant, and mails the requester', async ({ page }) => {

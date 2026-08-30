@@ -2,6 +2,7 @@ import { fail } from '@sveltejs/kit';
 import { z } from 'zod';
 import { localizePath } from '$lib/i18n/locale';
 import { RequestRejected, requestableDocuments, submitRequest } from '$lib/server/access/requests';
+import { PHASE_TIERS } from '$lib/server/access/scope';
 import { recordEvent } from '$lib/server/audit';
 import { getConfig } from '$lib/server/config';
 import { getDb } from '$lib/server/db/instance';
@@ -15,7 +16,13 @@ export const load: PageServerLoad = async ({ locals, setHeaders }) => {
 	// indexed: it is a submission surface, not content.
 	setHeaders({ 'cache-control': 'public, max-age=0, s-maxage=60, must-revalidate' });
 
-	return { documents: await requestableDocuments(getDb(), locals.locale) };
+	return {
+		documents: await requestableDocuments(getDb(), locals.locale),
+		// Only the tiers this phase honours, so the NDA tier is not rendered at
+		// all rather than rendered and refused — there is no conditional in the
+		// template for somebody to delete.
+		tiers: [...PHASE_TIERS]
+	};
 };
 
 type RequestFailure = { field: string };
@@ -24,8 +31,7 @@ const schema = z.object({
 	email: z.string().trim().toLowerCase().email(),
 	name: z.string().trim().min(1),
 	company: z.string().trim().min(1),
-	justification: z.string().trim().max(2000).optional(),
-	allRequestTier: z.boolean()
+	justification: z.string().trim().max(2000).optional()
 });
 
 export const actions: Actions = {
@@ -35,8 +41,7 @@ export const actions: Actions = {
 			email: form.get('email'),
 			name: form.get('name'),
 			company: form.get('company'),
-			justification: String(form.get('justification') ?? '').trim() || undefined,
-			allRequestTier: form.get('allRequestTier') === 'on'
+			justification: String(form.get('justification') ?? '').trim() || undefined
 		});
 
 		if (!parsed.success) {
@@ -62,6 +67,7 @@ export const actions: Actions = {
 		}
 
 		const documentIds = form.getAll('documentIds').map(String).filter(Boolean);
+		const tiers = form.getAll('tiers').map(String).filter(Boolean);
 
 		try {
 			const { requestId, magicLinkToken } = await submitRequest(db, {
@@ -70,9 +76,7 @@ export const actions: Actions = {
 				company: parsed.data.company,
 				justification: parsed.data.justification ?? null,
 				documentIds,
-				// The form still posts one checkbox; Task 8 replaces it with a
-				// checkbox per tier.
-				tiers: parsed.data.allRequestTier ? ['request'] : [],
+				tiers,
 				locale: event.locals.locale,
 				linkTtlMinutes: config.magicLinkTtlMinutes
 			});
@@ -101,7 +105,7 @@ export const actions: Actions = {
 				// data to ip, ua, and actor_id. The row itself holds the submission.
 				meta: {
 					documentCount: documentIds.length,
-					allRequestTier: parsed.data.allRequestTier
+					tiers
 				}
 			});
 		} catch (cause) {

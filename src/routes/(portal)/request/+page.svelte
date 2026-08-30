@@ -6,6 +6,14 @@
 	import type { PageProps } from './$types';
 
 	let { data, form }: PageProps = $props();
+
+	// A label per tier rather than one interpolated message: a tier's slug is a
+	// database value, and rendering it inside German copy would leave an English
+	// word in the sentence.
+	const TIER_LABEL: Record<string, () => string> = {
+		request: () => m.request_tier_request(),
+		nda: () => m.request_tier_nda()
+	};
 </script>
 
 <Seo
@@ -71,10 +79,12 @@
 		<fieldset>
 			<legend class="mb-2 text-sm font-medium">{m.request_documents()}</legend>
 
-			<label class="mb-2 flex items-center gap-2">
-				<input type="checkbox" name="allRequestTier" />
-				<span>{m.request_all_restricted()}</span>
-			</label>
+			{#each data.tiers as tier (tier)}
+				<label class="mb-2 flex items-center gap-2">
+					<input data-testid="request-tier-{tier}" type="checkbox" name="tiers" value={tier} />
+					<span>{TIER_LABEL[tier]?.() ?? tier}</span>
+				</label>
+			{/each}
 
 			{#each data.documents as doc (doc.id)}
 				<label class="flex items-center gap-2">
