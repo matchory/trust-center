@@ -1,6 +1,17 @@
-import { and, desc, eq, gt, inArray, isNull, or, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, gt, inArray, isNull, or, sql } from 'drizzle-orm';
 import { z } from 'zod';
-import { accessGrant, accessGrantDocument, document, requester, setting } from '../db/schema';
+import {
+	accessGrant,
+	accessGrantDocument,
+	accessGrantGroup,
+	accessGrantTier,
+	document,
+	documentGroup,
+	requester,
+	setting
+} from '../db/schema';
+import { PHASE_TIERS, setGrantGroups, setGrantTiers } from './scope';
+import type { ScopeTier } from './scope';
 import type { Db } from '../db';
 
 /**
@@ -16,47 +27,68 @@ export async function createGrant(
 		requesterId: string;
 		requestId: string | null;
 		documentIds: readonly string[];
-		allRequestTier: boolean;
+		tiers: readonly ScopeTier[];
+		groupIds: readonly string[];
 		expiresAt: Date;
+		termDays: number;
 	}
 ): Promise<{ grantId: string; expiresAt: Date }> {
-	const [row] = await db
-		.insert(accessGrant)
-		.values({
-			requesterId: input.requesterId,
-			requestId: input.requestId,
-			allRequestTier: input.allRequestTier,
-			expiresAt: input.expiresAt
-		})
-		.returning({ id: accessGrant.id });
+	return db.transaction(async (tx) => {
+		const [row] = await tx
+			.insert(accessGrant)
+			.values({
+				requesterId: input.requesterId,
+				requestId: input.requestId,
+				// Written alongside the sets until Task 9 drops the column. Writing
+				// only the sets would leave every consumer this phase has not moved
+				// yet seeing an empty scope.
+				allRequestTier: input.tiers.includes('request'),
+				termDays: input.termDays,
+				expiresAt: input.expiresAt
+			})
+			.returning({ id: accessGrant.id });
 
-	if (!row) throw new Error('failed to create grant');
+		if (!row) throw new Error('failed to create grant');
 
-	if (input.documentIds.length > 0) {
-		await db
-			.insert(accessGrantDocument)
-			.values(
-				[...new Set(input.documentIds)].map((documentId) => ({ grantId: row.id, documentId }))
-			);
-	}
+		if (input.documentIds.length > 0) {
+			await tx
+				.insert(accessGrantDocument)
+				.values(
+					[...new Set(input.documentIds)].map((documentId) => ({ grantId: row.id, documentId }))
+				);
+		}
 
-	return { grantId: row.id, expiresAt: input.expiresAt };
+		await setGrantTiers(tx, row.id, input.tiers);
+		await setGrantGroups(tx, row.id, input.groupIds);
+
+		return { grantId: row.id, expiresAt: input.expiresAt };
+	});
 }
 
 /**
  * Whether a grant row covers a document row. Named once because it is the
- * definition of scope: an all-request-tier grant covers every published
- * request-tier document, including ones published after the grant was made,
- * and otherwise the document must be listed explicitly. Two copies of this
- * could disagree about what someone was granted.
+ * definition of scope: three parallel sources, none implying any other. An
+ * explicit document, a whole tier, or a whole group — the latter two both
+ * meaning "including documents that join later".
  */
 function grantCoversDocument() {
 	return or(
-		and(eq(accessGrant.allRequestTier, true), eq(document.tier, 'request')),
 		sql`EXISTS (
 			SELECT 1 FROM ${accessGrantDocument}
 			WHERE ${accessGrantDocument.grantId} = ${accessGrant.id}
 			  AND ${accessGrantDocument.documentId} = ${document.id}
+		)`,
+		sql`EXISTS (
+			SELECT 1 FROM ${accessGrantTier}
+			WHERE ${accessGrantTier.grantId} = ${accessGrant.id}
+			  AND ${accessGrantTier.tier} = ${document.tier}
+		)`,
+		sql`EXISTS (
+			SELECT 1 FROM ${accessGrantGroup}
+			JOIN ${documentGroup}
+			  ON ${documentGroup.groupId} = ${accessGrantGroup.groupId}
+			WHERE ${accessGrantGroup.grantId} = ${accessGrant.id}
+			  AND ${documentGroup.documentId} = ${document.id}
 		)`
 	)!;
 }
@@ -74,8 +106,13 @@ export async function countGrantDocuments(db: Db, grantId: string): Promise<numb
 		.where(
 			and(
 				eq(accessGrant.id, grantId),
+				// Neither predicate was here. The single caller pre-filtered, so it
+				// was safe by accident rather than by construction — and a second
+				// caller is exactly what this phase adds.
+				isNull(accessGrant.revokedAt),
+				gt(accessGrant.expiresAt, sql`now()`),
 				eq(document.status, 'published'),
-				eq(document.tier, 'request')
+				inArray(document.tier, [...PHASE_TIERS])
 			)
 		);
 
@@ -89,7 +126,7 @@ export async function countGrantDocuments(db: Db, grantId: string): Promise<numb
  * request-tier documents.
  *
  * The tier filter is applied here rather than at grant time on purpose. A
- * document moved from `request` to `nda` must stop being downloadable
+ * document moved out of a granted tier must stop being downloadable
  * immediately, without anybody remembering to revisit existing grants.
  */
 export async function grantedDocuments(
@@ -106,7 +143,7 @@ export async function grantedDocuments(
 				isNull(accessGrant.revokedAt),
 				gt(accessGrant.expiresAt, sql`now()`),
 				eq(document.status, 'published'),
-				eq(document.tier, 'request')
+				inArray(document.tier, [...PHASE_TIERS])
 			)
 		);
 
@@ -149,7 +186,8 @@ export interface AdminGrantRow {
 	email: string;
 	name: string;
 	company: string;
-	allRequestTier: boolean;
+	tiers: ScopeTier[];
+	groupIds: string[];
 	documentCount: number;
 	grantedAt: Date;
 	expiresAt: Date;
@@ -177,7 +215,6 @@ export async function listGrantsForAdmin(db: Db, now = new Date()): Promise<Admi
 		.select({
 			id: accessGrant.id,
 			requesterId: accessGrant.requesterId,
-			allRequestTier: accessGrant.allRequestTier,
 			grantedAt: accessGrant.grantedAt,
 			expiresAt: accessGrant.expiresAt,
 			revokedAt: accessGrant.revokedAt,
@@ -191,21 +228,45 @@ export async function listGrantsForAdmin(db: Db, now = new Date()): Promise<Admi
 
 	if (rows.length === 0) return [];
 
-	const scopes = await db
-		.select({ grantId: accessGrantDocument.grantId })
-		.from(accessGrantDocument)
-		.where(
-			inArray(
-				accessGrantDocument.grantId,
-				rows.map((row) => row.id)
-			)
-		);
+	// Three batched queries, not three per row: the grants page lists every
+	// grant there has ever been, and a per-row query would be one round trip
+	// per grant for the same answer.
+	const ids = rows.map((row) => row.id);
+
+	const [scopes, tierRows, groupRows] = await Promise.all([
+		db
+			.select({ grantId: accessGrantDocument.grantId })
+			.from(accessGrantDocument)
+			.where(inArray(accessGrantDocument.grantId, ids)),
+		db
+			.select({ grantId: accessGrantTier.grantId, tier: accessGrantTier.tier })
+			.from(accessGrantTier)
+			.where(inArray(accessGrantTier.grantId, ids))
+			.orderBy(asc(accessGrantTier.tier)),
+		db
+			.select({ grantId: accessGrantGroup.grantId, groupId: accessGrantGroup.groupId })
+			.from(accessGrantGroup)
+			.where(inArray(accessGrantGroup.grantId, ids))
+	]);
 
 	const counts = new Map<string, number>();
 	for (const scope of scopes) counts.set(scope.grantId, (counts.get(scope.grantId) ?? 0) + 1);
 
+	const tiers = new Map<string, ScopeTier[]>();
+	for (const row of tierRows) {
+		const tier = row.tier as ScopeTier;
+		tiers.set(row.grantId, [...(tiers.get(row.grantId) ?? []), tier]);
+	}
+
+	const groups = new Map<string, string[]>();
+	for (const row of groupRows) {
+		groups.set(row.grantId, [...(groups.get(row.grantId) ?? []), row.groupId]);
+	}
+
 	return rows.map((row) => ({
 		...row,
+		tiers: tiers.get(row.id) ?? [],
+		groupIds: groups.get(row.id) ?? [],
 		documentCount: counts.get(row.id) ?? 0,
 		state: grantState(row, now)
 	}));

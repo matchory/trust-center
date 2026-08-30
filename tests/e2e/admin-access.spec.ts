@@ -45,7 +45,9 @@ async function seedGrant(): Promise<{ grantId: string; email: string }> {
 		requesterId: person!.id,
 		requestId: null,
 		documentIds: [],
-		allRequestTier: true,
+		tiers: ['request'],
+		groupIds: [],
+		termDays: 30,
 		expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)
 	});
 

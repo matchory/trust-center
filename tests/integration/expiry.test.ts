@@ -72,7 +72,9 @@ async function seed(options: {
 		requesterId: person!.id,
 		requestId: null,
 		documentIds: [docId],
-		allRequestTier: false,
+		tiers: [],
+		groupIds: [],
+		termDays: 30,
 		expiresAt: options.expiresAt
 	});
 

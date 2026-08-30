@@ -92,7 +92,9 @@ describe('mayDownload', () => {
 			requesterId,
 			requestId: null,
 			documentIds: [documentId],
-			allRequestTier: false,
+			tiers: [],
+			groupIds: [],
+			termDays: 30,
 			expiresAt: IN_A_MONTH()
 		});
 
@@ -105,7 +107,9 @@ describe('mayDownload', () => {
 			requesterId,
 			requestId: null,
 			documentIds: [],
-			allRequestTier: true,
+			tiers: ['request'],
+			groupIds: [],
+			termDays: 30,
 			expiresAt: IN_A_MONTH()
 		});
 
@@ -117,7 +121,9 @@ describe('mayDownload', () => {
 			requesterId,
 			requestId: null,
 			documentIds: [documentId],
-			allRequestTier: false,
+			tiers: [],
+			groupIds: [],
+			termDays: 30,
 			expiresAt: IN_A_MONTH()
 		});
 
@@ -133,7 +139,9 @@ describe('mayDownload', () => {
 			requesterId,
 			requestId: null,
 			documentIds: [documentId],
-			allRequestTier: false,
+			tiers: [],
+			groupIds: [],
+			termDays: 30,
 			expiresAt: new Date(Date.now() - 1000)
 		});
 
@@ -145,7 +153,9 @@ describe('mayDownload', () => {
 			requesterId,
 			requestId: null,
 			documentIds: [documentId],
-			allRequestTier: false,
+			tiers: [],
+			groupIds: [],
+			termDays: 30,
 			expiresAt: IN_A_MONTH()
 		});
 
@@ -160,7 +170,9 @@ describe('mayDownload', () => {
 			requesterId,
 			requestId: null,
 			documentIds: [documentId],
-			allRequestTier: true,
+			tiers: ['request'],
+			groupIds: [],
+			termDays: 30,
 			expiresAt: IN_A_MONTH()
 		});
 
@@ -176,7 +188,9 @@ describe('mayDownload', () => {
 			requesterId,
 			requestId: null,
 			documentIds: [documentId],
-			allRequestTier: false,
+			tiers: [],
+			groupIds: [],
+			termDays: 30,
 			expiresAt: IN_A_MONTH()
 		});
 

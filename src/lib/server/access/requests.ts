@@ -221,13 +221,19 @@ export async function decideRequest(
 			}
 		}
 
+		const expiresAt =
+			input.expiresAt ?? new Date(Date.now() + input.defaultTtlDays * 24 * 60 * 60 * 1000);
+
 		const { grantId } = await createGrant(tx, {
 			requesterId: request.requesterId,
 			requestId: request.id,
 			documentIds,
-			allRequestTier: input.allRequestTier,
-			expiresAt:
-				input.expiresAt ?? new Date(Date.now() + input.defaultTtlDays * 24 * 60 * 60 * 1000)
+			// A bridge until Task 6 gives this the request's own tier set. The
+			// boolean is still what the decision form posts.
+			tiers: input.allRequestTier ? ['request'] : [],
+			groupIds: [],
+			expiresAt,
+			termDays: Math.max(1, Math.ceil((expiresAt.getTime() - Date.now()) / (24 * 60 * 60 * 1000)))
 		});
 
 		await tx

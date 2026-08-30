@@ -119,8 +119,11 @@ export async function verifyRequest(
 				requesterId: requester.id,
 				requestId: request.id,
 				documentIds: scoped.map((row) => row.documentId),
-				allRequestTier: request.allRequestTier,
-				expiresAt: new Date(Date.now() + input.grantTtlDays * 24 * 60 * 60 * 1000)
+				// A bridge until Task 6 gives this the request's own tier set.
+				tiers: request.allRequestTier ? ['request'] : [],
+				groupIds: [],
+				expiresAt: new Date(Date.now() + input.grantTtlDays * 24 * 60 * 60 * 1000),
+				termDays: input.grantTtlDays
 			}));
 		}
 
