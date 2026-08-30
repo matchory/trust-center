@@ -142,11 +142,17 @@ Six admin route groups follow the Phase 1 pattern exactly: a `DataTable` list pa
 
 ## Execution log
 
-Tasks 1–16 are complete (commits `b9fef02`..`HEAD`, all signed).
+Tasks 1–17 are complete (commits `b9fef02`..`HEAD`, all signed).
 
-**Resume at Task 17** — auth hardening. The access journey, its erasure path
-and the audit viewer are all complete. What remains is the auth hardening
-carried over from Phase 1, the expiry and reminder job, and the phase close.
+**Resume at Task 18** — expiry, reminders, and lapse. Everything the access
+journey needs is in place and the Phase 1 auth carry-overs are closed. What
+remains is the expiry and reminder job and the phase close.
+
+Decision 5 (`__Host-` on the staff cookie, and the HTTPS requirement it
+imposes) was **signed off before Task 17 ran**, on the evidence that Task 10
+had already shipped the `__Secure-` requester cookie — a plain-HTTP deployment
+was therefore already broken for requesters, and declining would have left the
+two cookies inconsistent rather than kept anything working.
 
 ### Departures from this plan, and why
 
@@ -389,6 +395,50 @@ carried over from Phase 1, the expiry and reminder job, and the phase close.
   is exactly the decision Step 1 settles. The rationale went to the
   `recordEvent` call site instead, where the next reader will meet it.
 
+- **Task 17 Step 5's approver case already existed.** Task 16 added exactly that
+  assertion — an approver reaching `/admin/audit` gets 403 — to
+  `tests/e2e/admin-audit.spec.ts`, together with the stronger claim that the nav
+  never offers the link. Nothing was duplicated.
+
+- **Task 17 Step 4 — `code_exchange_failed` rethrows.** The step's shape records
+  and then throws a friendly `error(400, …)`, which would have swallowed the
+  openid-client error entirely: `handleError` is not called for an `error()`
+  throw, so the operator would lose the only diagnostic they had. The event is
+  recorded and the original error rethrown, so the status and the correlated log
+  line stay exactly what they are today. The error still never reaches `meta`.
+
+- **Task 17 Step 4 — `no_role` keeps `staff.login.denied`.** The step lists it as
+  a `staff.login_failed` reason, but that path already records an event carrying
+  strictly more — the OIDC subject, email and groups that produced the refusal.
+  Emitting both would make one callback write two events and double every count
+  of denied logins. A fifth reason, `missing_claims`, was added instead: an IdP
+  returning no `sub`/`email` was the one failure the step's four did not cover.
+
+- **Task 17 — the callback moved to `clientIp(event)`.** Decision 6's helper was
+  introduced in Task 3 but the callback still called `getClientAddress()` raw,
+  so a misconfigured `ADDRESS_HEADER` would 500 the login rather than cost an
+  attribution. Thirteen admin mutation routes still call it raw; see below.
+
+- **Task 17 — `docs/self-hosting.md` §9's cookie-scope claim was stale.** It said
+  the staff session is "scoped to the admin area", which `__Host-` makes flatly
+  impossible — the prefix mandates `Path=/`. It was already inaccurate before
+  this task; it is now corrected rather than merely wrong in a new way.
+
+- **Task 17 — the dev IdP synthesizes one identity per Playwright slot.**
+  Unplanned, and forced by Step 3: with sessions revoked on re-login, two
+  workers signing in as `admin@example.test` revoke each other mid-test, which
+  failed four specs on the first full run. `findAccount` now answers any
+  `admin<n>` / `approver<n>`, and `tests/helpers/admin.ts` derives the account
+  from `test.info().parallelIndex` — bounded by the worker count and never held
+  by two workers at once. `auth.spec.ts` deliberately keeps the plain `admin`
+  account: it is the spec that exercises the login flow, and its cases are
+  serial. The alternative was `workers: 1`, which would have traded a 16s suite
+  for a 60s one to work around a security property behaving correctly.
+
+- **Task 17 — the sign-in helper's URL assertion waits 20s, not the default 5.**
+  Signing in is three cross-origin navigations plus a token exchange, and the
+  first test of a run pays the preview server's cold start on top.
+
 ### Found while executing
 
 - **The plan's watermark assertion could never pass.** It grepped the saved
@@ -444,15 +494,44 @@ carried over from Phase 1, the expiry and reminder job, and the phase close.
   has nothing for a crawler to prefer. Tasks 10 and 11 need it for the whole
   `/access` subtree.
 
-- **`pnpm test:e2e -- --project=app <filter>` runs both Playwright projects.**
-  The stray `--` is passed through to the Playwright CLI, which stops treating
-  the rest as project selection — so `admin-access.spec.ts` ran concurrently
-  under `app` and `origin` against the one shared database, and its `afterAll`
-  deleted the grant-duration setting while its own last assertion was still
-  reading it. It fails as `expected "14", received "90"` (the environment
-  default) and passes in isolation, which reads exactly like a product bug and
-  is not one. Every Task's Step 5 in this plan prints that form of the command;
-  invoke the CLI directly instead.
+- **`pnpm test:e2e -- --project=app <filter>` ignores both the project and the
+  filter.** The stray `--` is passed through to the Playwright CLI, which stops
+  treating the rest as selection and runs the whole suite under every project.
+  Every Task's Step 5 in this plan prints that form of the command; invoke
+  `node node_modules/@playwright/test/cli.js test --project=app <filter>`
+  directly instead.
+
+  The `expected "14", received "90"` failure first blamed on this was something
+  else entirely — see the hydration race under Task 17.
+
+- **Filling a form field before hydration silently submits the server's value.**
+  An input rendered as `value={data.x}` has its DOM value written again when
+  Svelte claims the server-rendered tree, discarding whatever Playwright typed —
+  and the form then posts the server's value as if the test had never touched
+  it. `tests/e2e/admin-access.spec.ts`'s grant-duration case failed roughly one
+  run in three with `expected "14", received "90"`, and the row in `setting`
+  really did hold `90`: the test passed its own "saved" assertion while storing
+  the opposite of what it typed. The audit filter form flaked the same way,
+  submitting `action=` and failing on the URL. `awaitHydration()` in
+  `tests/helpers/admin.ts` waits for the entry module to have run. **Every admin
+  form spec has the same hazard**; it is applied where it has been observed
+  rather than pre-emptively everywhere. Note the failure mode: a test that types
+  one thing and asserts on another can pass while writing the wrong row.
+
+- **Thirteen admin mutation routes still call `getClientAddress()` raw.**
+  Decision 6 introduced `clientIp()` in Task 3 and applied it where new code was
+  written; the Phase 1 routes were never converted. `documents/new`,
+  `documents/categories`, `controls/new`, `controls/groups`,
+  `certifications/new`, `faq/new`, `subprocessors/new`, `updates/new`,
+  `settings/branding` and `auth/logout` all still lose the whole mutation — not
+  merely its attribution — if the call throws, which is the exact defect
+  `phase-2-carryover.md` recorded. A one-line change per site, deliberately not
+  swept up inside Task 17.
+
+- **`tests/e2e/locale.spec.ts:63` flaked twice more** during the Task 17 runs,
+  making four sightings across three phases. It is the only remaining known
+  flake in the suite. `phase-2-carryover.md` already asked for it to be made
+  robust rather than re-observed; it has now been re-observed.
 
 - **Migrations are renamed by hand.** `drizzle-kit generate` assigns a random
   name; this repo uses descriptive ones, so each migration needs its file and its
@@ -5497,7 +5576,7 @@ Four carry-over items, all in the staff authentication path, all cheap once some
 - Consumes: nothing new.
 - Produces: `revokeAllStaffSessions(db, staffUserId)`.
 
-- [ ] **Step 1: Move both cookies to prefixed names**
+- [x] **Step 1: Move both cookies to prefixed names**
 
 `SESSION_COOKIE` becomes `'__Host-tc_staff_session'` and the requester cookie is already `'__Secure-tc_requester_session'` from Task 10.
 
@@ -5505,13 +5584,13 @@ Four carry-over items, all in the staff authentication path, all cheap once some
 
 Existing sessions do not survive the rename. That is correct: the old cookie name is simply not read any more, and every staff member signs in again once.
 
-- [ ] **Step 2: Write the self-hosting warning**
+- [x] **Step 2: Write the self-hosting warning**
 
 Both prefixes require `Secure`, which browsers grant on `http://localhost` but not on a plain-HTTP origin. Add to `docs/self-hosting.md` §3, near `ADDRESS_HEADER`:
 
 > **HTTPS is required.** Session cookies use the `__Host-` and `__Secure-` prefixes, which browsers only accept over HTTPS. Reaching the application over plain HTTP — other than at `localhost` — means nobody can sign in, staff or requester, with no error message beyond a login that loops back to the login page. Terminate TLS at your proxy and set `BASE_URL` to the `https://` origin.
 
-- [ ] **Step 3: Revoke prior sessions on re-login**
+- [x] **Step 3: Revoke prior sessions on re-login**
 
 Add to `src/lib/server/auth/session.ts`:
 
@@ -5533,7 +5612,7 @@ Call it in `src/routes/auth/callback/+server.ts` after `upsertStaffUser` and **b
 
 Add an integration case to `tests/integration/session.test.ts`: create two sessions for one user, call `revokeAllStaffSessions`, assert both stop validating; then create a third and assert it validates.
 
-- [ ] **Step 4: Audit failed OIDC callbacks**
+- [x] **Step 4: Audit failed OIDC callbacks**
 
 The carry-over calls these "precisely the events a security review asks for and the only auth outcomes still unrecorded". In `src/routes/auth/callback/+server.ts`, wrap the exchange so each failure mode records before it throws:
 
@@ -5553,13 +5632,13 @@ await recordEvent(db, {
 
 with `reason` one of `'state_mismatch'`, `'code_exchange_failed'`, `'idp_error'` (carrying the IdP's `error` and `error_description` query parameters), or `'no_role'` for a user in no mapped group. **Do not** put the authorization code, the client secret, or the raw error `cause` in `meta` — that is the exact mistake `handleError` exists to prevent.
 
-- [ ] **Step 5: Add the route-level disabled-staff test**
+- [x] **Step 5: Add the route-level disabled-staff test**
 
 The carry-over notes the layer below is tested and the route is not.
 
 `tests/e2e/auth-hardening.spec.ts`: sign in as an admin, disable that `staff_user` row directly in the database, then navigate to `/admin` and assert the response is a redirect to login rather than a rendered admin page — and that the session cookie has been cleared. Add a second case asserting an `approver` reaching `/admin/audit` gets 403.
 
-- [ ] **Step 6: Run and commit**
+- [x] **Step 6: Run and commit**
 
 ```bash
 pnpm test:integration -- session
