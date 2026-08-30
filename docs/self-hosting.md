@@ -280,10 +280,50 @@ If a CDN sits in front of nginx, raise `XFF_DEPTH` to match.
 - **No third-party requests from the portal.** No CDN, no web fonts, no
   analytics. A Content-Security-Policy with every source at `'self'` and no
   `unsafe-inline` makes the browser enforce it.
-- **No cookies for public visitors.** The only cookie the product sets is the
-  staff session, after a staff member signs in.
+- **No cookies for public visitors.** The product sets exactly two cookies,
+  both after someone signs in and neither on a public page: the staff session,
+  scoped to the admin area, and the requester session, scoped to
+  `/{locale}/access`. A visitor who never signs in is never given one.
 
 These are not promises to take on faith. `tests/e2e/security.spec.ts` asserts
 each of them on every run: it records every request the portal makes and fails
 on any foreign origin, checks the policy header, and checks the cookie jar is
 empty. Run `pnpm test:e2e` against your own build.
+
+## 10. Erasure requests
+
+A requester — someone who asked for a gated document and confirmed their email
+address — can be erased from `/admin/requesters/{id}`. Purging is immediate and
+**cannot be undone**; nothing keeps a copy of what it cleared.
+
+**What it removes**
+
+- The person's name, company, company domain, notes, and email address on their
+  `requester` row. The email is replaced with a unique unusable placeholder
+  rather than emptied, because the column is unique and NOT NULL.
+- Their name, IP address, and user agent from every notification queued or sent
+  to them. A notification still waiting to go out is stopped.
+- Their actor id, IP address, and user agent from every audit event they caused.
+- Every active session they hold.
+
+**What it deliberately keeps**
+
+- **The audit events themselves.** They are pseudonymized, not deleted: the
+  record that a document was downloaded at a particular moment survives, without
+  the record of who downloaded it. This is the only operation anywhere in this
+  product that modifies `audit_event`, and it is column-scoped to those three
+  identifiers — a database trigger refuses every DELETE regardless.
+- **The `requester` row itself**, blanked. Their grants and requests reference
+  it, and dropping the row would take that history with it.
+- **Their grants and requests**, which continue to show what was asked for and
+  what was decided.
+
+**What it does not do**
+
+It does not revoke their grants. A purged requester holds no session and cannot
+sign in, so the grants are unreachable, but revoke them explicitly from
+`/admin/grants` if your retention policy calls for it.
+
+The purge writes its own audit event, `requester.purged`, naming the staff
+member who performed it and how many events were pseudonymized. That event is
+about the operator, not the erased person, and it survives.

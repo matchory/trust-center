@@ -142,13 +142,12 @@ Six admin route groups follow the Phase 1 pattern exactly: a `DataTable` list pa
 
 ## Execution log
 
-Tasks 1–14 are complete (commits `b9fef02`..`HEAD`, all signed).
+Tasks 1–15 are complete (commits `b9fef02`..`HEAD`, all signed).
 
-**Resume at Task 15** — the requester purge. Every surface the access journey
-needs now exists: a prospect requests, verifies, and downloads; staff triage
-what the rules did not decide, revoke a grant, write the rules themselves, and
-set the default term. What is still missing is the erasure path, the audit log
-viewer, the auth hardening carried over from Phase 1, and the expiry job.
+**Resume at Task 16** — the audit log viewer. The access journey and its
+erasure path are both complete. What remains is the audit viewer, the auth
+hardening carried over from Phase 1, the expiry and reminder job, and the
+phase close.
 
 ### Departures from this plan, and why
 
@@ -339,6 +338,29 @@ viewer, the auth hardening carried over from Phase 1, and the expiry job.
 - **Task 14 — the rule list shows `maxTier` only for `auto_approve`.** The
   column is meaningless for `review` and `deny` and is ignored there by
   `decideFromRules`; rendering it anyway would suggest it decides something.
+
+- **Task 15 — queued mail is blanked on every row, not only the pending ones.**
+  The step's code matched `status = 'pending'`, which leaves the address on
+  every notification already delivered. A delivered notification names the
+  address as plainly as an undelivered one, and an erasure that leaves it behind
+  is not one. `to` is blanked on all of the requester's rows; the pending ones
+  are separately marked `failed` first, while `to` still matches, so the drain
+  cannot pick one up afterwards. The rows themselves stay: that a notification
+  went out is a fact about the system rather than about the person.
+
+- **Task 15 — the purge action refuses a second purge.** Nothing in the plan
+  said so, but re-running it would rewrite an already-blanked row and write a
+  second `requester.purged` event claiming an erasure that erased nothing.
+
+- **Task 15 — an e2e test was added beyond the plan's list.**
+  `tests/e2e/admin-requesters.spec.ts`. The integration test covers
+  `purgeRequester`; nothing covered the two pages that call it, and
+  `listRequestersForAdmin`'s grouped count is exactly the kind of query that
+  passes type-checking and fails at runtime.
+
+- **Task 15 — `docs/self-hosting.md` §9's cookie claim was stale.** It said the
+  staff session is "the only cookie the product sets", which stopped being true
+  in Task 10. Corrected to name both cookies and their scopes while adding §10.
 
 ### Found while executing
 
@@ -5088,7 +5110,7 @@ Spec §10's single permitted exception to the append-only audit log, and the fir
 **Interfaces:**
 - Produces: `purgeRequester(db, {requesterId, staffUserId, ip})` → `{eventsPseudonymized: number}`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 `tests/integration/purge.test.ts`:
 
@@ -5225,12 +5247,12 @@ describe('purgeRequester', () => {
 
 Note: Drizzle wraps driver errors, so asserting on the trigger's message needs `error.cause`, not `error.message`.
 
-- [ ] **Step 2: Run it and watch it fail**
+- [x] **Step 2: Run it and watch it fail**
 
 Run: `pnpm test:integration -- purge`
 Expected: FAIL — cannot resolve `../../src/lib/server/purge`.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 `src/lib/server/purge.ts`:
 
@@ -5308,18 +5330,18 @@ export async function purgeRequester(
 
 `subjectId` carries the requester id, which is a pseudonymous identifier rather than personal data — spec §10 forbids requester personal data in `subject_id`, and a UUID that no longer resolves to a person is not that. The event must name what was purged or it is not an audit trail.
 
-- [ ] **Step 4: Run it and watch it pass**
+- [x] **Step 4: Run it and watch it pass**
 
 Run: `pnpm test:integration -- purge`
 Expected: PASS, 5 tests. The last one — that `DELETE FROM audit_event` still throws — is the regression guard on Phase 1's trigger.
 
-- [ ] **Step 5: Build the admin surface**
+- [x] **Step 5: Build the admin surface**
 
 `/admin/requesters` lists requesters (email, company, first seen, grant count, purged state), and `/admin/requesters/[id]` shows their requests, grants, and recent audit events, with a `purge` action behind a typed confirmation — the same `admin_confirm_delete` pattern the content pages use, because this is irreversible and there is no undo.
 
 A purged requester's row stays listed, shown as purged, with the purge action disabled.
 
-- [ ] **Step 6: Document it and commit**
+- [x] **Step 6: Document it and commit**
 
 Add a §"Erasure requests" section to `docs/self-hosting.md`: what purging does, what it deliberately does not do (audit events survive, pseudonymized), and that it cannot be undone.
 

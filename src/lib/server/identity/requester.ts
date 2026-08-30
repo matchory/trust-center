@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from 'node:crypto';
-import { and, eq, isNull } from 'drizzle-orm';
-import { requester, requesterSession } from '../db/schema';
+import { and, desc, eq, isNull, sql } from 'drizzle-orm';
+import { accessGrant, accessRequest, requester, requesterSession } from '../db/schema';
 import type { Db } from '../db';
 
 export const REQUESTER_SESSION_COOKIE = '__Secure-tc_requester_session';
@@ -133,4 +133,93 @@ export async function revokeAllRequesterSessions(db: Db, requesterId: string): P
 		.update(requesterSession)
 		.set({ revokedAt: new Date() })
 		.where(and(eq(requesterSession.requesterId, requesterId), isNull(requesterSession.revokedAt)));
+}
+
+export interface AdminRequesterRow {
+	id: string;
+	email: string;
+	name: string;
+	company: string;
+	companyDomain: string;
+	firstSeenAt: Date;
+	purgedAt: Date | null;
+	grantCount: number;
+}
+
+/**
+ * Purged requesters stay listed, shown as purged. Hiding them would make the
+ * erasure itself invisible, and the row is the only thing tying their surviving
+ * grants and requests to anything at all.
+ */
+export async function listRequestersForAdmin(db: Db): Promise<AdminRequesterRow[]> {
+	const rows = await db
+		.select({
+			id: requester.id,
+			email: requester.email,
+			name: requester.name,
+			company: requester.company,
+			companyDomain: requester.companyDomain,
+			firstSeenAt: requester.firstSeenAt,
+			purgedAt: requester.purgedAt,
+			grantCount: sql<number>`count(${accessGrant.id})::int`
+		})
+		.from(requester)
+		.leftJoin(accessGrant, eq(accessGrant.requesterId, requester.id))
+		.groupBy(requester.id)
+		.orderBy(desc(requester.firstSeenAt));
+
+	return rows;
+}
+
+export interface AdminRequesterDetail extends AdminRequesterRow {
+	locale: string;
+	notes: string | null;
+	requests: {
+		id: string;
+		status: string;
+		allRequestTier: boolean;
+		createdAt: Date;
+		decidedAt: Date | null;
+	}[];
+	grants: {
+		id: string;
+		allRequestTier: boolean;
+		grantedAt: Date;
+		expiresAt: Date;
+		revokedAt: Date | null;
+	}[];
+}
+
+export async function getRequesterForAdmin(
+	db: Db,
+	id: string
+): Promise<AdminRequesterDetail | null> {
+	const [row] = await db.select().from(requester).where(eq(requester.id, id)).limit(1);
+	if (!row) return null;
+
+	const requests = await db
+		.select({
+			id: accessRequest.id,
+			status: accessRequest.status,
+			allRequestTier: accessRequest.allRequestTier,
+			createdAt: accessRequest.createdAt,
+			decidedAt: accessRequest.decidedAt
+		})
+		.from(accessRequest)
+		.where(eq(accessRequest.requesterId, id))
+		.orderBy(desc(accessRequest.createdAt));
+
+	const grants = await db
+		.select({
+			id: accessGrant.id,
+			allRequestTier: accessGrant.allRequestTier,
+			grantedAt: accessGrant.grantedAt,
+			expiresAt: accessGrant.expiresAt,
+			revokedAt: accessGrant.revokedAt
+		})
+		.from(accessGrant)
+		.where(eq(accessGrant.requesterId, id))
+		.orderBy(desc(accessGrant.grantedAt));
+
+	return { ...row, grantCount: grants.length, requests, grants };
 }
