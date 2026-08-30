@@ -10,6 +10,19 @@
 	// they were reading rather than sending them back to the root.
 	let basePath = $derived(stripLocale(page.url.pathname, COMPILED_LOCALES).path);
 
+	// The gated subtree's session cookie is scoped to `/{locale}/access`, so a
+	// direct link to the other locale's copy arrives without it and signs the
+	// requester out. Going via the switch endpoint — which is under the locale
+	// being *left*, and so does receive the cookie — re-issues it at the target
+	// path first. See src/routes/(portal)/access/switch/+server.ts.
+	let gated = $derived(basePath === '/access' || basePath.startsWith('/access/'));
+
+	function href(locale: string): string {
+		return gated
+			? `${localizePath('/access/switch', current)}?to=${encodeURIComponent(locale)}`
+			: localizePath(basePath, locale);
+	}
+
 	// Intl.DisplayNames rather than a hand-maintained map: it names any locale
 	// the deployment compiles, in that locale's own language, and it is built
 	// into the platform — the portal loads nothing third-party.
@@ -27,7 +40,7 @@
 		{:else}
 			<a
 				data-testid="locale-switch-{locale}"
-				href={localizePath(basePath, locale)}
+				href={href(locale)}
 				hreflang={locale}
 				class="underline underline-offset-4 hover:no-underline">{endonym(locale)}</a
 			>

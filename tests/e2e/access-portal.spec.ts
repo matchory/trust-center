@@ -129,6 +129,26 @@ test('a verified requester lands on the portal and sees the granted document', a
 	expect(cookies[0]?.httpOnly).toBe(true);
 });
 
+test('switching locale keeps the requester signed in', async ({ page, context }) => {
+	await signIn(page, AUTO_DOMAIN);
+	await expect(page).toHaveURL(/\/de\/access$/);
+
+	await page.getByTestId('locale-switch-en').click();
+
+	// The session cookie is scoped to a locale's own subtree, so switching
+	// language is the one navigation that can silently end a session. It must
+	// carry the requester across rather than dropping them on the request form.
+	await expect(page).toHaveURL(/\/en\/access$/);
+	await expect(page.getByTestId('access-identity')).toBeVisible();
+	await expect(page.getByTestId('access-document-portal-gated-fixture')).toBeVisible();
+
+	// Still exactly one cookie, now scoped to the locale actually being read.
+	const cookies = await context.cookies();
+	expect(cookies).toHaveLength(1);
+	expect(cookies[0]?.name).toBe('__Secure-tc_requester_session');
+	expect(cookies[0]?.path).toBe('/en/access');
+});
+
 test('the gated portal is never cached', async ({ page }) => {
 	await signIn(page, AUTO_DOMAIN);
 
