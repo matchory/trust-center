@@ -1,7 +1,9 @@
 import { error, fail, redirect } from '@sveltejs/kit';
+import { eq } from 'drizzle-orm';
 import { z } from 'zod';
 import { DOCUMENT_STATUSES, DOCUMENT_TIERS } from '$lib/content-types';
 import { localizePath } from '$lib/i18n/locale';
+import { listGroups, setDocumentGroups } from '$lib/server/access/groups';
 import { saveMetaAction, saveTranslationAction } from '$lib/server/admin/actions';
 import type { AdminActionFailure } from '$lib/server/admin/actions';
 import { recordEvent } from '$lib/server/audit';
@@ -15,6 +17,7 @@ import {
 	setDocumentTranslation,
 	updateDocument
 } from '$lib/server/content/documents';
+import { documentGroup } from '$lib/server/db/schema';
 import { getDb } from '$lib/server/db/instance';
 import { clientIp } from '$lib/server/http/client-ip';
 import { getStorage, newStorageKey } from '$lib/server/storage';
@@ -28,7 +31,18 @@ export const load: PageServerLoad = async ({ params }) => {
 	const doc = await getDocumentForAdmin(db, params.id);
 	if (!doc) error(404, 'Document not found');
 
-	return { document: doc, categories: await listCategories(db) };
+	const [categories, groups, memberships] = await Promise.all([
+		listCategories(db),
+		listGroups(db),
+		db.select().from(documentGroup).where(eq(documentGroup.documentId, params.id))
+	]);
+
+	return {
+		document: doc,
+		categories,
+		groups,
+		groupIds: memberships.map((row) => row.groupId)
+	};
 };
 
 function optionalDate(value: FormDataEntryValue | null): Date | null {
@@ -49,15 +63,21 @@ export const actions: Actions = {
 				.regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/),
 			categoryId: z.string().uuid(),
 			tier: z.enum(DOCUMENT_TIERS),
-			position: z.coerce.number().int()
+			position: z.coerce.number().int(),
+			groupIds: z.array(z.string().uuid()).default([])
 		}),
 		read: (form) => ({
 			slug: form.get('slug'),
 			categoryId: form.get('categoryId'),
 			tier: form.get('tier'),
-			position: form.get('position') ?? 0
+			position: form.get('position') ?? 0,
+			groupIds: form.getAll('groupIds').map(String).filter(Boolean)
 		}),
-		update: (db, id, data) => updateDocument(db, id, data),
+		update: async (db, id, data) => {
+			const { groupIds, ...meta } = data;
+			await updateDocument(db, id, meta);
+			await setDocumentGroups(db, id, groupIds);
+		},
 		fallbackField: 'slug'
 	}),
 

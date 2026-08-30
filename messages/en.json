@@ -50,6 +50,7 @@
 	"admin_decision_request_info": "Ask for more information",
 	"admin_delete": "Delete",
 	"admin_description": "Description",
+	"admin_document_groups": "Groups",
 	"admin_dpa_url": "DPA link",
 	"admin_ended_at": "End",
 	"admin_error_pattern": "An exact domain (acme.example) or one leading wildcard (*.acme.example).",

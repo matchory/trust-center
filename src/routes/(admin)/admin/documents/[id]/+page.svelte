@@ -76,9 +76,31 @@
 		/>
 	</FormField>
 
-	<button class="justify-self-start rounded bg-neutral-900 px-3 py-1.5 text-white"
-		>{m.admin_save()}</button
+	<fieldset class="grid gap-1">
+		<legend class="text-sm font-medium">{m.admin_document_groups()}</legend>
+		{#each data.groups as group (group.id)}
+			<label class="flex items-center gap-2 text-sm">
+				<input
+					data-testid="document-group-{group.slug}"
+					type="checkbox"
+					name="groupIds"
+					value={group.id}
+					checked={data.groupIds.includes(group.id)}
+				/>
+				{group.names[data.locale] ?? group.slug}
+			</label>
+		{/each}
+		{#if data.groups.length === 0}
+			<p class="text-sm text-neutral-500">{m.admin_no_entries()}</p>
+		{/if}
+	</fieldset>
+
+	<button
+		data-testid="document-save"
+		class="justify-self-start rounded bg-neutral-900 px-3 py-1.5 text-white"
 	>
+		{m.admin_save()}
+	</button>
 </form>
 
 <LocaleTabs

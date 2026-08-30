@@ -50,6 +50,7 @@
 	"admin_decision_request_info": "Rückfrage stellen",
 	"admin_delete": "Löschen",
 	"admin_description": "Beschreibung",
+	"admin_document_groups": "Gruppen",
 	"admin_dpa_url": "AVV-Link",
 	"admin_ended_at": "Ende",
 	"admin_error_pattern": "Eine exakte Domain (acme.example) oder ein führender Platzhalter (*.acme.example).",
