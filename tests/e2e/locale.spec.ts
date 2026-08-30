@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import { awaitHydration } from '../helpers/hydration';
 
 test('redirects the unprefixed root to the negotiated locale', async ({ browser }) => {
 	// Two contexts with different preferred languages requesting the same URL
@@ -63,6 +64,13 @@ test('falls through an uncompiled prefix to ordinary routing, which 404s', async
 test('updates rendered messages on client-side navigation between locales', async ({ page }) => {
 	await page.goto('/de');
 	await expect(page.getByTestId('admin-link-label')).toHaveText('Verwaltung');
+
+	// Before the marker and the click, both of which are meaningless until the
+	// client router is listening: clicking early is a full document load, which
+	// resets `window` and loses the marker — so the test reports "not a
+	// client-side navigation" and is right, about the wrong thing. This flaked
+	// four times across three phases for exactly that reason.
+	await awaitHydration(page);
 
 	// Plant a marker on `window` before navigating. A full document reload
 	// resets `window`, so the marker surviving the click proves SvelteKit's

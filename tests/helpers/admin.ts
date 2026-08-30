@@ -1,4 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
+import { awaitHydration } from './hydration';
 
 /**
  * The dev IdP's fixture identity for this Playwright slot — `admin0`,
@@ -43,25 +44,6 @@ export async function signInAsAdmin(page: Page) {
 
 export async function signInAsApprover(page: Page) {
 	await signInAs(page, slotAccount('approver'));
-}
-
-/**
- * Waits for the page's JavaScript to have loaded and run, which is when Svelte
- * claims the server-rendered tree.
- *
- * Filling a field before that point is a race the test loses silently: an input
- * rendered as `value={data.x}` has its DOM value written again during
- * hydration, discarding whatever Playwright typed, and the form then submits
- * the server's value as if the test had never touched it — a pass on the
- * visible "saved" state and a wrong row in the database. `networkidle` is the
- * signal because hydration runs inside the entry module, so once no request has
- * been in flight for half a second the chunks are loaded and hydration is done.
- *
- * The same hazard exists on every admin form. It is applied where it has
- * actually been observed rather than pre-emptively everywhere.
- */
-export async function awaitHydration(page: Page) {
-	await page.waitForLoadState('networkidle');
 }
 
 /**

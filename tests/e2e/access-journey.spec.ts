@@ -24,7 +24,7 @@ import {
 	rateLimit
 } from '../../src/lib/server/db/schema';
 import { createLocalStorage, newStorageKey } from '../../src/lib/server/storage/local';
-import { awaitHydration } from '../helpers/admin';
+import { awaitHydration } from '../helpers/hydration';
 import { blankPdf, drawnText } from '../helpers/pdf';
 
 const databaseUrl = process.env.DATABASE_URL;
