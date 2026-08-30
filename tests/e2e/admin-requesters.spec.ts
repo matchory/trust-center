@@ -5,7 +5,7 @@ import { recordEvent } from '../../src/lib/server/audit';
 import { createDb, type Db } from '../../src/lib/server/db';
 import { auditEvent, requester } from '../../src/lib/server/db/schema';
 import { upsertRequester } from '../../src/lib/server/identity/requester';
-import { signInAsAdmin } from '../helpers/admin';
+import { gotoAdmin, signInAsAdmin } from '../helpers/admin';
 
 const databaseUrl = process.env.DATABASE_URL;
 if (!databaseUrl) {
@@ -42,10 +42,10 @@ test('an operator purges a requester and the record shows it', async ({ page }) 
 	});
 
 	await signInAsAdmin(page);
-	await page.goto('/de/admin/requesters');
+	await gotoAdmin(page, '/de/admin/requesters');
 	await expect(page.getByTestId(`requester-state-${person.id}`)).toHaveText('Aktiv');
 
-	await page.goto(`/de/admin/requesters/${person.id}`);
+	await gotoAdmin(page, `/de/admin/requesters/${person.id}`);
 	// The confirm() the button is guarded by; Playwright dismisses dialogs by
 	// default, which would cancel the purge.
 	page.on('dialog', (dialog) => dialog.accept());

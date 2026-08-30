@@ -4,7 +4,7 @@ import { eq, like } from 'drizzle-orm';
 import { createGrant, GRANT_DEFAULT_DAYS_SETTING_KEY } from '../../src/lib/server/access/grants';
 import { createDb, type Db } from '../../src/lib/server/db';
 import { accessGrant, accessRule, requester, setting } from '../../src/lib/server/db/schema';
-import { awaitHydration, signInAsAdmin } from '../helpers/admin';
+import { gotoAdmin, signInAsAdmin } from '../helpers/admin';
 
 const databaseUrl = process.env.DATABASE_URL;
 if (!databaseUrl) {
@@ -56,7 +56,7 @@ test('a new rule appears in the list and is stored as written', async ({ page })
 	const pattern = `${randomUUID().slice(0, 8)}.e2e-rule.example`;
 
 	await signInAsAdmin(page);
-	await page.goto('/de/admin/rules/new');
+	await gotoAdmin(page, '/de/admin/rules/new');
 
 	await page.getByTestId('rule-pattern').fill(pattern);
 	await page.getByTestId('rule-action').selectOption('auto_approve');
@@ -75,7 +75,7 @@ test('a pattern that could never match is refused at entry', async ({ page }) =>
 	// Rejected here rather than discovered at decision time, when a stranger is
 	// being handed documents.
 	await signInAsAdmin(page);
-	await page.goto('/de/admin/rules/new');
+	await gotoAdmin(page, '/de/admin/rules/new');
 
 	await page.getByTestId('rule-pattern').fill('*.example');
 	await page.getByTestId('rule-create').click();
@@ -90,7 +90,7 @@ test('revoking a grant shows it as revoked and stamps the row', async ({ page })
 	const { grantId } = await seedGrant();
 
 	await signInAsAdmin(page);
-	await page.goto('/de/admin/grants');
+	await gotoAdmin(page, '/de/admin/grants');
 	await expect(page.getByTestId(`grant-state-${grantId}`)).toHaveText('Aktiv');
 
 	await page.getByTestId(`grant-revoke-${grantId}`).click();
@@ -103,11 +103,8 @@ test('revoking a grant shows it as revoked and stamps the row', async ({ page })
 
 test('the grant duration setting overrides the environment default', async ({ page }) => {
 	await signInAsAdmin(page);
-	await page.goto('/de/admin/settings/access');
+	await gotoAdmin(page, '/de/admin/settings/access');
 
-	// Before typing: hydration would otherwise write the server's value back
-	// over the typed one and the form would submit 90. See awaitHydration.
-	await awaitHydration(page);
 	await page.getByTestId('access-grant-default-days').fill('14');
 	await page.getByTestId('access-save').click();
 	await expect(page.getByTestId('access-saved')).toBeVisible();

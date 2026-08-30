@@ -1,19 +1,16 @@
 import { expect, test } from '@playwright/test';
-import { awaitHydration, signInAsAdmin, signInAsApprover } from '../helpers/admin';
+import { gotoAdmin, signInAsAdmin, signInAsApprover } from '../helpers/admin';
 
 test('an admin reads the audit log and narrows it by action', async ({ page }) => {
 	// Signing in is itself an audited event, so the log is never empty here and
 	// the action asserted on below is one this test just caused.
 	await signInAsAdmin(page);
 
-	await page.goto('/de/admin/audit');
+	await gotoAdmin(page, '/de/admin/audit');
 	await expect(page.getByRole('heading', { name: 'Audit-Log' })).toBeVisible();
 	const unfiltered = await page.getByTestId(/^audit-[0-9a-f-]{36}$/).count();
 	expect(unfiltered).toBeGreaterThan(0);
 
-	// Before typing: hydration writes the load's (empty) filter back over the
-	// typed one, and the form then submits `action=`. See awaitHydration.
-	await awaitHydration(page);
 	await page.getByTestId('audit-filter-action').fill('staff.login.succeeded');
 	await page.getByTestId('audit-filter-apply').click();
 
@@ -27,7 +24,7 @@ test('an admin reads the audit log and narrows it by action', async ({ page }) =
 	}
 
 	// A filter matching nothing empties the table rather than erroring.
-	await page.goto('/de/admin/audit?action=nothing.matches.this');
+	await gotoAdmin(page, '/de/admin/audit?action=nothing.matches.this');
 	await expect(page.getByTestId(/^audit-action-/)).toHaveCount(0);
 	await expect(page.getByText('Keine Einträge vorhanden.')).toBeVisible();
 });
@@ -40,7 +37,7 @@ test('an approver is refused the audit log and is not offered it in the nav', as
 	await expect(page.getByTestId('admin-nav-requests')).toBeVisible();
 	await expect(page.getByTestId('admin-nav-audit')).toHaveCount(0);
 
-	const response = await page.goto('/de/admin/audit');
+	const response = await gotoAdmin(page, '/de/admin/audit');
 	expect(response?.status()).toBe(403);
 	await expect(page.getByText(/restricted to administrators/i)).toBeVisible();
 });

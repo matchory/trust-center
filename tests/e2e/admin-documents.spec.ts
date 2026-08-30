@@ -1,16 +1,5 @@
-import { expect, test, type Page } from '@playwright/test';
-
-async function signInAsAdmin(page: Page) {
-	await page.goto('/auth/login');
-	await page.getByPlaceholder('Enter any login').fill('admin');
-	await page.getByPlaceholder('and password').fill('any-password');
-	await page.getByRole('button', { name: /sign-?in|continue|login/i }).click();
-
-	const consent = page.getByRole('button', { name: /continue|authorize|allow/i });
-	if (await consent.isVisible().catch(() => false)) await consent.click();
-
-	await expect(page).toHaveURL(/\/admin$/);
-}
+import { expect, test } from '@playwright/test';
+import { gotoAdmin, signInAsAdmin } from '../helpers/admin';
 
 // Unique per run so repeated local runs against the shared dev database do not
 // collide on the slug unique constraint.
@@ -19,14 +8,14 @@ const suffix = Date.now().toString(36);
 test('an admin can create a category, a document, and publish it', async ({ page }) => {
 	await signInAsAdmin(page);
 
-	await page.goto('/de/admin/documents/categories');
+	await gotoAdmin(page, '/de/admin/documents/categories');
 	await page.getByTestId('category-slug').fill(`cat-${suffix}`);
 	await page.getByTestId('category-name-de').fill('Zertifikate');
 	await page.getByTestId('category-name-en').fill('Certificates');
 	await page.getByTestId('category-create').click();
 	await expect(page.getByTestId(`category-row-cat-${suffix}`)).toContainText('Zertifikate');
 
-	await page.goto('/de/admin/documents/new');
+	await gotoAdmin(page, '/de/admin/documents/new');
 	await page.getByTestId('document-slug').fill(`doc-${suffix}`);
 	await page.getByTestId('document-category').selectOption({ label: 'Zertifikate' });
 	await page.getByTestId('document-create').click();
@@ -50,7 +39,7 @@ test('a document with no translation in any served locale stays off the portal',
 }) => {
 	await signInAsAdmin(page);
 
-	await page.goto('/de/admin/documents/new');
+	await gotoAdmin(page, '/de/admin/documents/new');
 	await page.getByTestId('document-slug').fill(`untitled-${suffix}`);
 	await page.getByTestId('document-category').selectOption({ index: 0 });
 	await page.getByTestId('document-create').click();
@@ -63,7 +52,7 @@ test('a document with no translation in any served locale stays off the portal',
 test('rejects a slug that is not URL-safe', async ({ page }) => {
 	await signInAsAdmin(page);
 
-	await page.goto('/de/admin/documents/new');
+	await gotoAdmin(page, '/de/admin/documents/new');
 	await page.getByTestId('document-slug').fill('Not A Slug');
 	await page.getByTestId('document-category').selectOption({ index: 0 });
 	await page.getByTestId('document-create').click();

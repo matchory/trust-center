@@ -63,3 +63,17 @@ export async function signInAsApprover(page: Page) {
 export async function awaitHydration(page: Page) {
 	await page.waitForLoadState('networkidle');
 }
+
+/**
+ * Navigates to an admin page and waits for it to be interactive.
+ *
+ * Every admin spec goes through this rather than `page.goto`, so no spec can
+ * reach a form before Svelte has claimed it — see `awaitHydration` for what
+ * goes wrong when one does, and note that the failure is a test that passes
+ * while writing the wrong row rather than one that fails.
+ */
+export async function gotoAdmin(page: Page, path: string) {
+	const response = await page.goto(path);
+	await awaitHydration(page);
+	return response;
+}

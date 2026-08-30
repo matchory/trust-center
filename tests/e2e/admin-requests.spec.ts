@@ -11,7 +11,7 @@ import {
 	document,
 	outboundEmail
 } from '../../src/lib/server/db/schema';
-import { signInAsAdmin } from '../helpers/admin';
+import { gotoAdmin, signInAsAdmin } from '../helpers/admin';
 
 const databaseUrl = process.env.DATABASE_URL;
 if (!databaseUrl) {
@@ -88,10 +88,10 @@ test('an approver narrows a pending request and the requester is told', async ({
 	const { requestId, email } = await pendingRequest();
 
 	await signInAsAdmin(page);
-	await page.goto('/de/admin/requests');
+	await gotoAdmin(page, '/de/admin/requests');
 	await expect(page.getByTestId(`request-status-${requestId}`)).toHaveText('Offen');
 
-	await page.goto(`/de/admin/requests/${requestId}`);
+	await gotoAdmin(page, `/de/admin/requests/${requestId}`);
 	// The prospect asked for both; the approver grants one.
 	await page.getByTestId('decision-document-triage-fixture-b').uncheck();
 	await page.getByTestId('decision-approve').click();
@@ -124,7 +124,7 @@ test('a denial records a reason, mints no grant, and mails the requester', async
 	const { requestId, email } = await pendingRequest();
 
 	await signInAsAdmin(page);
-	await page.goto(`/de/admin/requests/${requestId}`);
+	await gotoAdmin(page, `/de/admin/requests/${requestId}`);
 
 	await page.fill('textarea[name="reason"]', 'Kein laufender Beschaffungsvorgang.');
 	await page.getByTestId('decision-deny').click();
@@ -146,7 +146,7 @@ test('a decided request offers no second decision', async ({ page }) => {
 	const { requestId } = await pendingRequest();
 
 	await signInAsAdmin(page);
-	await page.goto(`/de/admin/requests/${requestId}`);
+	await gotoAdmin(page, `/de/admin/requests/${requestId}`);
 	await page.getByTestId('decision-approve').click();
 	await expect(page.getByTestId('request-detail-status')).toHaveText('Genehmigt');
 
@@ -169,7 +169,7 @@ test('the queue never lists an unverified request', async ({ page }) => {
 	});
 
 	await signInAsAdmin(page);
-	await page.goto('/de/admin/requests');
+	await gotoAdmin(page, '/de/admin/requests');
 
 	await expect(page.getByTestId(`request-status-${requestId}`)).toHaveCount(0);
 	expect(await page.content()).not.toContain(email);

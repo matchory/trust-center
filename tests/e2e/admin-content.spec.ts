@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
-import { signInAsAdmin } from '../helpers/admin';
+import { gotoAdmin, signInAsAdmin } from '../helpers/admin';
 
 /**
  * `use:enhance` submits over fetch, so a `page.goto` fired straight after a
@@ -20,7 +20,7 @@ const suffix = Date.now().toString(36);
 test('an admin can publish a control and see it on the portal', async ({ page }) => {
 	await signInAsAdmin(page);
 
-	await page.goto('/de/admin/controls/groups');
+	await gotoAdmin(page, '/de/admin/controls/groups');
 	await page.getByTestId('group-slug').fill(`grp-${suffix}`);
 	await page.getByTestId('group-name-de').fill('Zugriffskontrolle');
 	await submitAndWait(page, 'group-create', '?/create');
@@ -28,7 +28,7 @@ test('an admin can publish a control and see it on the portal', async ({ page })
 		page.getByTestId(`group-row-grp-${suffix}`).locator('input[name="name.de"]')
 	).toHaveValue('Zugriffskontrolle');
 
-	await page.goto('/de/admin/controls/new');
+	await gotoAdmin(page, '/de/admin/controls/new');
 	await page.getByTestId('control-slug').fill(`ctl-${suffix}`);
 	await page.getByTestId('control-group').selectOption({ label: 'Zugriffskontrolle' });
 	await page.getByTestId('control-create').click();
@@ -51,7 +51,7 @@ test('an admin can publish a certification and see its badge on the landing page
 }) => {
 	await signInAsAdmin(page);
 
-	await page.goto('/de/admin/certifications/new');
+	await gotoAdmin(page, '/de/admin/certifications/new');
 	await page.getByTestId('certification-slug').fill(`cert-${suffix}`);
 	await page.getByTestId('certification-framework').fill('ISO/IEC 27001:2022');
 	await page.getByTestId('certification-issuer').fill('TÜV Süd');
@@ -74,7 +74,7 @@ test('an admin can publish a certification and see its badge on the landing page
 test('an admin can publish a subprocessor and see it on the portal', async ({ page }) => {
 	await signInAsAdmin(page);
 
-	await page.goto('/de/admin/subprocessors/new');
+	await gotoAdmin(page, '/de/admin/subprocessors/new');
 	await page.getByTestId('subprocessor-slug').fill(`sub-${suffix}`);
 	await page.getByTestId('subprocessor-name').fill('Hetzner Online GmbH');
 	await page.getByTestId('subprocessor-legal-entity').fill('Hetzner Online GmbH');
@@ -101,7 +101,7 @@ test('an admin can publish a subprocessor and see it on the portal', async ({ pa
 test('an answer stays off the FAQ until it is made public', async ({ page }) => {
 	await signInAsAdmin(page);
 
-	await page.goto('/de/admin/faq/new');
+	await gotoAdmin(page, '/de/admin/faq/new');
 	await page.getByTestId('answer-slug').fill(`faq-${suffix}`);
 	await page.getByTestId('answer-category').fill('infrastructure');
 	await page.getByTestId('answer-create').click();
@@ -128,7 +128,7 @@ test('an answer stays off the FAQ until it is made public', async ({ page }) => 
 test('an update reaches the feed only once it carries a publication date', async ({ page }) => {
 	await signInAsAdmin(page);
 
-	await page.goto('/de/admin/updates/new');
+	await gotoAdmin(page, '/de/admin/updates/new');
 	await page.getByTestId('update-slug').fill(`upd-${suffix}`);
 	await page.getByTestId('update-kind').selectOption('advisory');
 	await page.getByTestId('update-create').click();
