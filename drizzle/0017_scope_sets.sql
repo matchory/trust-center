@@ -48,7 +48,7 @@ SELECT id, 'nda' FROM access_rule WHERE max_tier = 'nda';
 --> statement-breakpoint
 -- The term those grants were actually issued under. GREATEST(1, ...) because a
 -- grant issued and expiring inside one day would otherwise backfill to zero,
--- and term_days becomes a positive NOT NULL column in Task 9.
+-- and 0018 makes term_days a positive NOT NULL column.
 UPDATE access_grant
 SET term_days = GREATEST(1, CEIL(EXTRACT(EPOCH FROM (expires_at - granted_at)) / 86400)::int)
 WHERE term_days IS NULL;

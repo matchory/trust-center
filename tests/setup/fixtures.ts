@@ -7,6 +7,7 @@ import {
 	documentCategory,
 	requester
 } from '../../src/lib/server/db/schema';
+import { setRuleTiers } from '../../src/lib/server/access/scope';
 import type { Db } from '../../src/lib/server/db';
 
 export async function seedDocument(
@@ -87,9 +88,14 @@ export async function seedRequest(
 	return row!.id;
 }
 
+/**
+ * A rule and the tier set that scopes it. The two are one fact — a rule with no
+ * tiers auto-approves no blanket — so seeding them apart is how a fixture comes
+ * to describe a rule an operator could not have created.
+ */
 export async function seedRule(
 	db: Db,
-	input: { pattern: string; action?: string; priority?: number }
+	input: { pattern: string; action?: string; priority?: number; tiers?: readonly string[] }
 ): Promise<string> {
 	const [row] = await db
 		.insert(accessRule)
@@ -99,6 +105,8 @@ export async function seedRule(
 			priority: input.priority ?? 100
 		})
 		.returning({ id: accessRule.id });
+
+	if (input.tiers) await setRuleTiers(db, row!.id, input.tiers);
 
 	return row!.id;
 }

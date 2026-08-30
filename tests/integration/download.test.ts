@@ -101,7 +101,7 @@ describe('mayDownload', () => {
 		expect(await mayDownload(db, requesterId, documentId)).toBe(true);
 	});
 
-	it('admits a requester holding an all-request-tier grant that names nothing', async () => {
+	it('admits a requester holding a whole-tier grant that names no document', async () => {
 		// Including documents published after the grant was made.
 		await createGrant(db, {
 			requesterId,

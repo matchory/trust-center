@@ -1,4 +1,5 @@
-import { and, asc, desc, eq, inArray, ne } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, ne, sql } from 'drizzle-orm';
+import { groupByKey } from '../collections';
 import {
 	accessRequest,
 	accessRequestDocument,
@@ -10,8 +11,7 @@ import {
 import { issueMagicLink } from '../identity/magic-link';
 import { createGrant } from './grants';
 import { honouredTiers, PHASE_TIERS, requestTiers, setRequestTiers } from './scope';
-import type { ScopeTier } from './scope';
-import type { AccessRequestStatus } from '../../access-types';
+import type { AccessRequestStatus, ScopeTier } from '../../access-types';
 import type { Db } from '../db';
 
 /** A submission the server will not accept. Never surfaced to the submitter. */
@@ -302,11 +302,12 @@ export async function listRequestsForAdmin(db: Db): Promise<AdminRequestRow[]> {
 
 	const ids = rows.map((row) => row.id);
 
-	const [scopes, tierRows] = await Promise.all([
+	const [counts, tierRows] = await Promise.all([
 		db
-			.select({ requestId: accessRequestDocument.requestId })
+			.select({ requestId: accessRequestDocument.requestId, count: sql<number>`count(*)::int` })
 			.from(accessRequestDocument)
-			.where(inArray(accessRequestDocument.requestId, ids)),
+			.where(inArray(accessRequestDocument.requestId, ids))
+			.groupBy(accessRequestDocument.requestId),
 		db
 			.select({ requestId: accessRequestTier.requestId, tier: accessRequestTier.tier })
 			.from(accessRequestTier)
@@ -314,19 +315,14 @@ export async function listRequestsForAdmin(db: Db): Promise<AdminRequestRow[]> {
 			.orderBy(asc(accessRequestTier.tier))
 	]);
 
-	const counts = new Map<string, number>();
-	for (const scope of scopes) counts.set(scope.requestId, (counts.get(scope.requestId) ?? 0) + 1);
-
-	const tiers = new Map<string, ScopeTier[]>();
-	for (const row of tierRows) {
-		tiers.set(row.requestId, [...(tiers.get(row.requestId) ?? []), row.tier as ScopeTier]);
-	}
+	const countByRequest = new Map(counts.map((row) => [row.requestId, row.count]));
+	const tiers = groupByKey(tierRows, (row) => row.requestId);
 
 	return rows.map((row) => ({
 		...row,
 		status: row.status as AccessRequestStatus,
-		tiers: tiers.get(row.id) ?? [],
-		documentCount: counts.get(row.id) ?? 0
+		tiers: (tiers.get(row.id) ?? []).map((tier) => tier.tier as ScopeTier),
+		documentCount: countByRequest.get(row.id) ?? 0
 	}));
 }
 
@@ -335,9 +331,12 @@ export interface AdminRequestDetail extends AdminRequestRow {
 	reason: string | null;
 	requesterId: string;
 	requesterLocale: string;
-	/** What the prospect asked for. The approver may narrow or widen it. */
+	/**
+	 * What the prospect asked for. The approver may narrow or widen it, so the
+	 * decision form pre-checks from these and posts whatever staff chose.
+	 * `tiers`, inherited from the row type, is the tier half of the same answer.
+	 */
 	requestedDocumentIds: string[];
-	requestedTiers: ScopeTier[];
 }
 
 export async function getRequestForAdmin(db: Db, id: string): Promise<AdminRequestDetail | null> {
@@ -376,7 +375,6 @@ export async function getRequestForAdmin(db: Db, id: string): Promise<AdminReque
 		status: row.status as AccessRequestStatus,
 		tiers,
 		documentCount: scoped.length,
-		requestedDocumentIds: scoped.map((entry) => entry.documentId),
-		requestedTiers: tiers
+		requestedDocumentIds: scoped.map((entry) => entry.documentId)
 	};
 }

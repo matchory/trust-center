@@ -1,10 +1,10 @@
 import { asc, eq, inArray } from 'drizzle-orm';
 import { z } from 'zod';
-import { ACCESS_RULE_ACTIONS } from '../../access-types';
+import { ACCESS_RULE_ACTIONS, SCOPE_TIERS } from '../../access-types';
+import { groupByKey } from '../collections';
 import { accessRule, accessRuleTier } from '../db/schema';
-import { honouredTiers, ruleTiers, SCOPE_TIERS, setRuleTiers } from './scope';
-import type { ScopeTier } from './scope';
-import type { AccessRuleAction } from '../../access-types';
+import { honouredTiers, ruleTiers, setRuleTiers } from './scope';
+import type { AccessRuleAction, ScopeTier } from '../../access-types';
 import type { Db } from '../db';
 
 export interface RuleForMatching {
@@ -148,12 +148,14 @@ export async function listRules(db: Db): Promise<AdminRuleRow[]> {
 		)
 		.orderBy(asc(accessRuleTier.tier));
 
-	const tiers = new Map<string, ScopeTier[]>();
-	for (const row of tierRows) {
-		tiers.set(row.ruleId, [...(tiers.get(row.ruleId) ?? []), row.tier as ScopeTier]);
-	}
+	const tiers = groupByKey(tierRows, (row) => row.ruleId);
 
-	return rows.map((row) => toAdminRow(row, tiers.get(row.id) ?? []));
+	return rows.map((row) =>
+		toAdminRow(
+			row,
+			(tiers.get(row.id) ?? []).map((tier) => tier.tier as ScopeTier)
+		)
+	);
 }
 
 export async function getRule(db: Db, id: string): Promise<AdminRuleRow | null> {

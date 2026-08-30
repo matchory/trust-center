@@ -1,5 +1,5 @@
 import { error, fail } from '@sveltejs/kit';
-import { listGroups } from '$lib/server/access/groups';
+import { groupNames } from '$lib/server/access/groups';
 import { queryEvents } from '$lib/server/audit';
 import { getDb } from '$lib/server/db/instance';
 import { clientIp } from '$lib/server/http/client-ip';
@@ -12,18 +12,14 @@ export const load: PageServerLoad = async ({ params, locals }) => {
 	const person = await getRequesterForAdmin(db, params.id);
 	if (!person) error(404, 'Not found');
 
-	const groups = await listGroups(db);
-
-	return {
-		requester: person,
-		// Resolved here so the scope summary renders a name rather than a uuid.
-		groupNames: Object.fromEntries(
-			groups.map((group) => [group.id, group.names[locals.locale] ?? group.slug])
-		),
+	const [names, events] = await Promise.all([
+		groupNames(db, locals.locale),
 		// Pseudonymized events no longer carry an actor id, so a purged
 		// requester's history correctly comes back empty here.
-		events: await queryEvents(db, { actorId: params.id, limit: 50 })
-	};
+		queryEvents(db, { actorId: params.id, limit: 50 })
+	]);
+
+	return { requester: person, groupNames: names, events };
 };
 
 export const actions: Actions = {

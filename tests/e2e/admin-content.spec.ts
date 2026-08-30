@@ -1,19 +1,5 @@
-import { expect, test, type Page } from '@playwright/test';
-import { gotoAdmin, signInAsAdmin } from '../helpers/admin';
-
-/**
- * `use:enhance` submits over fetch, so a `page.goto` fired straight after a
- * click can outrun the action. Wait for the POST to come back before asserting
- * on anything the action wrote.
- */
-async function submitAndWait(page: Page, testId: string, action: string) {
-	await Promise.all([
-		page.waitForResponse(
-			(response) => response.request().method() === 'POST' && response.url().includes(action)
-		),
-		page.getByTestId(testId).click()
-	]);
-}
+import { expect, test } from '@playwright/test';
+import { gotoAdmin, signInAsAdmin, submitAndWait } from '../helpers/admin';
 
 const suffix = Date.now().toString(36);
 

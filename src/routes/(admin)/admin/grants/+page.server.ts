@@ -1,7 +1,7 @@
 import { fail } from '@sveltejs/kit';
 import { z } from 'zod';
 import { listGrantsForAdmin, revokeGrant } from '$lib/server/access/grants';
-import { listGroups } from '$lib/server/access/groups';
+import { groupNames } from '$lib/server/access/groups';
 import { recordEvent } from '$lib/server/audit';
 import { getDb } from '$lib/server/db/instance';
 import { clientIp } from '$lib/server/http/client-ip';
@@ -9,16 +9,14 @@ import type { Actions, PageServerLoad } from './$types';
 
 export const load: PageServerLoad = async ({ locals }) => {
 	const db = getDb();
-	const groups = await listGroups(db);
+	// Independent reads, so they go together: the group names are for the scope
+	// summary and have nothing to say about which grants exist.
+	const [grants, names] = await Promise.all([
+		listGrantsForAdmin(db),
+		groupNames(db, locals.locale)
+	]);
 
-	return {
-		grants: await listGrantsForAdmin(db),
-		// Resolved here so the scope summary renders a name rather than a uuid,
-		// and so the page does not query per row.
-		groupNames: Object.fromEntries(
-			groups.map((group) => [group.id, group.names[locals.locale] ?? group.slug])
-		)
-	};
+	return { grants, groupNames: names };
 };
 
 const grantId = z.string().uuid();

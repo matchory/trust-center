@@ -1,14 +1,9 @@
 import { asc, eq } from 'drizzle-orm';
+import type { PgColumn, PgTable } from 'drizzle-orm/pg-core';
 import { SCOPE_TIERS } from '../../access-types';
 import { accessGrantGroup, accessGrantTier, accessRequestTier, accessRuleTier } from '../db/schema';
 import type { ScopeTier } from '../../access-types';
 import type { Db } from '../db';
-
-// Re-exported so every consumer below the route layer keeps importing scope
-// vocabulary from one place; the constant itself lives in `access-types`
-// because the rule and decision forms need it client-side.
-export { SCOPE_TIERS };
-export type { ScopeTier };
 
 /**
  * What this phase actually honours. `nda` is storable — the backfill preserves
@@ -18,16 +13,70 @@ export type { ScopeTier };
  */
 export const PHASE_TIERS: readonly ScopeTier[] = ['request'];
 
+/** `PHASE_TIERS ⊆ SCOPE_TIERS`, so filtering the phase set is the whole test. */
 export function honouredTiers(tiers: readonly string[]): ScopeTier[] {
-	return SCOPE_TIERS.filter((tier) => tiers.includes(tier) && PHASE_TIERS.includes(tier));
+	return PHASE_TIERS.filter((tier) => tiers.includes(tier));
 }
 
 /** Raised when a group cannot be deleted because a grant still names it. */
 export class ScopeGroupInUse extends Error {}
 
-function assertTiers(tiers: readonly string[]): ScopeTier[] {
-	return tiers.filter((tier): tier is ScopeTier =>
-		(SCOPE_TIERS as readonly string[]).includes(tier)
+/**
+ * The four sets are read the same way, so the read is written once. The
+ * *writes* are not, and deliberately: Drizzle's `.values()` is keyed by the
+ * TypeScript property name (`grantId`), while a `PgColumn` carries the database
+ * name (`grant_id`). A generic writer has to build that payload from a column
+ * object, which typechecks and then inserts `default` — this exact bug, caught
+ * by the round-trip tests rather than the compiler. It is the same hazard
+ * `content/translations.ts` names when it refuses to go generic over tables.
+ */
+async function readSet(
+	db: Db,
+	table: PgTable,
+	owner: PgColumn,
+	ownerId: string,
+	value: PgColumn
+): Promise<string[]> {
+	const rows = await db.select({ value }).from(table).where(eq(owner, ownerId)).orderBy(asc(value));
+
+	return rows.map((row) => String(row.value));
+}
+
+/**
+ * The database CHECK admits only `SCOPE_TIERS`, so this narrows the type rather
+ * than filtering: a value it dropped could not have been stored.
+ */
+function asTiers(values: readonly string[]): ScopeTier[] {
+	return values.filter((value): value is ScopeTier =>
+		(SCOPE_TIERS as readonly string[]).includes(value)
+	);
+}
+
+export async function requestTiers(db: Db, requestId: string): Promise<ScopeTier[]> {
+	return asTiers(
+		await readSet(
+			db,
+			accessRequestTier,
+			accessRequestTier.requestId,
+			requestId,
+			accessRequestTier.tier
+		)
+	);
+}
+
+export async function grantTiers(db: Db, grantId: string): Promise<ScopeTier[]> {
+	return asTiers(
+		await readSet(db, accessGrantTier, accessGrantTier.grantId, grantId, accessGrantTier.tier)
+	);
+}
+
+export function grantGroups(db: Db, grantId: string): Promise<string[]> {
+	return readSet(db, accessGrantGroup, accessGrantGroup.grantId, grantId, accessGrantGroup.groupId);
+}
+
+export async function ruleTiers(db: Db, ruleId: string): Promise<ScopeTier[]> {
+	return asTiers(
+		await readSet(db, accessRuleTier, accessRuleTier.ruleId, ruleId, accessRuleTier.tier)
 	);
 }
 
@@ -39,7 +88,9 @@ function assertTiers(tiers: readonly string[]): ScopeTier[] {
  * The setters deliberately do NOT filter through `honouredTiers`. What an
  * operator chose is what gets stored; what this phase grants is decided at read
  * time. Storing the filtered set would lose the operator's intent permanently
- * and silently rewrite it when 3b widened the filter.
+ * and silently rewrite it when 3b widened the filter. Every current caller
+ * happens to filter first — that is the caller's choice about its own form, not
+ * a property of these functions.
  */
 export async function setRequestTiers(
 	db: Db,
@@ -52,16 +103,6 @@ export async function setRequestTiers(
 		if (values.length === 0) return;
 		await tx.insert(accessRequestTier).values(values.map((tier) => ({ requestId, tier })));
 	});
-}
-
-export async function requestTiers(db: Db, requestId: string): Promise<ScopeTier[]> {
-	const rows = await db
-		.select({ tier: accessRequestTier.tier })
-		.from(accessRequestTier)
-		.where(eq(accessRequestTier.requestId, requestId))
-		.orderBy(asc(accessRequestTier.tier));
-
-	return assertTiers(rows.map((row) => row.tier));
 }
 
 export async function setGrantTiers(
@@ -77,16 +118,6 @@ export async function setGrantTiers(
 	});
 }
 
-export async function grantTiers(db: Db, grantId: string): Promise<ScopeTier[]> {
-	const rows = await db
-		.select({ tier: accessGrantTier.tier })
-		.from(accessGrantTier)
-		.where(eq(accessGrantTier.grantId, grantId))
-		.orderBy(asc(accessGrantTier.tier));
-
-	return assertTiers(rows.map((row) => row.tier));
-}
-
 export async function setGrantGroups(
 	db: Db,
 	grantId: string,
@@ -100,15 +131,6 @@ export async function setGrantGroups(
 	});
 }
 
-export async function grantGroups(db: Db, grantId: string): Promise<string[]> {
-	const rows = await db
-		.select({ groupId: accessGrantGroup.groupId })
-		.from(accessGrantGroup)
-		.where(eq(accessGrantGroup.grantId, grantId));
-
-	return rows.map((row) => row.groupId);
-}
-
 export async function setRuleTiers(
 	db: Db,
 	ruleId: string,
@@ -120,14 +142,4 @@ export async function setRuleTiers(
 		if (values.length === 0) return;
 		await tx.insert(accessRuleTier).values(values.map((tier) => ({ ruleId, tier })));
 	});
-}
-
-export async function ruleTiers(db: Db, ruleId: string): Promise<ScopeTier[]> {
-	const rows = await db
-		.select({ tier: accessRuleTier.tier })
-		.from(accessRuleTier)
-		.where(eq(accessRuleTier.ruleId, ruleId))
-		.orderBy(asc(accessRuleTier.tier));
-
-	return assertTiers(rows.map((row) => row.tier));
 }

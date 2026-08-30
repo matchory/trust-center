@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { gotoAdmin, signInAsAdmin } from '../helpers/admin';
+import { gotoAdmin, signInAsAdmin, submitAndWait } from '../helpers/admin';
 
 test.describe('admin access groups', () => {
 	test('creates, translates, and deletes a group', async ({ page }) => {
@@ -21,13 +21,7 @@ test.describe('admin access groups', () => {
 		await row.getByRole('link').click();
 		await page.getByTestId('group-name-en').fill('Customer pack');
 		await page.getByTestId('group-description-en').fill('Everything a customer may request');
-		await Promise.all([
-			page.waitForResponse(
-				(response) =>
-					response.request().method() === 'POST' && response.url().includes('saveTranslations')
-			),
-			page.getByTestId('group-save').click()
-		]);
+		await submitAndWait(page, 'group-save', 'saveTranslations');
 		await expect(page.getByTestId('group-name-en')).toHaveValue('Customer pack');
 
 		await gotoAdmin(page, '/en/admin/groups');
@@ -65,12 +59,7 @@ test.describe('admin access groups', () => {
 		await gotoAdmin(page, '/admin/documents/categories');
 		await page.getByTestId('category-slug').fill(`cat-${suffix}`);
 		await page.getByTestId('category-name-de').fill('Zertifikate');
-		await Promise.all([
-			page.waitForResponse(
-				(response) => response.request().method() === 'POST' && response.url().includes('?/create')
-			),
-			page.getByTestId('category-create').click()
-		]);
+		await submitAndWait(page, 'category-create', '?/create');
 
 		await gotoAdmin(page, '/admin/documents/new');
 		await page.getByTestId('document-slug').fill(`doc-${suffix}`);
@@ -79,12 +68,7 @@ test.describe('admin access groups', () => {
 		await expect(page).toHaveURL(/\/admin\/documents\/[0-9a-f-]{36}$/);
 
 		await page.getByTestId('document-group-pentest-pack').check();
-		await Promise.all([
-			page.waitForResponse(
-				(response) => response.request().method() === 'POST' && response.url().includes('saveMeta')
-			),
-			page.getByTestId('document-save').click()
-		]);
+		await submitAndWait(page, 'document-save', 'saveMeta');
 
 		await gotoAdmin(page, '/admin/groups');
 		await expect(page.getByTestId('group-row-pentest-pack')).toContainText('1');

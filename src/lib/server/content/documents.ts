@@ -1,6 +1,7 @@
 import { and, asc, eq, inArray, sql } from 'drizzle-orm';
 import type { DocumentStatus, DocumentTier } from '../../content-types';
 import { pickTranslation } from '../../i18n/locale';
+import { groupByKey } from '../collections';
 import type { Db } from '../db';
 import {
 	document,
@@ -45,16 +46,6 @@ export interface PublicDocumentCategory {
 	nameLocale: string;
 	isNameFallback: boolean;
 	documents: PublicDocument[];
-}
-
-function groupByKey<T, K extends string>(rows: readonly T[], key: (row: T) => K): Map<K, T[]> {
-	const map = new Map<K, T[]>();
-	for (const row of rows) {
-		const bucket = map.get(key(row));
-		if (bucket) bucket.push(row);
-		else map.set(key(row), [row]);
-	}
-	return map;
 }
 
 /**

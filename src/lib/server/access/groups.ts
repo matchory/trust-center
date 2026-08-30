@@ -1,5 +1,6 @@
 import { asc, eq, inArray, sql } from 'drizzle-orm';
 import { z } from 'zod';
+import { groupByKey } from '../collections';
 import { accessGroup, accessGroupTranslation, documentGroup } from '../db/schema';
 import { ScopeGroupInUse } from './scope';
 import type { Db } from '../db';
@@ -58,16 +59,27 @@ export async function listGroups(db: Db): Promise<AdminGroupRow[]> {
 	]);
 
 	const countByGroup = new Map(counts.map((row) => [row.groupId, row.count]));
+	const namesByGroup = groupByKey(names, (name) => name.groupId);
 
 	return rows.map((row) => ({
 		id: row.id,
 		slug: row.slug,
 		position: row.position,
 		names: Object.fromEntries(
-			names.filter((name) => name.groupId === row.id).map((name) => [name.locale, name.name])
+			(namesByGroup.get(row.id) ?? []).map((name) => [name.locale, name.name])
 		),
 		documentCount: countByGroup.get(row.id) ?? 0
 	}));
+}
+
+/**
+ * Group id → the name to show in `locale`, falling back to the slug. Every page
+ * that renders a grant's scope needs exactly this, and resolving it in each
+ * `load` is how two surfaces come to disagree about what a group is called.
+ */
+export async function groupNames(db: Db, locale: string): Promise<Record<string, string>> {
+	const groups = await listGroups(db);
+	return Object.fromEntries(groups.map((group) => [group.id, group.names[locale] ?? group.slug]));
 }
 
 export async function getGroup(db: Db, id: string): Promise<AdminGroupDetail | null> {
@@ -134,6 +146,16 @@ export async function setGroupTranslation(
 			target: [accessGroupTranslation.groupId, accessGroupTranslation.locale],
 			set: values
 		});
+}
+
+/** The groups a document belongs to, beside the setter that writes them. */
+export async function documentGroupIds(db: Db, documentId: string): Promise<string[]> {
+	const rows = await db
+		.select({ groupId: documentGroup.groupId })
+		.from(documentGroup)
+		.where(eq(documentGroup.documentId, documentId));
+
+	return rows.map((row) => row.groupId);
 }
 
 /**

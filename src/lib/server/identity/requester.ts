@@ -1,5 +1,6 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { and, asc, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
+import { groupByKey } from '../collections';
 import {
 	accessGrant,
 	accessGrantDocument,
@@ -234,88 +235,57 @@ export async function getRequesterForAdmin(
 			.orderBy(desc(accessGrant.grantedAt))
 	]);
 
-	// Every scope set for this page in three queries rather than three per row.
-	// A requester with a long history is exactly who this page is opened for.
+	// Every scope set for this page in five queries rather than five per row. A
+	// requester with a long history is exactly who this page is opened for.
+	// No empty-id guards: `inArray(col, [])` renders as `false`, so a requester
+	// with no grants asks five questions that correctly return nothing.
 	const requestIds = requestRows.map((request) => request.id);
 	const grantIds = grantRows.map((grant) => grant.id);
 
 	const [requestTierRows, requestDocumentRows, grantTierRows, grantGroupRows, grantDocumentRows] =
 		await Promise.all([
-			requestIds.length > 0
-				? db
-						.select({ requestId: accessRequestTier.requestId, tier: accessRequestTier.tier })
-						.from(accessRequestTier)
-						.where(inArray(accessRequestTier.requestId, requestIds))
-						.orderBy(asc(accessRequestTier.tier))
-				: [],
-			requestIds.length > 0
-				? db
-						.select({ requestId: accessRequestDocument.requestId })
-						.from(accessRequestDocument)
-						.where(inArray(accessRequestDocument.requestId, requestIds))
-				: [],
-			grantIds.length > 0
-				? db
-						.select({ grantId: accessGrantTier.grantId, tier: accessGrantTier.tier })
-						.from(accessGrantTier)
-						.where(inArray(accessGrantTier.grantId, grantIds))
-						.orderBy(asc(accessGrantTier.tier))
-				: [],
-			grantIds.length > 0
-				? db
-						.select({ grantId: accessGrantGroup.grantId, groupId: accessGrantGroup.groupId })
-						.from(accessGrantGroup)
-						.where(inArray(accessGrantGroup.grantId, grantIds))
-				: [],
-			grantIds.length > 0
-				? db
-						.select({ grantId: accessGrantDocument.grantId })
-						.from(accessGrantDocument)
-						.where(inArray(accessGrantDocument.grantId, grantIds))
-				: []
+			db
+				.select({ requestId: accessRequestTier.requestId, tier: accessRequestTier.tier })
+				.from(accessRequestTier)
+				.where(inArray(accessRequestTier.requestId, requestIds))
+				.orderBy(asc(accessRequestTier.tier)),
+			db
+				.select({ requestId: accessRequestDocument.requestId, count: sql<number>`count(*)::int` })
+				.from(accessRequestDocument)
+				.where(inArray(accessRequestDocument.requestId, requestIds))
+				.groupBy(accessRequestDocument.requestId),
+			db
+				.select({ grantId: accessGrantTier.grantId, tier: accessGrantTier.tier })
+				.from(accessGrantTier)
+				.where(inArray(accessGrantTier.grantId, grantIds))
+				.orderBy(asc(accessGrantTier.tier)),
+			db
+				.select({ grantId: accessGrantGroup.grantId, groupId: accessGrantGroup.groupId })
+				.from(accessGrantGroup)
+				.where(inArray(accessGrantGroup.grantId, grantIds)),
+			db
+				.select({ grantId: accessGrantDocument.grantId, count: sql<number>`count(*)::int` })
+				.from(accessGrantDocument)
+				.where(inArray(accessGrantDocument.grantId, grantIds))
+				.groupBy(accessGrantDocument.grantId)
 		]);
 
-	const requestTiers = new Map<string, ScopeTier[]>();
-	for (const entry of requestTierRows) {
-		requestTiers.set(entry.requestId, [
-			...(requestTiers.get(entry.requestId) ?? []),
-			entry.tier as ScopeTier
-		]);
-	}
-
-	const grantTiers = new Map<string, ScopeTier[]>();
-	for (const entry of grantTierRows) {
-		grantTiers.set(entry.grantId, [
-			...(grantTiers.get(entry.grantId) ?? []),
-			entry.tier as ScopeTier
-		]);
-	}
-
-	const grantGroups = new Map<string, string[]>();
-	for (const entry of grantGroupRows) {
-		grantGroups.set(entry.grantId, [...(grantGroups.get(entry.grantId) ?? []), entry.groupId]);
-	}
-
-	const grantDocuments = new Map<string, number>();
-	for (const entry of grantDocumentRows) {
-		grantDocuments.set(entry.grantId, (grantDocuments.get(entry.grantId) ?? 0) + 1);
-	}
-
-	const requestDocuments = new Map<string, number>();
-	for (const entry of requestDocumentRows) {
-		requestDocuments.set(entry.requestId, (requestDocuments.get(entry.requestId) ?? 0) + 1);
-	}
+	const requestTiers = groupByKey(requestTierRows, (row) => row.requestId);
+	const grantTiers = groupByKey(grantTierRows, (row) => row.grantId);
+	const grantGroups = groupByKey(grantGroupRows, (row) => row.grantId);
+	const requestDocuments = new Map(requestDocumentRows.map((row) => [row.requestId, row.count]));
+	const grantDocuments = new Map(grantDocumentRows.map((row) => [row.grantId, row.count]));
 
 	const requests = requestRows.map((request) => ({
 		...request,
-		tiers: requestTiers.get(request.id) ?? [],
+		tiers: (requestTiers.get(request.id) ?? []).map((row) => row.tier as ScopeTier),
 		documentCount: requestDocuments.get(request.id) ?? 0
 	}));
 
 	const grants = grantRows.map((grant) => ({
 		...grant,
-		tiers: grantTiers.get(grant.id) ?? [],
-		groupIds: grantGroups.get(grant.id) ?? [],
+		tiers: (grantTiers.get(grant.id) ?? []).map((row) => row.tier as ScopeTier),
+		groupIds: (grantGroups.get(grant.id) ?? []).map((row) => row.groupId),
 		documentCount: grantDocuments.get(grant.id) ?? 0
 	}));
 

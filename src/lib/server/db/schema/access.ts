@@ -166,8 +166,9 @@ export const accessGrantDocument = pgTable(
  *
  * `public` is not admitted: a public document needs no grant, so a public
  * entry would be a scope row that grants nothing. `nda` is admitted because
- * `access_rule.max_tier` already stores it and the backfill must preserve what
- * an operator wrote; the application refuses to honour it until Phase 3b.
+ * `0017`'s backfill moved the old `access_rule.max_tier` ceiling into these
+ * tables and had to preserve what an operator wrote; the application refuses
+ * to honour it until Phase 3b.
  */
 const scopeTierCheck = sql`tier IN ('request', 'nda')`;
 

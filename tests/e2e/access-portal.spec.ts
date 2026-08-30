@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { expect, test, type Page } from '@playwright/test';
 import { eq } from 'drizzle-orm';
 import { submitRequest } from '../../src/lib/server/access/requests';
-import { setRuleTiers } from '../../src/lib/server/access/scope';
+import { seedRule } from '../setup/fixtures';
 import {
 	addDocumentFile,
 	createCategory,
@@ -67,13 +67,7 @@ test.beforeAll(async () => {
 		uploadedByStaffId: null
 	});
 
-	const [rule] = await db
-		.insert(accessRule)
-		.values({ pattern: AUTO_DOMAIN, action: 'auto_approve', priority: 5 })
-		.returning({ id: accessRule.id });
-	ruleId = rule!.id;
-	// A rule is scoped by its tier set.
-	await setRuleTiers(db, ruleId, ['request']);
+	ruleId = await seedRule(db, { pattern: AUTO_DOMAIN, priority: 5, tiers: ['request'] });
 });
 
 test.afterAll(async () => {

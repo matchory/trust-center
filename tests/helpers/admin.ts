@@ -59,3 +59,21 @@ export async function gotoAdmin(page: Page, path: string) {
 	await awaitHydration(page);
 	return response;
 }
+
+/**
+ * `use:enhance` submits over fetch, so a `page.goto` fired straight after a
+ * click can outrun the action. Wait for the POST to come back before asserting
+ * on anything the action wrote.
+ *
+ * Here rather than in a spec for the same reason as `signInAs`: Playwright
+ * refuses to let one test file import another, so each spec that needed this
+ * was inlining its own copy.
+ */
+export async function submitAndWait(page: Page, testId: string, action: string) {
+	await Promise.all([
+		page.waitForResponse(
+			(response) => response.request().method() === 'POST' && response.url().includes(action)
+		),
+		page.getByTestId(testId).click()
+	]);
+}

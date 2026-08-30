@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { and, desc, eq } from 'drizzle-orm';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { submitRequest } from '../../src/lib/server/access/requests';
-import { setRuleTiers } from '../../src/lib/server/access/scope';
+import { seedRule } from '../setup/fixtures';
 import { issueMagicLink } from '../../src/lib/server/identity/magic-link';
 import { consumeSignInLink, verifyRequest } from '../../src/lib/server/access/verify';
 import { createDb, type Db } from '../../src/lib/server/db';
@@ -106,17 +106,7 @@ describe('verifyRequest', () => {
 
 	it('auto-approves a matching domain and creates a grant', async () => {
 		const domain = `auto${Date.now()}.example`;
-		const [rule] = await db
-			.insert(accessRule)
-			.values({
-				pattern: domain,
-				action: 'auto_approve',
-				priority: 10
-			})
-			.returning({ id: accessRule.id });
-
-		// A rule is scoped by its tier set.
-		await setRuleTiers(db, rule!.id, ['request']);
+		const ruleId = await seedRule(db, { pattern: domain, priority: 10, tiers: ['request'] });
 
 		const { requestId, magicLinkToken } = await submitFrom(domain);
 		const outcome = await verify(magicLinkToken);
@@ -137,7 +127,7 @@ describe('verifyRequest', () => {
 			.orderBy(desc(auditEvent.seq))
 			.limit(1);
 
-		expect(event?.meta).toMatchObject({ ruleId: rule!.id, grantId: grants[0]!.id });
+		expect(event?.meta).toMatchObject({ ruleId, grantId: grants[0]!.id });
 	});
 
 	it('denies a matching deny rule and creates no grant', async () => {

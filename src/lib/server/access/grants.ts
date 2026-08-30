@@ -10,8 +10,9 @@ import {
 	requester,
 	setting
 } from '../db/schema';
+import { groupByKey } from '../collections';
 import { PHASE_TIERS, setGrantGroups, setGrantTiers } from './scope';
-import type { ScopeTier } from './scope';
+import type { ScopeTier } from '../../access-types';
 import type { Db } from '../db';
 
 /**
@@ -90,62 +91,74 @@ function grantCoversDocument() {
 }
 
 /**
+ * Whether a grant confers a document *right now*: it covers it, the grant is
+ * live, and the document is one this phase will hand over. Every caller adds
+ * only which grants it is asking about.
+ *
+ * This is the whole definition, named once. Splitting it — coverage here,
+ * liveness pasted into each caller — is what let `countGrantDocuments` ship
+ * without the expiry and revocation predicates: it was safe only because its
+ * single caller pre-filtered.
+ *
+ * The tier and status filters are applied here rather than at grant time on
+ * purpose. A document unpublished, or moved out of a granted tier, must stop
+ * being downloadable immediately, without anybody revisiting existing grants.
+ */
+function grantConfersDocument() {
+	return and(
+		isNull(accessGrant.revokedAt),
+		gt(accessGrant.expiresAt, sql`now()`),
+		eq(document.status, 'published'),
+		inArray(document.tier, [...PHASE_TIERS]),
+		grantCoversDocument()
+	)!;
+}
+
+/**
  * How many documents one grant covers right now. Used by the expiry reminder,
  * which speaks about a single grant's scope — a requester holding two grants
- * must not be told the wrong number about the one that is ending.
+ * must not be told the wrong number about the one that is ending — and by the
+ * approval mail, which tells a requester what they just received.
  */
 export async function countGrantDocuments(db: Db, grantId: string): Promise<number> {
 	const [row] = await db
 		.select({ count: sql<number>`count(*)::int` })
 		.from(accessGrant)
-		.innerJoin(document, grantCoversDocument())
-		.where(
-			and(
-				eq(accessGrant.id, grantId),
-				// Neither predicate was here. The single caller pre-filtered, so it
-				// was safe by accident rather than by construction — and a second
-				// caller is exactly what this phase adds.
-				isNull(accessGrant.revokedAt),
-				gt(accessGrant.expiresAt, sql`now()`),
-				eq(document.status, 'published'),
-				inArray(document.tier, [...PHASE_TIERS])
-			)
-		);
+		.innerJoin(document, grantConfersDocument())
+		.where(eq(accessGrant.id, grantId));
 
 	return row?.count ?? 0;
 }
 
 /**
  * Every document a requester may currently download. One query, because scope
- * is a join rather than an opaque column: explicit grant rows union the
- * all-request-tier grants, and both are filtered to live grants and published
- * request-tier documents.
+ * is a join rather than an opaque column: three sources — explicit documents,
+ * whole tiers, whole groups — unioned, and filtered to live grants and
+ * documents this phase honours.
  *
- * The tier filter is applied here rather than at grant time on purpose. A
- * document moved out of a granted tier must stop being downloadable
- * immediately, without anybody remembering to revisit existing grants.
+ * `documentId` narrows the same question to one document, so `mayDownload` asks
+ * Postgres about the row it cares about instead of fetching the whole catalogue
+ * and filtering in JS.
  */
 export async function grantedDocuments(
 	db: Db,
-	requesterId: string
+	requesterId: string,
+	documentId?: string
 ): Promise<{ documentId: string; expiresAt: Date }[]> {
 	const rows = await db
 		.select({ documentId: document.id, expiresAt: accessGrant.expiresAt })
 		.from(accessGrant)
-		.innerJoin(document, grantCoversDocument())
+		.innerJoin(document, grantConfersDocument())
 		.where(
 			and(
 				eq(accessGrant.requesterId, requesterId),
-				isNull(accessGrant.revokedAt),
-				gt(accessGrant.expiresAt, sql`now()`),
-				eq(document.status, 'published'),
-				inArray(document.tier, [...PHASE_TIERS])
+				documentId ? eq(document.id, documentId) : undefined
 			)
 		);
 
-	// Two live grants can cover the same document — an explicit one and an
-	// all-tier one. The portal shows a document once, with the date access
-	// actually ends, so the latest expiry wins.
+	// Two live grants can cover the same document, and one grant can cover it
+	// from more than one source. The portal shows a document once, with the date
+	// access actually ends, so the latest expiry wins.
 	const latest = new Map<string, Date>();
 	for (const row of rows) {
 		const seen = latest.get(row.documentId);
@@ -161,8 +174,7 @@ export async function mayDownload(
 	requesterId: string,
 	documentId: string
 ): Promise<boolean> {
-	const granted = await grantedDocuments(db, requesterId);
-	return granted.some((row) => row.documentId === documentId);
+	return (await grantedDocuments(db, requesterId, documentId)).length > 0;
 }
 
 export async function revokeGrant(db: Db, grantId: string, staffUserId: string): Promise<void> {
@@ -229,11 +241,14 @@ export async function listGrantsForAdmin(db: Db, now = new Date()): Promise<Admi
 	// per grant for the same answer.
 	const ids = rows.map((row) => row.id);
 
-	const [scopes, tierRows, groupRows] = await Promise.all([
+	const [counts, tierRows, groupRows] = await Promise.all([
+		// Counted in Postgres rather than by shipping one row per membership and
+		// counting them here: this page lists every grant there has ever been.
 		db
-			.select({ grantId: accessGrantDocument.grantId })
+			.select({ grantId: accessGrantDocument.grantId, count: sql<number>`count(*)::int` })
 			.from(accessGrantDocument)
-			.where(inArray(accessGrantDocument.grantId, ids)),
+			.where(inArray(accessGrantDocument.grantId, ids))
+			.groupBy(accessGrantDocument.grantId),
 		db
 			.select({ grantId: accessGrantTier.grantId, tier: accessGrantTier.tier })
 			.from(accessGrantTier)
@@ -245,25 +260,15 @@ export async function listGrantsForAdmin(db: Db, now = new Date()): Promise<Admi
 			.where(inArray(accessGrantGroup.grantId, ids))
 	]);
 
-	const counts = new Map<string, number>();
-	for (const scope of scopes) counts.set(scope.grantId, (counts.get(scope.grantId) ?? 0) + 1);
-
-	const tiers = new Map<string, ScopeTier[]>();
-	for (const row of tierRows) {
-		const tier = row.tier as ScopeTier;
-		tiers.set(row.grantId, [...(tiers.get(row.grantId) ?? []), tier]);
-	}
-
-	const groups = new Map<string, string[]>();
-	for (const row of groupRows) {
-		groups.set(row.grantId, [...(groups.get(row.grantId) ?? []), row.groupId]);
-	}
+	const countByGrant = new Map(counts.map((row) => [row.grantId, row.count]));
+	const tiers = groupByKey(tierRows, (row) => row.grantId);
+	const groups = groupByKey(groupRows, (row) => row.grantId);
 
 	return rows.map((row) => ({
 		...row,
-		tiers: tiers.get(row.id) ?? [],
-		groupIds: groups.get(row.id) ?? [],
-		documentCount: counts.get(row.id) ?? 0,
+		tiers: (tiers.get(row.id) ?? []).map((tier) => tier.tier as ScopeTier),
+		groupIds: (groups.get(row.id) ?? []).map((group) => group.groupId),
+		documentCount: countByGrant.get(row.id) ?? 0,
 		state: grantState(row, now)
 	}));
 }

@@ -20,18 +20,21 @@ import type { Actions, PageServerLoad } from './$types';
 
 export const load: PageServerLoad = async ({ params, locals }) => {
 	const db = getDb();
-	const request = await getRequestForAdmin(db, params.id);
-	if (!request) error(404, 'Not found');
 
-	return {
-		request,
+	// Four independent reads. Awaited in sequence they were four round trips
+	// deep before this page rendered, and nothing here needs anything else here.
+	const [request, documents, groups, defaultTermDays] = await Promise.all([
+		getRequestForAdmin(db, params.id),
 		// The full list, not just what was asked for: §9.4 lets an approver
 		// narrow *or* widen.
-		documents: await requestableDocuments(db, locals.locale),
-		groups: await listGroups(db),
-		tiers: [...PHASE_TIERS],
-		defaultTermDays: await defaultGrantDays(db, getConfig().accessGrantDefaultDays)
-	};
+		requestableDocuments(db, locals.locale),
+		listGroups(db),
+		defaultGrantDays(db, getConfig().accessGrantDefaultDays)
+	]);
+
+	if (!request) error(404, 'Not found');
+
+	return { request, documents, groups, tiers: [...PHASE_TIERS], defaultTermDays };
 };
 
 type DecisionFailure = { failed: true };

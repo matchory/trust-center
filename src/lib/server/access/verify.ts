@@ -1,5 +1,6 @@
 import { eq } from 'drizzle-orm';
 import { recordEvent } from '../audit';
+import { groupByKey } from '../collections';
 import { accessRequest, accessRequestDocument, accessRule, accessRuleTier } from '../db/schema';
 import { consumeMagicLink } from '../identity/magic-link';
 import { domainOf, upsertRequester } from '../identity/requester';
@@ -7,8 +8,7 @@ import { enqueueEmail } from '../mail/queue';
 import { createGrant } from './grants';
 import { decideFromRules } from './rules';
 import { honouredTiers, requestTiers } from './scope';
-import type { ScopeTier } from './scope';
-import type { AccessRequestStatus, AccessRuleAction } from '../../access-types';
+import type { AccessRequestStatus, AccessRuleAction, ScopeTier } from '../../access-types';
 import type { Db } from '../db';
 
 export type VerificationOutcome =
@@ -88,16 +88,13 @@ export async function verifyRequest(
 			.select({ ruleId: accessRuleTier.ruleId, tier: accessRuleTier.tier })
 			.from(accessRuleTier);
 
-		const tiersByRule = new Map<string, ScopeTier[]>();
-		for (const row of tierRows) {
-			tiersByRule.set(row.ruleId, [...(tiersByRule.get(row.ruleId) ?? []), row.tier as ScopeTier]);
-		}
+		const tiersByRule = groupByKey(tierRows, (row) => row.ruleId);
 
 		const decision = decideFromRules(
 			rules.map((rule) => ({
 				...rule,
 				action: rule.action as AccessRuleAction,
-				tiers: tiersByRule.get(rule.id) ?? []
+				tiers: (tiersByRule.get(rule.id) ?? []).map((row) => row.tier as ScopeTier)
 			})),
 			domainOf(requester.email)
 		);

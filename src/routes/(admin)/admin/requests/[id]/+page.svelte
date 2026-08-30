@@ -45,7 +45,7 @@
 
 	<dt class="text-neutral-500">{m.admin_scope()}</dt>
 	<dd>
-		<ScopeSummary tiers={data.request.requestedTiers} documentCount={data.request.documentCount} />
+		<ScopeSummary tiers={data.request.tiers} documentCount={data.request.documentCount} />
 	</dd>
 
 	{#if data.request.justification}
@@ -82,7 +82,7 @@
 						name="tiers"
 						value={tier}
 						data-testid="decision-tier-{tier}"
-						checked={data.request.requestedTiers.includes(tier)}
+						checked={data.request.tiers.includes(tier)}
 					/>
 					<span>{TIER_LABEL[tier]?.() ?? tier}</span>
 				</label>

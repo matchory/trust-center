@@ -1,9 +1,8 @@
 import { error, fail, redirect } from '@sveltejs/kit';
-import { eq } from 'drizzle-orm';
 import { z } from 'zod';
 import { DOCUMENT_STATUSES, DOCUMENT_TIERS } from '$lib/content-types';
 import { localizePath } from '$lib/i18n/locale';
-import { listGroups, setDocumentGroups } from '$lib/server/access/groups';
+import { documentGroupIds, listGroups, setDocumentGroups } from '$lib/server/access/groups';
 import { saveMetaAction, saveTranslationAction } from '$lib/server/admin/actions';
 import type { AdminActionFailure } from '$lib/server/admin/actions';
 import { recordEvent } from '$lib/server/audit';
@@ -17,7 +16,6 @@ import {
 	setDocumentTranslation,
 	updateDocument
 } from '$lib/server/content/documents';
-import { documentGroup } from '$lib/server/db/schema';
 import { getDb } from '$lib/server/db/instance';
 import { clientIp } from '$lib/server/http/client-ip';
 import { getStorage, newStorageKey } from '$lib/server/storage';
@@ -31,18 +29,13 @@ export const load: PageServerLoad = async ({ params }) => {
 	const doc = await getDocumentForAdmin(db, params.id);
 	if (!doc) error(404, 'Document not found');
 
-	const [categories, groups, memberships] = await Promise.all([
+	const [categories, groups, groupIds] = await Promise.all([
 		listCategories(db),
 		listGroups(db),
-		db.select().from(documentGroup).where(eq(documentGroup.documentId, params.id))
+		documentGroupIds(db, params.id)
 	]);
 
-	return {
-		document: doc,
-		categories,
-		groups,
-		groupIds: memberships.map((row) => row.groupId)
-	};
+	return { document: doc, categories, groups, groupIds };
 };
 
 function optionalDate(value: FormDataEntryValue | null): Date | null {
