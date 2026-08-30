@@ -236,6 +236,40 @@ silent in production. If mail is not arriving, look at `outbound_email`:
 `status` is `pending`, `sent`, or `failed`, and `last_error` records why the
 most recent attempt failed.
 
+## 7b. Access governance
+
+A prospect finds a gated document on the public portal and asks for it at
+`/{locale}/request`, naming the documents they want. Nothing is stored against
+a person until they confirm the address: the submission holds the email inline
+and a magic link goes out. Following the link renders a confirmation page and
+consumes nothing — enterprise mail gateways prefetch links to scan them, and
+the POST is what spends the token. Confirming creates the requester, evaluates
+the access rules, and either mints a grant or leaves the request in the staff
+queue at `/admin/requests`. A grant makes the documents downloadable at
+`/{locale}/access`, each copy watermarked with the recipient's name, company,
+and the moment it was issued. Every one of those steps writes an audit event.
+
+**Access rules** live at `/admin/rules` and are matched against the email
+domain by ascending priority; the first match decides. A pattern is either an
+exact domain (`acme.example`) or a single leading wildcard
+(`*.acme.example`) — deliberately not a general glob, because a pattern nobody
+can reason about at decision time is worse than no rule. The action is
+`auto_approve`, `review`, or `deny`; `maxTier` applies to `auto_approve` only.
+An address matching no rule becomes a pending request.
+
+**How long access lasts** comes from `ACCESS_GRANT_DEFAULT_DAYS`, overridden by
+the value stored at `/admin/settings/access` — change it there and it takes
+effect immediately, including for rule auto-approvals. Staff can name a
+different expiry on any individual decision. `ACCESS_GRANT_REMINDER_DAYS`
+decides how long before expiry the requester is mailed; the reminder is sent
+once per grant. Nothing expires the grant itself: every download path filters
+on the expiry date, so access ends on its own with no job and no window in
+which a lapsed grant still works. Revoking a grant at `/admin/grants` works the
+same way — the next download attempt is a 404, with no restart and no cache to
+invalidate.
+
+**To erase a requester,** see [§10](#10-erasure-requests).
+
 ## 8. Reverse proxy
 
 The container serves plain HTTP. Terminate TLS in front of it and forward both

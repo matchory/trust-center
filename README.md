@@ -7,6 +7,19 @@ content, no third-party trackers on the public portal.
 
 Licensed under [AGPL-3.0-or-later](./LICENSE).
 
+## What it does
+
+- **A public trust portal** in German and English — controls, certifications, subprocessors, FAQ,
+  and a changelog — that makes no third-party requests and sets no cookies.
+- **Gated documents.** A prospect requests access, confirms their address by magic link, and
+  downloads a PDF watermarked with their name, their company, and when it was issued.
+- **Access governance.** Domain rules auto-approve, deny, or route a request to staff triage.
+  Grants carry an expiry, remind the holder once before they lapse, and can be revoked instantly.
+- **An append-only audit log** of every decision, sign-in, and download — enforced at the database,
+  not by convention — with a filterable viewer for administrators.
+- **Erasure on request.** A requester's identity is blanked and their audit events pseudonymized,
+  without deleting the record that the access happened.
+
 ## Running it
 
 For a real deployment, everything runs from one compose file:
@@ -36,6 +49,10 @@ pnpm dev
 ```
 
 The app is then served at http://localhost:5173.
+
+Mail is queued rather than sent inline, and `.env.example` points `SMTP_URL` at the Mailpit
+container: every verification link, decision notice, and expiry reminder lands in its web UI at
+http://localhost:8025 instead of a real inbox.
 
 ## Configuration
 
