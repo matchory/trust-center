@@ -14,7 +14,9 @@ Licensed under [AGPL-3.0-or-later](./LICENSE).
 - **Gated documents.** A prospect requests access, confirms their address by magic link, and
   downloads a PDF watermarked with their name, their company, and when it was issued.
 - **Access governance.** Domain rules auto-approve, deny, or route a request to staff triage.
-  Grants carry an expiry, remind the holder once before they lapse, and can be revoked instantly.
+  An approval's scope is a set: named documents, whole tiers, and named groups — reusable bundles
+  granted by name. Grants carry an expiry, remind the holder once before they lapse, and can be
+  revoked instantly.
 - **An append-only audit log** of every decision, sign-in, and download — enforced at the database,
   not by convention — with a filterable viewer for administrators.
 - **Erasure on request.** A requester's identity is blanked and their audit events pseudonymized,

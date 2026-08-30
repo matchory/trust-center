@@ -110,6 +110,26 @@ Every task's requirements implicitly include this section. Carried forward from 
 
 Each task appends its outcome here when complete: what shipped, what deviated, what the next task should know.
 
+**Phase complete.** Ten tasks, ten commits, on `worktree-phase-3a-scope-is-a-set` from `de0ffea`.
+
+| Task | Commit | Outcome |
+| --- | --- | --- |
+| 1 — Access group schema and module | `03a5ab8` | Clean. 9 tests, not the brief's 8. |
+| 2 — The access group admin surface | `8157606` | Clean. Two catalog keys the plan named already existed for the unrelated control-groups feature (C5). |
+| 3 — Document group membership | `9127227` | `groupIds` destructured out before `updateDocument`, which spreads its input into `.set()`. Signing agent refused; committed later. |
+| 4 — Scope sets: migration and helpers | `4528279` | `ScopeGroupInUse` was declared and never thrown (C7); `deleteGroup` now raises it. Backfill verified against seeded legacy rows in a throwaway database, since the dev one is empty. |
+| 5 — Grant resolution over sets | `51f76a2` | Clean. `countGrantDocuments` gained the two predicates it never had. |
+| 6 — Requests over sets | `6244ed3` | Carried C2: the decision route and the portal form each took a one-line bridge to stay green. `'honours an explicit expiry'` became `'honours a term shorter than the default'` — the only behavioural test change in the phase. |
+| 7 — Rules over sets | `8d2dd15` | Carried C3. `SCOPE_TIERS` moved to `access-types.ts`: a component may not import `$lib/server/` (C8). Found that `RuleDecision.tiers` is computed and never read — pre-existing, flagged to 3b, not changed here. |
+| 8 — The portal and admin surfaces | `786f2a0` | Fixed a pre-existing defect: every blanket approval mailed "you have access to 0 document(s)". Extracted `ScopeSummary.svelte` rather than inlining the summary three times. |
+| 9 — Contract: drop the flags | `a63547b` | Step 1's grep found exactly the three predicted bridges. Fixed an order-dependent test flake this branch introduced (RESTRICT vs. cleanup order). |
+| 10 — Documentation and phase close | this commit | — |
+
+**Final suite:** unit 111, integration 168, e2e 78; `pnpm check`, `pnpm lint` and `pnpm build` clean.
+Baseline before Task 1 was unit 110, integration 139, e2e 73.
+
+The full record — every ruling, deviation and finding — is `.superpowers/sdd/2026-08-30-phase-3a-scope-is-a-set/progress.md`. What 3b inherits is `docs/superpowers/phase-3b-carryover.md`.
+
 ---
 
 ## Task 1: Access group schema and module

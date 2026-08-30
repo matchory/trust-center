@@ -257,13 +257,37 @@ domain by ascending priority; the first match decides. A pattern is either an
 exact domain (`acme.example`) or a single leading wildcard
 (`*.acme.example`) — deliberately not a general glob, because a pattern nobody
 can reason about at decision time is worse than no rule. The action is
-`auto_approve`, `review`, or `deny`; `maxTier` applies to `auto_approve` only.
-An address matching no rule becomes a pending request.
+`auto_approve`, `review`, or `deny`. A rule also names the **tiers** it may
+approve — whole tiers, ticked individually — which applies to `auto_approve`
+only; a rule that names none approves no blanket, and an address matching no
+rule becomes a pending request.
+
+**What a grant covers** is three independent sets: the documents named on it,
+whole tiers, and whole **access groups**. None of the three implies the others.
+A tier or a group means "including documents that join later", so a document
+published at a granted tier, or added to a granted group, becomes downloadable
+to everyone holding that grant without anybody revisiting it. That is the point
+of them, and it is the thing to weigh before granting one.
+
+**Access groups** live at `/admin/groups`. A group is a named, reusable bundle
+of documents — a saved scope — not a group of people: an approver grants
+"Customer pack" by name instead of ticking eleven boxes. Each group carries a
+name and description per locale. **Membership is edited on the document**, in
+its editor beside the tier and category, not on the group page; the group page
+shows its members read-only with a count. A group cannot be deleted while a
+grant still includes it — the admin page says so and refuses — because deleting
+it would silently narrow live access with nothing recording why. Revoke or
+re-scope those grants first. Groups are invisible to the public portal: the
+request form offers documents and per-tier blankets, never your internal
+bundling.
+
+**No new environment variables ship with access groups.** Everything about them
+is content, edited in the admin surface.
 
 **How long access lasts** comes from `ACCESS_GRANT_DEFAULT_DAYS`, overridden by
 the value stored at `/admin/settings/access` — change it there and it takes
-effect immediately, including for rule auto-approvals. Staff can name a
-different expiry on any individual decision. `ACCESS_GRANT_REMINDER_DAYS`
+effect immediately, including for rule auto-approvals. Staff name a term in
+days on any individual decision, and the expiry is derived from it. `ACCESS_GRANT_REMINDER_DAYS`
 decides how long before expiry the requester is mailed; the reminder is sent
 once per grant. Nothing expires the grant itself: every download path filters
 on the expiry date, so access ends on its own with no job and no window in
