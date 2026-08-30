@@ -10,6 +10,7 @@ import {
 } from '$lib/server/content/controls';
 import { saveTranslationsFromForm } from '$lib/server/content/translations';
 import { getDb } from '$lib/server/db/instance';
+import { clientIp } from '$lib/server/http/client-ip';
 import type { Actions, PageServerLoad } from './$types';
 
 const slug = z
@@ -36,7 +37,8 @@ async function saveTranslations(db: ReturnType<typeof getDb>, groupId: string, f
 }
 
 export const actions: Actions = {
-	create: async ({ request, locals, getClientAddress }) => {
+	create: async (event) => {
+		const { request, locals } = event;
 		const form = await request.formData();
 		const parsed = slug.safeParse(form.get('slug'));
 		if (!parsed.success) return fail(400, { field: 'slug' });
@@ -53,14 +55,15 @@ export const actions: Actions = {
 			actor: { type: 'staff', id: locals.staff!.id },
 			subjectType: 'control_group',
 			subjectId: id,
-			ip: getClientAddress(),
+			ip: clientIp(event) ?? undefined,
 			meta: { slug: parsed.data }
 		});
 
 		return { saved: true };
 	},
 
-	update: async ({ request, locals, getClientAddress }) => {
+	update: async (event) => {
+		const { request, locals } = event;
 		const form = await request.formData();
 		const id = String(form.get('id'));
 		const db = getDb();
@@ -73,13 +76,14 @@ export const actions: Actions = {
 			actor: { type: 'staff', id: locals.staff!.id },
 			subjectType: 'control_group',
 			subjectId: id,
-			ip: getClientAddress()
+			ip: clientIp(event) ?? undefined
 		});
 
 		return { saved: true };
 	},
 
-	remove: async ({ request, locals, getClientAddress }) => {
+	remove: async (event) => {
+		const { request, locals } = event;
 		const form = await request.formData();
 		const id = String(form.get('id'));
 		const db = getDb();
@@ -90,7 +94,7 @@ export const actions: Actions = {
 			actor: { type: 'staff', id: locals.staff!.id },
 			subjectType: 'control_group',
 			subjectId: id,
-			ip: getClientAddress()
+			ip: clientIp(event) ?? undefined
 		});
 
 		return { saved: true };

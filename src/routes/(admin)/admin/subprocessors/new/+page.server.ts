@@ -4,6 +4,7 @@ import { localizePath } from '$lib/i18n/locale';
 import { recordEvent } from '$lib/server/audit';
 import { createSubprocessor } from '$lib/server/content/subprocessors';
 import { getDb } from '$lib/server/db/instance';
+import { clientIp } from '$lib/server/http/client-ip';
 import type { Actions } from './$types';
 
 const schema = z.object({
@@ -22,7 +23,8 @@ const schema = z.object({
 });
 
 export const actions: Actions = {
-	default: async ({ request, locals, getClientAddress }) => {
+	default: async (event) => {
+		const { request, locals } = event;
 		const form = await request.formData();
 		const parsed = schema.safeParse({
 			slug: form.get('slug'),
@@ -50,7 +52,7 @@ export const actions: Actions = {
 			actor: { type: 'staff', id: locals.staff!.id },
 			subjectType: 'subprocessor',
 			subjectId: id,
-			ip: getClientAddress(),
+			ip: clientIp(event) ?? undefined,
 			meta: { slug: parsed.data.slug, country: parsed.data.country }
 		});
 

@@ -8,6 +8,7 @@ import {
 	type Branding
 } from '$lib/server/content/branding';
 import { getDb } from '$lib/server/db/instance';
+import { clientIp } from '$lib/server/http/client-ip';
 import { getStorage, newStorageKey } from '$lib/server/storage';
 import { readUpload, UploadRejected } from '$lib/server/upload';
 import type { Actions, PageServerLoad } from './$types';
@@ -20,7 +21,8 @@ const optionalText = (value: FormDataEntryValue | null): string | null =>
 	String(value ?? '').trim() || null;
 
 export const actions: Actions = {
-	default: async ({ request, locals, getClientAddress }) => {
+	default: async (event) => {
+		const { request, locals } = event;
 		const form = await request.formData();
 		const db = getDb();
 		const current = await getBranding(db);
@@ -84,7 +86,7 @@ export const actions: Actions = {
 			actor: { type: 'staff', id: locals.staff!.id },
 			subjectType: 'setting',
 			subjectId: 'branding',
-			ip: getClientAddress(),
+			ip: clientIp(event) ?? undefined,
 			meta: { changed, logoReplaced: uploaded }
 		});
 

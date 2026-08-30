@@ -2,10 +2,12 @@ import { redirect } from '@sveltejs/kit';
 import { recordEvent } from '$lib/server/audit';
 import { SESSION_COOKIE, STAFF_COOKIE_OPTIONS, revokeStaffSession } from '$lib/server/auth/session';
 import { getDb } from '$lib/server/db/instance';
+import { clientIp } from '$lib/server/http/client-ip';
 import { localizePath } from '$lib/i18n/locale';
 import type { RequestHandler } from './$types';
 
-export const POST: RequestHandler = async ({ cookies, locals, getClientAddress }) => {
+export const POST: RequestHandler = async (event) => {
+	const { cookies, locals } = event;
 	const db = getDb();
 	const token = cookies.get(SESSION_COOKIE);
 
@@ -17,7 +19,7 @@ export const POST: RequestHandler = async ({ cookies, locals, getClientAddress }
 				actor: { type: 'staff', id: locals.staff.id },
 				subjectType: 'staff',
 				subjectId: locals.staff.id,
-				ip: getClientAddress()
+				ip: clientIp(event) ?? undefined
 			});
 		}
 	}
