@@ -44,6 +44,45 @@ export async function createGrant(
 }
 
 /**
+ * Whether a grant row covers a document row. Named once because it is the
+ * definition of scope: an all-request-tier grant covers every published
+ * request-tier document, including ones published after the grant was made,
+ * and otherwise the document must be listed explicitly. Two copies of this
+ * could disagree about what someone was granted.
+ */
+function grantCoversDocument() {
+	return or(
+		and(eq(accessGrant.allRequestTier, true), eq(document.tier, 'request')),
+		sql`EXISTS (
+			SELECT 1 FROM ${accessGrantDocument}
+			WHERE ${accessGrantDocument.grantId} = ${accessGrant.id}
+			  AND ${accessGrantDocument.documentId} = ${document.id}
+		)`
+	)!;
+}
+
+/**
+ * How many documents one grant covers right now. Used by the expiry reminder,
+ * which speaks about a single grant's scope — a requester holding two grants
+ * must not be told the wrong number about the one that is ending.
+ */
+export async function countGrantDocuments(db: Db, grantId: string): Promise<number> {
+	const [row] = await db
+		.select({ count: sql<number>`count(*)::int` })
+		.from(accessGrant)
+		.innerJoin(document, grantCoversDocument())
+		.where(
+			and(
+				eq(accessGrant.id, grantId),
+				eq(document.status, 'published'),
+				eq(document.tier, 'request')
+			)
+		);
+
+	return row?.count ?? 0;
+}
+
+/**
  * Every document a requester may currently download. One query, because scope
  * is a join rather than an opaque column: explicit grant rows union the
  * all-request-tier grants, and both are filtered to live grants and published
@@ -60,20 +99,7 @@ export async function grantedDocuments(
 	const rows = await db
 		.select({ documentId: document.id, expiresAt: accessGrant.expiresAt })
 		.from(accessGrant)
-		.innerJoin(
-			document,
-			or(
-				// An all-request-tier grant covers every published request-tier
-				// document, including ones published after the grant was made.
-				and(eq(accessGrant.allRequestTier, true), eq(document.tier, 'request')),
-				// ...or the document is named explicitly.
-				sql`EXISTS (
-					SELECT 1 FROM ${accessGrantDocument}
-					WHERE ${accessGrantDocument.grantId} = ${accessGrant.id}
-					  AND ${accessGrantDocument.documentId} = ${document.id}
-				)`
-			)!
-		)
+		.innerJoin(document, grantCoversDocument())
 		.where(
 			and(
 				eq(accessGrant.requesterId, requesterId),

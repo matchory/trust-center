@@ -32,6 +32,7 @@ export interface AppConfig {
 	requesterSessionTtlHours: number;
 	magicLinkTtlMinutes: number;
 	accessGrantDefaultDays: number;
+	accessGrantReminderDays: number;
 	mail: {
 		smtpUrl: string | undefined;
 		from: string;
@@ -72,6 +73,7 @@ function buildSchema(compiledLocales: readonly string[]) {
 			REQUESTER_SESSION_TTL_HOURS: z.coerce.number().int().positive().default(72),
 			MAGIC_LINK_TTL_MINUTES: z.coerce.number().int().positive().default(30),
 			ACCESS_GRANT_DEFAULT_DAYS: z.coerce.number().int().positive().default(90),
+			ACCESS_GRANT_REMINDER_DAYS: z.coerce.number().int().positive().default(7),
 			// Optional so `pnpm build` and the unit suite keep working with no mail
 			// server. getMailer() throws a named error when a send is attempted
 			// without it, rather than the application refusing to start.
@@ -134,6 +136,7 @@ export function parseConfig(
 		requesterSessionTtlHours: parsed.REQUESTER_SESSION_TTL_HOURS,
 		magicLinkTtlMinutes: parsed.MAGIC_LINK_TTL_MINUTES,
 		accessGrantDefaultDays: parsed.ACCESS_GRANT_DEFAULT_DAYS,
+		accessGrantReminderDays: parsed.ACCESS_GRANT_REMINDER_DAYS,
 		mail: {
 			smtpUrl: parsed.SMTP_URL,
 			from: parsed.MAIL_FROM,

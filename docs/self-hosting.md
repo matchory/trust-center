@@ -58,6 +58,7 @@ refusal is recorded in the audit log.
 | `REQUESTER_SESSION_TTL_HOURS` | no | `72` | How long a verified requester stays signed in. |
 | `MAGIC_LINK_TTL_MINUTES` | no | `30` | Lifetime of a single-use verification or sign-in link. |
 | `ACCESS_GRANT_DEFAULT_DAYS` | no | `90` | Default expiry when staff approve without naming one. |
+| `ACCESS_GRANT_REMINDER_DAYS` | no | `7` | How long before expiry the requester is reminded. The grant lapses on its own either way. |
 | `PORT` | no | `3000` | Port the server listens on. |
 | `BODY_SIZE_LIMIT` | no | `32M` | Largest request body `adapter-node` accepts, uploads included. |
 | `ADDRESS_HEADER` | behind a proxy | — | Header to read the client address from. Set to `X-Forwarded-For`. See §8 — without it every audit event records your proxy's address. |
@@ -221,6 +222,7 @@ no scheduler to configure.
 | `mail:drain` | 15s | Sends queued mail from `outbound_email`, retrying with backoff. |
 | `sessions:cleanup` | 1h | Deletes expired staff and requester sessions. |
 | `requests:sweep` | 15m | Deletes access requests whose verification link expired unused. |
+| `grants:remind` | 6h | Mails a requester once, shortly before their access expires. |
 
 Every tick takes a Postgres advisory lock named for its job, so running more
 than one replica is safe: a second instance whose tick overlaps skips that round

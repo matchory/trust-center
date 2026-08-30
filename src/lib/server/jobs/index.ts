@@ -1,6 +1,7 @@
 import { lt, sql } from 'drizzle-orm';
 import { getConfig } from '../config';
 import { getDb } from '../db/instance';
+import { sendExpiryReminders } from '../access/expiry';
 import { accessRequest, requesterSession, staffSession } from '../db/schema';
 import { getMailer, MailNotConfigured } from '../mail';
 import { drainOutbox } from '../mail/queue';
@@ -58,6 +59,15 @@ export const JOBS: readonly Job[] = [
 		name: 'requests:sweep',
 		everyMs: 15 * 60 * 1000,
 		run: (db) => sweepUnverifiedRequests(db, getConfig().magicLinkTtlMinutes)
+	},
+	// Six hours: the window is measured in days, and a reminder is stamped once
+	// per grant, so a tick that finds nothing costs one indexed query.
+	{
+		name: 'grants:remind',
+		everyMs: 6 * 60 * 60 * 1000,
+		run: async (db) => {
+			await sendExpiryReminders(db, { reminderDays: getConfig().accessGrantReminderDays });
+		}
 	}
 ];
 
