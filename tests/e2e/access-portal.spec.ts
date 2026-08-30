@@ -72,8 +72,7 @@ test.beforeAll(async () => {
 		.values({ pattern: AUTO_DOMAIN, action: 'auto_approve', priority: 5 })
 		.returning({ id: accessRule.id });
 	ruleId = rule!.id;
-	// The tier set is what a rule is scoped by now; `max_tier` keeps its
-	// default until the contract migration drops it.
+	// A rule is scoped by its tier set.
 	await setRuleTiers(db, ruleId, ['request']);
 });
 

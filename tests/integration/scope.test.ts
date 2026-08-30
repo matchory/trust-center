@@ -20,7 +20,7 @@ import {
 	accessRule,
 	requester
 } from '../../src/lib/server/db/schema';
-import { seedGrant, seedRequest, seedRule } from '../setup/fixtures';
+import { seedGrant, seedRequest, seedRequester, seedRule } from '../setup/fixtures';
 
 let db: Db;
 let close: () => Promise<void>;
@@ -98,25 +98,44 @@ describe('scope sets', () => {
 	});
 });
 
-describe('scope backfill', () => {
-	it('gives every pre-existing all-request-tier grant a request tier row', async () => {
-		// The migration has already run against this database, so the assertion
-		// is that no live grant lost its blanket in translation.
-		const rows = await db.execute<{ mismatched: number }>(sql`
-			SELECT count(*)::int AS mismatched
-			FROM access_grant g
-			WHERE g.all_request_tier
-			  AND NOT EXISTS (
-			    SELECT 1 FROM access_grant_tier t
-			    WHERE t.grant_id = g.id AND t.tier = 'request'
-			  )`);
-		expect(rows[0]?.mismatched).toBe(0);
-	});
+describe('the contract migration', () => {
+	// The backfill's own assertion lived here until `all_request_tier` was
+	// dropped; with the source column gone there is nothing left to compare the
+	// tier rows against, and the migration that moved them has already run
+	// everywhere this suite reaches.
 
-	it('gives every pre-existing grant a positive term', async () => {
+	it('gives every grant a positive term', async () => {
 		const rows = await db.execute<{ bad: number }>(sql`
 			SELECT count(*)::int AS bad FROM access_grant
 			WHERE term_days IS NULL OR term_days < 1`);
 		expect(rows[0]?.bad).toBe(0);
+	});
+
+	it('has no scope flag columns left', async () => {
+		const rows = await db.execute<{ column_name: string }>(sql`
+			SELECT column_name FROM information_schema.columns
+			WHERE table_name IN ('access_grant', 'access_request', 'access_rule')
+			  AND column_name IN ('all_request_tier', 'max_tier')`);
+		expect(rows).toEqual([]);
+	});
+
+	it('refuses a grant with no term', async () => {
+		const requesterId = await seedRequester(db);
+		await expect(
+			db.execute(sql`
+				INSERT INTO access_grant (requester_id, expires_at)
+				VALUES (${requesterId}::uuid, now() + interval '30 days')`)
+		).rejects.toThrow();
+	});
+
+	it('refuses a grant with a term of zero days', async () => {
+		// NOT NULL alone would admit 0, which is a grant that expires the moment
+		// it starts — the shape `GREATEST(1, ...)` exists in the backfill to avoid.
+		const requesterId = await seedRequester(db);
+		await expect(
+			db.execute(sql`
+				INSERT INTO access_grant (requester_id, expires_at, term_days)
+				VALUES (${requesterId}::uuid, now() + interval '30 days', 0)`)
+		).rejects.toThrow();
 	});
 });

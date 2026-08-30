@@ -74,9 +74,8 @@ test('a new rule appears in the list and is stored as written', async ({ page })
 
 	const [row] = await db.select().from(accessRule).where(eq(accessRule.pattern, pattern));
 	// `nda` is storable and not yet granted, so an operator naming it must find
-	// it still named when they come back — the set is what was written, and
-	// `max_tier` is the bridge until it is dropped.
-	expect(row).toMatchObject({ action: 'auto_approve', maxTier: 'nda', priority: 10 });
+	// it still named when they come back.
+	expect(row).toMatchObject({ action: 'auto_approve', priority: 10 });
 	expect(await ruleTiers(db, row!.id)).toEqual(['nda', 'request']);
 });
 

@@ -1,6 +1,5 @@
 import { sql } from 'drizzle-orm';
 import {
-	boolean,
 	check,
 	index,
 	integer,
@@ -32,9 +31,8 @@ export const accessRule = pgTable(
 		// time — which is the moment a stranger is given documents.
 		pattern: text('pattern').notNull(),
 		action: text('action').notNull(),
-		// The highest tier this rule may auto-approve. Meaningless for `deny` and
-		// `review`, and ignored there.
-		maxTier: text('max_tier').notNull().default('request'),
+		// Which tiers this rule may auto-approve is `access_rule_tier`, not a
+		// column: a ceiling recomputes, and a set does not.
 		// Lower runs first. Ties broken by the more specific pattern — see
 		// matchRule(), which does not depend on row order.
 		priority: integer('priority').notNull().default(100),
@@ -43,8 +41,7 @@ export const accessRule = pgTable(
 	},
 	(table) => [
 		index('access_rule_priority_idx').on(table.priority),
-		check('access_rule_action_check', sql`${table.action} IN ('auto_approve', 'review', 'deny')`),
-		check('access_rule_max_tier_check', sql`${table.maxTier} IN ('public', 'request', 'nda')`)
+		check('access_rule_action_check', sql`${table.action} IN ('auto_approve', 'review', 'deny')`)
 	]
 );
 
@@ -56,8 +53,6 @@ export const accessRequest = pgTable(
 		// act that creates the requester.
 		requesterId: uuid('requester_id').references(() => requester.id, { onDelete: 'cascade' }),
 		status: text('status').notNull().default('unverified'),
-		// "Everything at the request tier, including documents published later."
-		allRequestTier: boolean('all_request_tier').notNull().default(false),
 		justification: text('justification'),
 		source: text('source').notNull().default('portal'),
 		// Held inline while unverified, nulled by the verification transaction.
@@ -123,14 +118,11 @@ export const accessGrant = pgTable(
 			.references(() => requester.id, { onDelete: 'cascade' }),
 		// The request this grant answers. Null for a staff-initiated invite.
 		requestId: uuid('request_id').references(() => accessRequest.id, { onDelete: 'set null' }),
-		allRequestTier: boolean('all_request_tier').notNull().default(false),
-		// Nullable until Task 9's contract migration backfills every row and
-		// tightens it. The clock a grant runs on once it starts, in days,
-		// recorded because the approver chose it — re-deriving it from
-		// `defaultGrantDays()` later would silently substitute whatever the
-		// setting says then, and /admin/settings/access exists precisely so
-		// operators change it.
-		termDays: integer('term_days'),
+		// The clock a grant runs on once it starts, in days, recorded because the
+		// approver chose it — re-deriving it from `defaultGrantDays()` later
+		// would silently substitute whatever the setting says then, and
+		// /admin/settings/access exists precisely so operators change it.
+		termDays: integer('term_days').notNull(),
 		grantedAt: timestamp('granted_at', { withTimezone: true }).notNull().defaultNow(),
 		expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
 		revokedAt: timestamp('revoked_at', { withTimezone: true }),
@@ -143,7 +135,10 @@ export const accessGrant = pgTable(
 	(table) => [
 		index('access_grant_requester_idx').on(table.requesterId),
 		// The reminder job scans by expiry; the download path filters by it.
-		index('access_grant_expires_idx').on(table.expiresAt)
+		index('access_grant_expires_idx').on(table.expiresAt),
+		// NOT NULL alone would admit 0, which is a grant that expires the moment
+		// it starts.
+		check('access_grant_term_days_check', sql`${table.termDays} >= 1`)
 	]
 );
 

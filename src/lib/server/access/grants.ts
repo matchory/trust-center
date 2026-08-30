@@ -39,10 +39,6 @@ export async function createGrant(
 			.values({
 				requesterId: input.requesterId,
 				requestId: input.requestId,
-				// Written alongside the sets until Task 9 drops the column. Writing
-				// only the sets would leave every consumer this phase has not moved
-				// yet seeing an empty scope.
-				allRequestTier: input.tiers.includes('request'),
 				termDays: input.termDays,
 				expiresAt: input.expiresAt
 			})

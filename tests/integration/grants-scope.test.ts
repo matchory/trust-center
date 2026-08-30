@@ -28,6 +28,11 @@ beforeAll(() => {
 });
 
 afterAll(async () => {
+	// `access_grant_group.group_id` is ON DELETE RESTRICT, so a grant left
+	// behind here makes every later file's `delete from access_group` fail.
+	// Files run serially and share one container, so cleaning up is this file's
+	// job, not the next one's.
+	await db.delete(accessGrant);
 	await close();
 });
 

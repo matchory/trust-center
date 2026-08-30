@@ -127,6 +127,13 @@
       "when": 1788118117938,
       "tag": "0017_scope_sets",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1788120444742,
+      "tag": "0018_drop_scope_flags",
+      "breakpoints": true
     }
   ]
 }

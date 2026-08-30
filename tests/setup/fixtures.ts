@@ -53,7 +53,7 @@ export async function seedRequester(db: Db, input: { email?: string } = {}): Pro
  */
 export async function seedGrant(
 	db: Db,
-	input: { requesterId?: string; expiresAt?: Date } = {}
+	input: { requesterId?: string; expiresAt?: Date; termDays?: number } = {}
 ): Promise<string> {
 	const requesterId = input.requesterId ?? (await seedRequester(db));
 	const [row] = await db
@@ -61,6 +61,7 @@ export async function seedGrant(
 		.values({
 			requesterId,
 			requestId: null,
+			termDays: input.termDays ?? 30,
 			expiresAt: input.expiresAt ?? new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)
 		})
 		.returning({ id: accessGrant.id });

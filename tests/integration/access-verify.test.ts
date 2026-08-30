@@ -115,8 +115,7 @@ describe('verifyRequest', () => {
 			})
 			.returning({ id: accessRule.id });
 
-		// The tier set is what a rule is scoped by now; `max_tier` keeps its
-		// default until the contract migration drops it.
+		// A rule is scoped by its tier set.
 		await setRuleTiers(db, rule!.id, ['request']);
 
 		const { requestId, magicLinkToken } = await submitFrom(domain);

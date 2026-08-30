@@ -5,7 +5,6 @@ import { accessRule, accessRuleTier } from '../db/schema';
 import { honouredTiers, ruleTiers, SCOPE_TIERS, setRuleTiers } from './scope';
 import type { ScopeTier } from './scope';
 import type { AccessRuleAction } from '../../access-types';
-import type { DocumentTier } from '../../content-types';
 import type { Db } from '../db';
 
 export interface RuleForMatching {
@@ -170,16 +169,6 @@ function toAdminRow(row: typeof accessRule.$inferSelect, tiers: ScopeTier[]): Ad
 	};
 }
 
-/**
- * The old ceiling, in the terms the column still speaks. A bridge until Task 9
- * drops `max_tier`: the highest tier the set names, or `public` for a rule that
- * names none — which is the ceiling's own way of saying "no blanket".
- */
-function ceilingOf(tiers: readonly ScopeTier[]): DocumentTier {
-	if (tiers.includes('nda')) return 'nda';
-	return tiers.includes('request') ? 'request' : 'public';
-}
-
 export async function createRule(db: Db, input: RuleInput): Promise<string> {
 	return db.transaction(async (tx) => {
 		const [row] = await tx
@@ -188,8 +177,7 @@ export async function createRule(db: Db, input: RuleInput): Promise<string> {
 				pattern: input.pattern,
 				action: input.action,
 				priority: input.priority,
-				note: input.note,
-				maxTier: ceilingOf(input.tiers)
+				note: input.note
 			})
 			.returning({ id: accessRule.id });
 
@@ -208,8 +196,7 @@ export async function updateRule(db: Db, id: string, input: RuleInput): Promise<
 				pattern: input.pattern,
 				action: input.action,
 				priority: input.priority,
-				note: input.note,
-				maxTier: ceilingOf(input.tiers)
+				note: input.note
 			})
 			.where(eq(accessRule.id, id));
 

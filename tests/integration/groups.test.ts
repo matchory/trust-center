@@ -1,6 +1,11 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { createDb, type Db } from '../../src/lib/server/db';
-import { accessGroup, document, documentCategory } from '../../src/lib/server/db/schema';
+import {
+	accessGrant,
+	accessGroup,
+	document,
+	documentCategory
+} from '../../src/lib/server/db/schema';
 import {
 	createGroup,
 	deleteGroup,
@@ -29,6 +34,9 @@ describe('access groups', () => {
 	beforeEach(async () => {
 		await db.delete(document);
 		await db.delete(documentCategory);
+		// Before the groups: a grant naming one holds it against deletion, and
+		// this file's whole premise is that no group exists when a case starts.
+		await db.delete(accessGrant);
 		await db.delete(accessGroup);
 	});
 

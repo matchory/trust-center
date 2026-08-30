@@ -183,7 +183,7 @@ describe('decideRequest', () => {
 		expect(days).toBeGreaterThan(6);
 		expect(days).toBeLessThanOrEqual(7);
 		expect(grant?.termDays).toBe(7);
-		expect(grant?.allRequestTier).toBe(true);
+		expect(await grantTiers(db, grant!.id)).toEqual(['request']);
 	});
 
 	it('denies with a reason and creates no grant', async () => {

@@ -183,19 +183,7 @@ describe('submitRequest', () => {
 		expect(await db.select().from(accessRequest)).toHaveLength(before.length);
 	});
 
-	it('accepts an all-request-tier submission with no explicit documents', async () => {
-		const { requestId } = await submitRequest(db, {
-			...submission,
-			email: `person-${randomUUID()}@acme.example`,
-			documentIds: [],
-			tiers: ['request']
-		});
-
-		const [row] = await db.select().from(accessRequest).where(eq(accessRequest.id, requestId));
-		expect(row?.allRequestTier).toBe(true);
-	});
-
-	it('stores a submitted tier blanket as a set', async () => {
+	it('accepts a tier blanket with no explicit documents, and stores it as a set', async () => {
 		const { requestId } = await submitRequest(db, {
 			...submission,
 			email: `person-${randomUUID()}@acme.example`,

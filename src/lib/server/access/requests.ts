@@ -105,8 +105,6 @@ export async function submitRequest(
 			.insert(accessRequest)
 			.values({
 				status: 'unverified',
-				// Written alongside the set until Task 9 drops the column.
-				allRequestTier: tiers.includes('request'),
 				justification: input.justification,
 				source: 'portal',
 				submittedEmail: input.email.trim().toLowerCase(),
