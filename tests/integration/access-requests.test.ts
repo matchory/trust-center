@@ -10,7 +10,12 @@ import {
 	documentTranslation,
 	magicLink
 } from '../../src/lib/server/db/schema';
-import { requestableDocuments, submitRequest } from '../../src/lib/server/access/requests';
+import {
+	requestableDocuments,
+	RequestRejected,
+	submitRequest
+} from '../../src/lib/server/access/requests';
+import { requestTiers } from '../../src/lib/server/access/scope';
 import type { Db } from '../../src/lib/server/db';
 
 let db: Db;
@@ -105,7 +110,7 @@ describe('submitRequest', () => {
 			...submission,
 			email,
 			documentIds: [requestTierId],
-			allRequestTier: false
+			tiers: []
 		});
 
 		const [row] = await db.select().from(accessRequest).where(eq(accessRequest.id, requestId));
@@ -125,7 +130,7 @@ describe('submitRequest', () => {
 			...submission,
 			email: `person-${randomUUID()}@acme.example`,
 			documentIds: [requestTierId],
-			allRequestTier: false
+			tiers: []
 		});
 
 		expect(magicLinkToken.length).toBeGreaterThan(20);
@@ -145,7 +150,7 @@ describe('submitRequest', () => {
 				...submission,
 				email: `person-${randomUUID()}@acme.example`,
 				documentIds: [ndaTierId],
-				allRequestTier: false
+				tiers: []
 			})
 		).rejects.toThrow(/not requestable/i);
 	});
@@ -156,7 +161,7 @@ describe('submitRequest', () => {
 				...submission,
 				email: `person-${randomUUID()}@acme.example`,
 				documentIds: [draftRequestTierId],
-				allRequestTier: false
+				tiers: []
 			})
 		).rejects.toThrow(/not requestable/i);
 	});
@@ -171,7 +176,7 @@ describe('submitRequest', () => {
 				...submission,
 				email: `person-${randomUUID()}@acme.example`,
 				documentIds: [ndaTierId],
-				allRequestTier: false
+				tiers: []
 			})
 		).rejects.toThrow();
 
@@ -183,11 +188,35 @@ describe('submitRequest', () => {
 			...submission,
 			email: `person-${randomUUID()}@acme.example`,
 			documentIds: [],
-			allRequestTier: true
+			tiers: ['request']
 		});
 
 		const [row] = await db.select().from(accessRequest).where(eq(accessRequest.id, requestId));
 		expect(row?.allRequestTier).toBe(true);
+	});
+
+	it('stores a submitted tier blanket as a set', async () => {
+		const { requestId } = await submitRequest(db, {
+			...submission,
+			email: `person-${randomUUID()}@acme.example`,
+			documentIds: [],
+			tiers: ['request']
+		});
+
+		expect(await requestTiers(db, requestId)).toEqual(['request']);
+	});
+
+	it('refuses a submitted nda tier in this phase', async () => {
+		// The public form does not offer it; this is the server refusing a posted
+		// one, which is where Phase 2 put the same guarantee.
+		await expect(
+			submitRequest(db, {
+				...submission,
+				email: `person-${randomUUID()}@acme.example`,
+				documentIds: [],
+				tiers: ['nda']
+			})
+		).rejects.toThrow(RequestRejected);
 	});
 
 	it('refuses a submission that names nothing at all', async () => {
@@ -196,7 +225,7 @@ describe('submitRequest', () => {
 				...submission,
 				email: `person-${randomUUID()}@acme.example`,
 				documentIds: [],
-				allRequestTier: false
+				tiers: []
 			})
 		).rejects.toThrow(/empty scope/i);
 	});
@@ -209,7 +238,7 @@ describe('submitRequest', () => {
 			...submission,
 			email,
 			documentIds: [requestTierId],
-			allRequestTier: false
+			tiers: []
 		};
 
 		const first = await submitRequest(db, payload);

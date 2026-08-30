@@ -56,7 +56,7 @@
 			<span class="ml-2 text-xs text-neutral-500">{row.name}</span>
 		{:else if key === 'company'}{row.company}
 		{:else if key === 'scope'}
-			{row.allRequestTier ? m.admin_scope_all_request_tier() : row.documentCount}
+			{row.tiers.includes('request') ? m.admin_scope_all_request_tier() : row.documentCount}
 		{:else if key === 'status'}
 			<span data-testid="request-status-{row.id}">{STATUS_LABEL[row.status]?.() ?? row.status}</span
 			>

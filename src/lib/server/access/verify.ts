@@ -6,6 +6,7 @@ import { domainOf, upsertRequester } from '../identity/requester';
 import { enqueueEmail } from '../mail/queue';
 import { createGrant } from './grants';
 import { decideFromRules } from './rules';
+import { honouredTiers, requestTiers } from './scope';
 import type { AccessRequestStatus, AccessRuleAction } from '../../access-types';
 import type { Db } from '../db';
 
@@ -115,12 +116,16 @@ export async function verifyRequest(
 				.from(accessRequestDocument)
 				.where(eq(accessRequestDocument.requestId, request.id));
 
+			const tiers = await requestTiers(tx, request.id);
+
 			({ grantId } = await createGrant(tx, {
 				requesterId: requester.id,
 				requestId: request.id,
 				documentIds: scoped.map((row) => row.documentId),
-				// A bridge until Task 6 gives this the request's own tier set.
-				tiers: request.allRequestTier ? ['request'] : [],
+				tiers: honouredTiers(tiers),
+				// An auto-approved decision grants no groups: §10.1 says a pattern
+				// match may not hand out a blanket, and in this phase the simplest
+				// correct form of that is tiers and explicit documents only.
 				groupIds: [],
 				expiresAt: new Date(Date.now() + input.grantTtlDays * 24 * 60 * 60 * 1000),
 				termDays: input.grantTtlDays

@@ -60,7 +60,7 @@ async function submitFrom(domain: string) {
 		company: 'Acme',
 		justification: null,
 		documentIds: [docId],
-		allRequestTier: false,
+		tiers: [],
 		locale: 'de',
 		linkTtlMinutes: 60
 	});

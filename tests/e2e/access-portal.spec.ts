@@ -94,7 +94,7 @@ async function signIn(page: Page, domain: string): Promise<string> {
 		company: 'Acme',
 		justification: null,
 		documentIds: [documentId],
-		allRequestTier: false,
+		tiers: [],
 		locale: 'de',
 		linkTtlMinutes: 60
 	});
@@ -193,7 +193,7 @@ test('a spent verification link cannot be replayed', async ({ page }) => {
 		company: 'Acme',
 		justification: null,
 		documentIds: [documentId],
-		allRequestTier: false,
+		tiers: [],
 		locale: 'de',
 		linkTtlMinutes: 60
 	});

@@ -89,6 +89,14 @@ async function decide(event: Parameters<Actions[string]>[0], decision: Decision)
 	const documentIds = form.getAll('documentIds').map(String).filter(Boolean);
 	const allRequestTier = form.get('allRequestTier') === 'on';
 
+	// The form still posts an absolute date; Task 8 replaces it with a term in
+	// days and adds the tier and group pickers. Until then the term is derived
+	// from whatever date was posted, or the configured default.
+	const defaultTtlDays = await defaultGrantDays(db, config.accessGrantDefaultDays);
+	const termDays = expiresAt
+		? Math.max(1, Math.ceil((expiresAt.getTime() - Date.now()) / (24 * 60 * 60 * 1000)))
+		: defaultTtlDays;
+
 	let outcome;
 	try {
 		outcome = await decideRequest(db, {
@@ -96,10 +104,9 @@ async function decide(event: Parameters<Actions[string]>[0], decision: Decision)
 			staffUserId: staff.id,
 			decision,
 			documentIds,
-			allRequestTier,
-			expiresAt,
-			// The operator's setting when one is stored, the environment otherwise.
-			defaultTtlDays: await defaultGrantDays(db, config.accessGrantDefaultDays),
+			tiers: allRequestTier ? ['request'] : [],
+			groupIds: [],
+			termDays,
 			reason
 		});
 	} catch (cause) {

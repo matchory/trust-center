@@ -1,13 +1,16 @@
-import { and, desc, eq, inArray, ne } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, ne } from 'drizzle-orm';
 import {
 	accessRequest,
 	accessRequestDocument,
+	accessRequestTier,
 	document,
 	documentTranslation,
 	requester
 } from '../db/schema';
 import { issueMagicLink } from '../identity/magic-link';
 import { createGrant } from './grants';
+import { honouredTiers, PHASE_TIERS, requestTiers, setRequestTiers } from './scope';
+import type { ScopeTier } from './scope';
 import type { AccessRequestStatus } from '../../access-types';
 import type { Db } from '../db';
 
@@ -21,8 +24,9 @@ export interface RequestableDocument {
 }
 
 /**
- * The only documents a prospect may put in a scope: published and at the request
- * tier. NDA-tier is Phase 3, and a public document needs no request.
+ * The only documents a prospect may put in a scope: published, and at a tier
+ * this phase honours. NDA-tier is Phase 3b, and a public document needs no
+ * request.
  */
 export async function requestableDocuments(db: Db, locale: string): Promise<RequestableDocument[]> {
 	const rows = await db
@@ -32,7 +36,7 @@ export async function requestableDocuments(db: Db, locale: string): Promise<Requ
 			documentTranslation,
 			and(eq(documentTranslation.documentId, document.id), eq(documentTranslation.locale, locale))
 		)
-		.where(and(eq(document.tier, 'request'), eq(document.status, 'published')))
+		.where(and(inArray(document.tier, [...PHASE_TIERS]), eq(document.status, 'published')))
 		.orderBy(document.position);
 
 	// A document with no translation in this locale still has to be selectable,
@@ -46,7 +50,9 @@ export interface SubmitRequestInput {
 	company: string;
 	justification: string | null;
 	documentIds: readonly string[];
-	allRequestTier: boolean;
+	/** Blanket tiers: "everything at this tier". Beside the explicit documents,
+	 *  never implying them. */
+	tiers: readonly string[];
 	/** Recorded on the requester at verification; every mail renders in it. */
 	locale: string;
 	/**
@@ -66,8 +72,13 @@ export async function submitRequest(
 	db: Db,
 	input: SubmitRequestInput
 ): Promise<{ requestId: string; magicLinkToken: string }> {
-	if (!input.allRequestTier && input.documentIds.length === 0) {
-		throw new RequestRejected('empty scope: name at least one document');
+	const tiers = honouredTiers(input.tiers);
+
+	// An empty scope is a submission that asks for nothing. A posted `nda` tier
+	// reduces to nothing here, which is the same refusal Phase 2 gave a posted
+	// NDA-tier document id.
+	if (tiers.length === 0 && input.documentIds.length === 0) {
+		throw new RequestRejected('empty scope: name at least one document or tier');
 	}
 
 	return db.transaction(async (tx) => {
@@ -80,7 +91,7 @@ export async function submitRequest(
 				.where(
 					and(
 						inArray(document.id, [...input.documentIds]),
-						eq(document.tier, 'request'),
+						inArray(document.tier, [...PHASE_TIERS]),
 						eq(document.status, 'published')
 					)
 				);
@@ -94,7 +105,8 @@ export async function submitRequest(
 			.insert(accessRequest)
 			.values({
 				status: 'unverified',
-				allRequestTier: input.allRequestTier,
+				// Written alongside the set until Task 9 drops the column.
+				allRequestTier: tiers.includes('request'),
 				justification: input.justification,
 				source: 'portal',
 				submittedEmail: input.email.trim().toLowerCase(),
@@ -104,6 +116,8 @@ export async function submitRequest(
 			.returning({ id: accessRequest.id });
 
 		if (!row) throw new Error('failed to create access request');
+
+		await setRequestTiers(tx, row.id, tiers);
 
 		if (input.documentIds.length > 0) {
 			await tx.insert(accessRequestDocument).values(
@@ -134,11 +148,10 @@ export interface DecideRequestInput {
 	staffUserId: string;
 	decision: Decision;
 	documentIds: readonly string[];
-	allRequestTier: boolean;
-	expiresAt: Date | null;
-	/** Used when `expiresAt` is null. Passed in rather than read from config;
-	 *  see `createGrant`. */
-	defaultTtlDays: number;
+	tiers: readonly string[];
+	groupIds: readonly string[];
+	/** The approver's chosen term. The route resolves the default. */
+	termDays: number;
 	reason: string | null;
 }
 
@@ -196,22 +209,28 @@ export async function decideRequest(
 		}
 
 		const documentIds = [...new Set(input.documentIds)];
+		const tiers = honouredTiers(input.tiers);
+		// Deliberately NOT validated against the tiers of the documents inside
+		// them. A group is the operator's own object and its membership is
+		// already constrained by what they put in it; re-deriving that at
+		// decision time is the recompute the design rejects.
+		const groupIds = [...new Set(input.groupIds)];
 
-		if (!input.allRequestTier && documentIds.length === 0) {
+		if (documentIds.length === 0 && tiers.length === 0 && groupIds.length === 0) {
 			throw new DecisionRejected('empty scope: an approval must grant something');
 		}
 
 		if (documentIds.length > 0) {
 			// Inside the transaction, and re-checked against the tier rather than
-			// trusted from the form: an NDA-tier document cannot be approved in a
-			// phase that cannot record an acceptance.
+			// trusted from the form: a document at a tier this phase does not
+			// honour cannot be approved in a phase that cannot gate it.
 			const allowed = await tx
 				.select({ id: document.id })
 				.from(document)
 				.where(
 					and(
 						inArray(document.id, documentIds),
-						eq(document.tier, 'request'),
+						inArray(document.tier, [...PHASE_TIERS]),
 						eq(document.status, 'published')
 					)
 				);
@@ -221,19 +240,14 @@ export async function decideRequest(
 			}
 		}
 
-		const expiresAt =
-			input.expiresAt ?? new Date(Date.now() + input.defaultTtlDays * 24 * 60 * 60 * 1000);
-
 		const { grantId } = await createGrant(tx, {
 			requesterId: request.requesterId,
 			requestId: request.id,
 			documentIds,
-			// A bridge until Task 6 gives this the request's own tier set. The
-			// boolean is still what the decision form posts.
-			tiers: input.allRequestTier ? ['request'] : [],
-			groupIds: [],
-			expiresAt,
-			termDays: Math.max(1, Math.ceil((expiresAt.getTime() - Date.now()) / (24 * 60 * 60 * 1000)))
+			tiers,
+			groupIds,
+			termDays: input.termDays,
+			expiresAt: new Date(Date.now() + input.termDays * 24 * 60 * 60 * 1000)
 		});
 
 		await tx
@@ -257,7 +271,7 @@ export interface AdminRequestRow {
 	name: string;
 	company: string;
 	companyDomain: string;
-	allRequestTier: boolean;
+	tiers: ScopeTier[];
 	documentCount: number;
 	createdAt: Date;
 	decidedAt: Date | null;
@@ -274,7 +288,6 @@ export async function listRequestsForAdmin(db: Db): Promise<AdminRequestRow[]> {
 		.select({
 			id: accessRequest.id,
 			status: accessRequest.status,
-			allRequestTier: accessRequest.allRequestTier,
 			createdAt: accessRequest.createdAt,
 			decidedAt: accessRequest.decidedAt,
 			email: requester.email,
@@ -289,22 +302,32 @@ export async function listRequestsForAdmin(db: Db): Promise<AdminRequestRow[]> {
 
 	if (rows.length === 0) return [];
 
-	const scopes = await db
-		.select({ requestId: accessRequestDocument.requestId })
-		.from(accessRequestDocument)
-		.where(
-			inArray(
-				accessRequestDocument.requestId,
-				rows.map((row) => row.id)
-			)
-		);
+	const ids = rows.map((row) => row.id);
+
+	const [scopes, tierRows] = await Promise.all([
+		db
+			.select({ requestId: accessRequestDocument.requestId })
+			.from(accessRequestDocument)
+			.where(inArray(accessRequestDocument.requestId, ids)),
+		db
+			.select({ requestId: accessRequestTier.requestId, tier: accessRequestTier.tier })
+			.from(accessRequestTier)
+			.where(inArray(accessRequestTier.requestId, ids))
+			.orderBy(asc(accessRequestTier.tier))
+	]);
 
 	const counts = new Map<string, number>();
 	for (const scope of scopes) counts.set(scope.requestId, (counts.get(scope.requestId) ?? 0) + 1);
 
+	const tiers = new Map<string, ScopeTier[]>();
+	for (const row of tierRows) {
+		tiers.set(row.requestId, [...(tiers.get(row.requestId) ?? []), row.tier as ScopeTier]);
+	}
+
 	return rows.map((row) => ({
 		...row,
 		status: row.status as AccessRequestStatus,
+		tiers: tiers.get(row.id) ?? [],
 		documentCount: counts.get(row.id) ?? 0
 	}));
 }
@@ -316,6 +339,7 @@ export interface AdminRequestDetail extends AdminRequestRow {
 	requesterLocale: string;
 	/** What the prospect asked for. The approver may narrow or widen it. */
 	requestedDocumentIds: string[];
+	requestedTiers: ScopeTier[];
 }
 
 export async function getRequestForAdmin(db: Db, id: string): Promise<AdminRequestDetail | null> {
@@ -323,7 +347,6 @@ export async function getRequestForAdmin(db: Db, id: string): Promise<AdminReque
 		.select({
 			id: accessRequest.id,
 			status: accessRequest.status,
-			allRequestTier: accessRequest.allRequestTier,
 			justification: accessRequest.justification,
 			reason: accessRequest.reason,
 			createdAt: accessRequest.createdAt,
@@ -342,15 +365,20 @@ export async function getRequestForAdmin(db: Db, id: string): Promise<AdminReque
 
 	if (!row) return null;
 
-	const scoped = await db
-		.select({ documentId: accessRequestDocument.documentId })
-		.from(accessRequestDocument)
-		.where(eq(accessRequestDocument.requestId, row.id));
+	const [scoped, tiers] = await Promise.all([
+		db
+			.select({ documentId: accessRequestDocument.documentId })
+			.from(accessRequestDocument)
+			.where(eq(accessRequestDocument.requestId, row.id)),
+		requestTiers(db, row.id)
+	]);
 
 	return {
 		...row,
 		status: row.status as AccessRequestStatus,
+		tiers,
 		documentCount: scoped.length,
-		requestedDocumentIds: scoped.map((entry) => entry.documentId)
+		requestedDocumentIds: scoped.map((entry) => entry.documentId),
+		requestedTiers: tiers
 	};
 }

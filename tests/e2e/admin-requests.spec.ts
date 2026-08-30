@@ -64,7 +64,7 @@ async function pendingRequest(): Promise<{ requestId: string; email: string }> {
 		company: 'Acme',
 		justification: 'We are evaluating you as a supplier.',
 		documentIds: [docA, docB],
-		allRequestTier: false,
+		tiers: [],
 		locale: 'de',
 		linkTtlMinutes: 60
 	});
@@ -163,7 +163,7 @@ test('the queue never lists an unverified request', async ({ page }) => {
 		company: 'Acme',
 		justification: null,
 		documentIds: [docA],
-		allRequestTier: false,
+		tiers: [],
 		locale: 'de',
 		linkTtlMinutes: 60
 	});

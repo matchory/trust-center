@@ -70,7 +70,9 @@ export const actions: Actions = {
 				company: parsed.data.company,
 				justification: parsed.data.justification ?? null,
 				documentIds,
-				allRequestTier: parsed.data.allRequestTier,
+				// The form still posts one checkbox; Task 8 replaces it with a
+				// checkbox per tier.
+				tiers: parsed.data.allRequestTier ? ['request'] : [],
 				locale: event.locals.locale,
 				linkTtlMinutes: config.magicLinkTtlMinutes
 			});

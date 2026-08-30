@@ -39,7 +39,7 @@
 
 	<dt class="text-neutral-500">{m.admin_scope()}</dt>
 	<dd>
-		{data.request.allRequestTier
+		{data.request.requestedTiers.includes('request')
 			? m.admin_scope_all_request_tier()
 			: `${data.request.documentCount} · ${m.admin_scope_documents()}`}
 	</dd>
@@ -75,7 +75,7 @@
 				<input
 					type="checkbox"
 					name="allRequestTier"
-					checked={data.request.allRequestTier}
+					checked={data.request.requestedTiers.includes('request')}
 					data-testid="decision-all-request-tier"
 				/>
 				<span>{m.admin_scope_all_request_tier()}</span>

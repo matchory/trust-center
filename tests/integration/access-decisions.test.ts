@@ -6,6 +6,8 @@ import {
 	DecisionRejected,
 	submitRequest
 } from '../../src/lib/server/access/requests';
+import { createGroup } from '../../src/lib/server/access/groups';
+import { grantGroups, grantTiers } from '../../src/lib/server/access/scope';
 import { verifyRequest } from '../../src/lib/server/access/verify';
 import { createDb, type Db } from '../../src/lib/server/db';
 import {
@@ -77,7 +79,7 @@ async function pendingRequest(): Promise<string> {
 		company: 'Acme',
 		justification: null,
 		documentIds: [docA, docB],
-		allRequestTier: false,
+		tiers: [],
 		locale: 'de',
 		linkTtlMinutes: 60
 	});
@@ -113,9 +115,9 @@ describe('decideRequest', () => {
 			staffUserId: staffId,
 			decision: 'approve',
 			documentIds: [docA],
-			allRequestTier: false,
-			expiresAt: null,
-			defaultTtlDays: DEFAULT_TTL_DAYS,
+			tiers: [],
+			groupIds: [],
+			termDays: DEFAULT_TTL_DAYS,
 			reason: null
 		});
 
@@ -145,9 +147,9 @@ describe('decideRequest', () => {
 			staffUserId: staffId,
 			decision: 'approve',
 			documentIds: [docA],
-			allRequestTier: false,
-			expiresAt: null,
-			defaultTtlDays: DEFAULT_TTL_DAYS,
+			tiers: [],
+			groupIds: [],
+			termDays: DEFAULT_TTL_DAYS,
 			reason: null
 		});
 
@@ -158,23 +160,29 @@ describe('decideRequest', () => {
 		expect(days).toBeLessThanOrEqual(DEFAULT_TTL_DAYS);
 	});
 
-	it('honours an explicit expiry', async () => {
+	it('honours a term shorter than the default', async () => {
+		// The approver names a term in days rather than an absolute date; the
+		// expiry is derived from it, and the term itself is recorded because the
+		// approver chose it.
 		const requestId = await pendingRequest();
-		const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
 
 		await decideRequest(db, {
 			requestId,
 			staffUserId: staffId,
 			decision: 'approve',
 			documentIds: [],
-			allRequestTier: true,
-			expiresAt,
-			defaultTtlDays: DEFAULT_TTL_DAYS,
+			tiers: ['request'],
+			groupIds: [],
+			termDays: 7,
 			reason: null
 		});
 
 		const [grant] = await grantsFor(requestId);
-		expect(grant?.expiresAt.getTime()).toBe(expiresAt.getTime());
+		const days = (grant!.expiresAt.getTime() - Date.now()) / (24 * 60 * 60 * 1000);
+
+		expect(days).toBeGreaterThan(6);
+		expect(days).toBeLessThanOrEqual(7);
+		expect(grant?.termDays).toBe(7);
 		expect(grant?.allRequestTier).toBe(true);
 	});
 
@@ -186,9 +194,9 @@ describe('decideRequest', () => {
 			staffUserId: staffId,
 			decision: 'deny',
 			documentIds: [],
-			allRequestTier: false,
-			expiresAt: null,
-			defaultTtlDays: DEFAULT_TTL_DAYS,
+			tiers: [],
+			groupIds: [],
+			termDays: DEFAULT_TTL_DAYS,
 			reason: 'Not a customer'
 		});
 
@@ -208,9 +216,9 @@ describe('decideRequest', () => {
 			staffUserId: staffId,
 			decision: 'request_info',
 			documentIds: [],
-			allRequestTier: false,
-			expiresAt: null,
-			defaultTtlDays: DEFAULT_TTL_DAYS,
+			tiers: [],
+			groupIds: [],
+			termDays: DEFAULT_TTL_DAYS,
 			reason: 'Which entity are you contracting through?'
 		});
 
@@ -231,9 +239,9 @@ describe('decideRequest', () => {
 				staffUserId: staffId,
 				decision: 'approve',
 				documentIds: [docA],
-				allRequestTier: false,
-				expiresAt: null,
-				defaultTtlDays: DEFAULT_TTL_DAYS,
+				tiers: [],
+				groupIds: [],
+				termDays: DEFAULT_TTL_DAYS,
 				reason: null
 			});
 
@@ -252,14 +260,35 @@ describe('decideRequest', () => {
 				staffUserId: staffId,
 				decision: 'approve',
 				documentIds: [docA, ndaDoc],
-				allRequestTier: false,
-				expiresAt: null,
-				defaultTtlDays: DEFAULT_TTL_DAYS,
+				tiers: [],
+				groupIds: [],
+				termDays: DEFAULT_TTL_DAYS,
 				reason: null
 			})
 		).rejects.toBeInstanceOf(DecisionRejected);
 
 		expect(await grantsFor(requestId)).toHaveLength(0);
+	});
+
+	it('grants the staff-chosen scope, not the requested one', async () => {
+		// The prospect asked for two documents; the approver replaces that with a
+		// group, which is the saved scope this phase exists to make grantable.
+		const requestId = await pendingRequest();
+		const groupId = await createGroup(db, { slug: `customer-${randomUUID()}`, position: 0 });
+
+		const { grantId } = await decideRequest(db, {
+			requestId,
+			staffUserId: staffId,
+			decision: 'approve',
+			documentIds: [],
+			tiers: [],
+			groupIds: [groupId],
+			termDays: 30,
+			reason: null
+		});
+
+		expect(await grantTiers(db, grantId!)).toEqual([]);
+		expect(await grantGroups(db, grantId!)).toEqual([groupId]);
 	});
 
 	it('refuses an approval that grants nothing', async () => {
@@ -271,9 +300,9 @@ describe('decideRequest', () => {
 				staffUserId: staffId,
 				decision: 'approve',
 				documentIds: [],
-				allRequestTier: false,
-				expiresAt: null,
-				defaultTtlDays: DEFAULT_TTL_DAYS,
+				tiers: [],
+				groupIds: [],
+				termDays: DEFAULT_TTL_DAYS,
 				reason: null
 			})
 		).rejects.toBeInstanceOf(DecisionRejected);
