@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { desc, eq } from 'drizzle-orm';
+import { desc, eq, like, not } from 'drizzle-orm';
 import { requestTiers } from '../../src/lib/server/access/scope';
 import { createDb, type Db } from '../../src/lib/server/db';
 import {
@@ -34,8 +34,13 @@ test.afterAll(async () => {
 // to throttle this file into failing after its fifth test. Cleared per test so
 // each one starts from a known state; the limiter itself has its own coverage
 // in tests/integration/ratelimit.test.ts and in the case below.
+//
+// Every address bucket, and nothing else. A full run submits far more than the
+// five-per-hour the address limiter allows, so specs must clear it. The email
+// buckets are spared because the flood case below asserts one of them, and a
+// delete landing mid-flood is what made that case fail only in full runs.
 test.beforeEach(async () => {
-	await db.delete(rateLimit);
+	await db.delete(rateLimit).where(not(like(rateLimit.key, 'request:email:%')));
 });
 
 async function fillAndSubmit(page: import('@playwright/test').Page, email: string) {
@@ -167,15 +172,19 @@ test('the form offers the nda tier and says an agreement is required', async ({ 
 	await expect(page.getByTestId('request-tier-nda-agreement')).toBeVisible();
 });
 
-test('the submission limiter refuses a flood from one address', async ({ page }) => {
-	// The limiter is a spec §10 requirement, and this is the only place it is
-	// exercised through the real route rather than the module.
+test('the submission limiter refuses a flood to one address', async ({ page }) => {
+	// One email, six times: the *email* limiter is what this asserts. It used to
+	// flood six different emails against the address limiter, whose bucket every
+	// spec in the run shares and several reset — see the fixture above. The
+	// address limiter keeps its coverage in tests/integration/ratelimit.test.ts.
+	const email = `e2e-flood-${Date.now()}@acme.example`;
+
 	for (let i = 0; i < 5; i++) {
-		await fillAndSubmit(page, `e2e-flood-${Date.now()}-${i}@acme.example`);
+		await fillAndSubmit(page, email);
 		await expect(page.getByTestId('request-submitted')).toBeVisible();
 	}
 
-	await fillAndSubmit(page, `e2e-flood-${Date.now()}-last@acme.example`);
+	await fillAndSubmit(page, email);
 
 	await expect(page.getByTestId('request-submitted')).toHaveCount(0);
 	await expect(page.getByText(/Zu viele Anfragen|Too many requests/)).toBeVisible();

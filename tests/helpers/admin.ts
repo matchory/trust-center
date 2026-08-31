@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { expect, test, type Page } from '@playwright/test';
-import { eq } from 'drizzle-orm';
+import { eq, like, not } from 'drizzle-orm';
 import { accessRequest, outboundEmail, rateLimit } from '../../src/lib/server/db/schema';
 import { awaitHydration } from './hydration';
 import type { Db } from '../../src/lib/server/db';
@@ -174,7 +174,13 @@ export async function seedRequestForAgreement(
 	// as per email, and every spec in a run shares one. Reset it the way
 	// `request.spec.ts` and `access-journey.spec.ts` already do — without this
 	// the helper passes alone and fails in a full run.
-	await db.delete(rateLimit);
+	//
+	// Every address bucket, and nothing else. A full run submits far more than
+	// the five-per-hour the address limiter allows, so specs must clear it. The
+	// email buckets are spared because the flood case below asserts one of
+	// them, and a delete landing mid-flood is what made that case fail only in
+	// full runs.
+	await db.delete(rateLimit).where(not(like(rateLimit.key, 'request:email:%')));
 
 	await page.goto('/de/request');
 	await awaitHydration(page);
