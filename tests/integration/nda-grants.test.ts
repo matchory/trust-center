@@ -7,9 +7,11 @@ import { decideRequest } from '../../src/lib/server/access/requests';
 import { createDb, type Db } from '../../src/lib/server/db';
 import {
 	accessGrant,
+	accessGrantAcceptance,
 	accessGroup,
 	document,
 	documentCategory,
+	ndaAcceptance,
 	ndaTemplate,
 	ndaTemplateVersion,
 	requester,
@@ -22,11 +24,14 @@ import {
 	recordRequirements,
 	RequirementNotRenderable
 } from '../../src/lib/server/nda/requirements';
+import { recordAcceptance } from '../../src/lib/server/nda/acceptance';
+import { activateGrants } from '../../src/lib/server/nda/activation';
 import { createTemplate } from '../../src/lib/server/nda/templates';
 import {
 	seedAgreement,
 	seedDocument,
 	seedGrant,
+	seedInertGrant,
 	seedRequest,
 	seedRequester
 } from '../setup/fixtures';
@@ -59,6 +64,7 @@ beforeAll(async () => {
 // a version left behind here makes every later file's template cleanup fail.
 afterAll(async () => {
 	await db.delete(accessGrant);
+	await db.delete(ndaAcceptance);
 	await db.delete(document);
 	await db.delete(documentCategory);
 	await db.delete(accessGroup);
@@ -69,6 +75,7 @@ afterAll(async () => {
 
 beforeEach(async () => {
 	await db.delete(accessGrant);
+	await db.delete(ndaAcceptance);
 	await db.delete(document);
 	await db.delete(documentCategory);
 	await db.delete(accessGroup);
@@ -288,7 +295,8 @@ describe('recording what a grant is waiting on', () => {
 			reason: null,
 			requirements: [{ templateId: acme, disposition: 'waived', reason: 'on paper' }],
 			acceptanceDueDays: 14,
-			locales: LOCALES
+			locales: LOCALES,
+			acceptanceScope: 'person'
 		});
 
 		expect(status).toBe('approved');
@@ -312,7 +320,8 @@ describe('recording what a grant is waiting on', () => {
 			reason: null,
 			requirements: [{ templateId: acme, disposition: 'required', reason: null }],
 			acceptanceDueDays: 14,
-			locales: LOCALES
+			locales: LOCALES,
+			acceptanceScope: 'person'
 		});
 
 		const [row] = await db.select().from(accessGrant).where(eq(accessGrant.id, grantId!));
@@ -320,5 +329,102 @@ describe('recording what a grant is waiting on', () => {
 		expect(row?.acceptanceDueAt).not.toBeNull();
 		// The frozen set travels with the grant, waivers and all.
 		expect(await grantRequirements(db, grantId!)).toHaveLength(1);
+	});
+});
+
+describe('activating what an acceptance completes', () => {
+	let requesterId: string;
+	let templateId: string;
+	let versionId: string;
+	let bodySha: string;
+
+	beforeEach(async () => {
+		requesterId = await seedRequester(db);
+		({
+			templateId,
+			versionId,
+			sha256: bodySha
+		} = await seedAgreement(db, {
+			slug: 'acme',
+			locales: LOCALES
+		}));
+	});
+
+	const accept = () =>
+		recordAcceptance(db, {
+			requesterId,
+			versionId,
+			typedName: 'A',
+			sha256: bodySha,
+			ip: null,
+			ua: null,
+			locales: LOCALES
+		});
+
+	it('activates in one step for a requester who already holds a valid acceptance', async () => {
+		// §9.9's return-visit fast path — and it is the ordinary activation call
+		// made at approval, not a path of its own.
+		await accept();
+
+		const documentId = await seedDocument(db, { slug: 'soc2', tier: 'request' });
+		const requestId = await seedRequest(db, { requesterId });
+
+		const { grantId } = await decideRequest(db, {
+			requestId,
+			staffUserId: staffId,
+			decision: 'approve',
+			documentIds: [documentId],
+			tiers: [],
+			groupIds: [],
+			termDays: 30,
+			reason: null,
+			requirements: [{ templateId, disposition: 'required', reason: null }],
+			acceptanceDueDays: 14,
+			locales: LOCALES,
+			acceptanceScope: 'person'
+		});
+
+		const [row] = await db.select().from(accessGrant).where(eq(accessGrant.id, grantId!));
+		expect(row?.expiresAt).not.toBeNull();
+		expect(row?.acceptanceDueAt).toBeNull();
+
+		const joins = await db
+			.select()
+			.from(accessGrantAcceptance)
+			.where(eq(accessGrantAcceptance.grantId, grantId!));
+		expect(joins).toHaveLength(1);
+	});
+
+	it('activates every eligible grant of that requester from one acceptance', async () => {
+		// A prospect who asked twice before signing once. One acceptance, two
+		// grants — which is why activation is a set operation.
+		const first = await seedInertGrant(db, { requesterId, requires: [templateId] });
+		const second = await seedInertGrant(db, { requesterId, requires: [templateId] });
+		await accept();
+
+		const { activated } = await activateGrants(db, requesterId, {
+			scope: 'person',
+			locales: LOCALES,
+			now: new Date()
+		});
+
+		expect(activated.sort()).toEqual([first, second].sort());
+	});
+
+	it('leaves a grant whose acceptance deadline has passed alone', async () => {
+		// The clause that stops an unrelated click-through in September making an
+		// approval that lapsed in March live again.
+		const lapsed = await seedInertGrant(db, { requesterId, requires: [templateId], dueInDays: -1 });
+		await accept();
+
+		const { activated } = await activateGrants(db, requesterId, {
+			scope: 'person',
+			locales: LOCALES,
+			now: new Date()
+		});
+
+		expect(activated).toEqual([]);
+		const [row] = await db.select().from(accessGrant).where(eq(accessGrant.id, lapsed));
+		expect(row?.expiresAt).toBeNull();
 	});
 });

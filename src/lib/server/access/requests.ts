@@ -9,10 +9,12 @@ import {
 	requester
 } from '../db/schema';
 import { issueMagicLink } from '../identity/magic-link';
+import { activateGrants } from '../nda/activation';
 import { recordRequirements } from '../nda/requirements';
 import { createGrant } from './grants';
 import { honouredTiers, PHASE_TIERS, requestTiers, setRequestTiers } from './scope';
 import type { AccessRequestStatus, ScopeTier } from '../../access-types';
+import type { AcceptanceScope } from '../../nda-types';
 import type { RequirementChoice } from '../nda/requirements';
 import type { Db } from '../db';
 
@@ -162,6 +164,11 @@ export interface DecideRequestInput {
 	acceptanceDueDays: number;
 	/** The enabled locales, so a requirement nobody could be shown is refused. */
 	locales: readonly string[];
+	/**
+	 * Whether an acceptance is valid per person or per company domain. Needed
+	 * here only for the fast path below; the route owns the lookup.
+	 */
+	acceptanceScope: AcceptanceScope;
 }
 
 /**
@@ -267,6 +274,16 @@ export async function decideRequest(
 		});
 
 		await recordRequirements(tx, grantId, input.requirements, input.staffUserId, {
+			locales: input.locales
+		});
+
+		// §9.9's return-visit fast path, and it is this call rather than a path of
+		// its own: a requester who already holds a valid acceptance has every
+		// requirement satisfied the moment they are recorded, so the grant
+		// activates here with no second click-through. For everyone else this is
+		// a no-op — `isActivatable` finds a requirement outstanding.
+		await activateGrants(tx, request.requesterId, {
+			scope: input.acceptanceScope,
 			locales: input.locales
 		});
 

@@ -8,6 +8,8 @@ import { getDb } from '$lib/server/db/instance';
 import { ndaTemplate, ndaTemplateTranslation } from '$lib/server/db/schema';
 import { clientIp } from '$lib/server/http/client-ip';
 import { recordAcceptance, VersionMoved } from '$lib/server/nda/acceptance';
+import { activateGrants } from '$lib/server/nda/activation';
+import { acceptanceScope } from '$lib/server/nda/settings';
 import { effectiveVersion } from '$lib/server/nda/templates';
 import { consumeRateLimit, rateLimitKey } from '$lib/server/ratelimit';
 import type { Actions, PageServerLoad } from './$types';
@@ -106,6 +108,14 @@ export const actions: Actions = {
 			}
 			throw cause;
 		}
+
+		// One acceptance can complete several grants — a prospect who asked twice
+		// before signing once — so this is a set operation, not a call about the
+		// grant that happened to send them here.
+		await activateGrants(db, requester.id, {
+			scope: await acceptanceScope(db),
+			locales: config.locales
+		});
 
 		// The typed name and the address are the requester's own data, so neither
 		// reaches `meta` — §10 keeps that to the identifiers a reader needs.

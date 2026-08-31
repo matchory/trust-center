@@ -19,7 +19,7 @@ import {
 	RequirementNotRenderable,
 	type RequirementChoice
 } from '$lib/server/nda/requirements';
-import { acceptanceDueDays, defaultTemplateId } from '$lib/server/nda/settings';
+import { acceptanceDueDays, acceptanceScope, defaultTemplateId } from '$lib/server/nda/settings';
 import { listTemplates } from '$lib/server/nda/templates';
 import { clientIp } from '$lib/server/http/client-ip';
 import { issueMagicLink } from '$lib/server/identity/magic-link';
@@ -175,7 +175,8 @@ async function decide(event: Parameters<Actions[string]>[0], decision: Decision)
 			reason,
 			requirements,
 			acceptanceDueDays: await acceptanceDueDays(db, config.ndaAcceptanceDueDays),
-			locales: config.locales
+			locales: config.locales,
+			acceptanceScope: await acceptanceScope(db)
 		});
 	} catch (cause) {
 		// A race with another approver, or a scope naming something out of

@@ -122,7 +122,8 @@ describe('decideRequest', () => {
 			reason: null,
 			requirements: [],
 			acceptanceDueDays: 14,
-			locales: LOCALES
+			locales: LOCALES,
+			acceptanceScope: 'person'
 		});
 
 		expect(status).toBe('approved');
@@ -157,7 +158,8 @@ describe('decideRequest', () => {
 			reason: null,
 			requirements: [],
 			acceptanceDueDays: 14,
-			locales: LOCALES
+			locales: LOCALES,
+			acceptanceScope: 'person'
 		});
 
 		const [grant] = await grantsFor(requestId);
@@ -184,7 +186,8 @@ describe('decideRequest', () => {
 			reason: null,
 			requirements: [],
 			acceptanceDueDays: 14,
-			locales: LOCALES
+			locales: LOCALES,
+			acceptanceScope: 'person'
 		});
 
 		const [grant] = await grantsFor(requestId);
@@ -210,7 +213,8 @@ describe('decideRequest', () => {
 			reason: 'Not a customer',
 			requirements: [],
 			acceptanceDueDays: 14,
-			locales: LOCALES
+			locales: LOCALES,
+			acceptanceScope: 'person'
 		});
 
 		expect(status).toBe('denied');
@@ -235,7 +239,8 @@ describe('decideRequest', () => {
 			reason: 'Which entity are you contracting through?',
 			requirements: [],
 			acceptanceDueDays: 14,
-			locales: LOCALES
+			locales: LOCALES,
+			acceptanceScope: 'person'
 		});
 
 		expect(status).toBe('info_requested');
@@ -261,7 +266,8 @@ describe('decideRequest', () => {
 				reason: null,
 				requirements: [],
 				acceptanceDueDays: 14,
-				locales: LOCALES
+				locales: LOCALES,
+				acceptanceScope: 'person'
 			});
 
 		await approve();
@@ -285,7 +291,8 @@ describe('decideRequest', () => {
 				reason: null,
 				requirements: [],
 				acceptanceDueDays: 14,
-				locales: LOCALES
+				locales: LOCALES,
+				acceptanceScope: 'person'
 			})
 		).rejects.toBeInstanceOf(DecisionRejected);
 
@@ -309,7 +316,8 @@ describe('decideRequest', () => {
 			reason: null,
 			requirements: [],
 			acceptanceDueDays: 14,
-			locales: LOCALES
+			locales: LOCALES,
+			acceptanceScope: 'person'
 		});
 
 		expect(await grantTiers(db, grantId!)).toEqual([]);
@@ -331,7 +339,8 @@ describe('decideRequest', () => {
 				reason: null,
 				requirements: [],
 				acceptanceDueDays: 14,
-				locales: LOCALES
+				locales: LOCALES,
+				acceptanceScope: 'person'
 			})
 		).rejects.toBeInstanceOf(DecisionRejected);
 	});
