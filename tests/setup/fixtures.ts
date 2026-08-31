@@ -8,6 +8,12 @@ import {
 	requester
 } from '../../src/lib/server/db/schema';
 import { setRuleTiers } from '../../src/lib/server/access/scope';
+import {
+	createTemplate,
+	createVersion,
+	publishVersion,
+	setVersionBody
+} from '../../src/lib/server/nda/templates';
 import type { Db } from '../../src/lib/server/db';
 
 export async function seedDocument(
@@ -109,4 +115,25 @@ export async function seedRule(
 	if (input.tiers) await setRuleTiers(db, row!.id, input.tiers);
 
 	return row!.id;
+}
+
+/**
+ * A template with one published, locale-complete version — the shape every
+ * later task's tests need and the only one a requester can ever be asked to
+ * sign. Returns the hash so a test can pin what the form rendered.
+ */
+export async function seedAgreement(
+	db: Db,
+	input: { slug: string; locales: readonly string[] }
+): Promise<{ templateId: string; versionId: string; sha256: string }> {
+	const templateId = await createTemplate(db, { slug: input.slug });
+	const { versionId } = await createVersion(db, templateId);
+
+	let sha256 = '';
+	for (const locale of input.locales) {
+		({ sha256 } = await setVersionBody(db, versionId, locale, `# ${input.slug}\n\nBody.`));
+	}
+
+	await publishVersion(db, versionId, input.locales);
+	return { templateId, versionId, sha256 };
 }
