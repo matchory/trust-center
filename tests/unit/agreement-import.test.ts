@@ -68,4 +68,121 @@ describe('downgradeToSubset', () => {
 
 		expect(types.filter((type) => !SUBSET_NODE_TYPES.includes(type as never))).toEqual([]);
 	});
+
+	it('converts a simple table to paragraphs', () => {
+		const tableNode = {
+			type: 'root',
+			children: [
+				{
+					type: 'table',
+					children: [
+						{
+							type: 'tableRow',
+							children: [
+								{
+									type: 'tableCell',
+									children: [{ type: 'text', value: 'Cell 1' }]
+								},
+								{
+									type: 'tableCell',
+									children: [{ type: 'text', value: 'Cell 2' }]
+								}
+							]
+						}
+					]
+				}
+			]
+		};
+
+		const { root, dropped } = downgradeToSubset(tableNode as any);
+
+		expect(dropped).toEqual(['table', 'tableCell', 'tableRow']);
+		expect(root.children.map((node) => node.type)).toEqual(['paragraph']);
+		expect(JSON.stringify(root)).toContain('Cell 1 — Cell 2');
+	});
+
+	it('tracks all unsupported nodes inside table cells', () => {
+		const tableNode = {
+			type: 'root',
+			children: [
+				{
+					type: 'table',
+					children: [
+						{
+							type: 'tableRow',
+							children: [
+								{
+									type: 'tableCell',
+									children: [
+										{
+											type: 'paragraph',
+											children: [
+												{ type: 'text', value: 'See ' },
+												{
+													type: 'link',
+													url: 'https://x.test',
+													children: [{ type: 'text', value: 'link' }]
+												},
+												{ type: 'text', value: ' and ' },
+												{
+													type: 'image',
+													url: 'https://x.test/i.png',
+													alt: 'logo'
+												}
+											]
+										}
+									]
+								}
+							]
+						}
+					]
+				}
+			]
+		};
+
+		const { root, dropped } = downgradeToSubset(tableNode as any);
+
+		expect(dropped).toContain('image');
+		expect(dropped).toContain('link');
+		expect(dropped).toContain('table');
+		expect(JSON.stringify(root)).toContain('See link and');
+		expect(JSON.stringify(root)).not.toContain('https://x.test/i.png');
+	});
+
+	it('drops empty cells from table rows', () => {
+		const tableNode = {
+			type: 'root',
+			children: [
+				{
+					type: 'table',
+					children: [
+						{
+							type: 'tableRow',
+							children: [
+								{
+									type: 'tableCell',
+									children: [{ type: 'image', url: 'https://x.test/1.png', alt: 'only-image' }]
+								},
+								{
+									type: 'tableCell',
+									children: [{ type: 'text', value: 'Text' }]
+								},
+								{
+									type: 'tableCell',
+									children: [{ type: 'image', url: 'https://x.test/2.png', alt: 'only-image' }]
+								}
+							]
+						}
+					]
+				}
+			]
+		};
+
+		const { root, dropped } = downgradeToSubset(tableNode as any);
+
+		expect(dropped).toContain('image');
+		expect(dropped).toContain('table');
+		expect(JSON.stringify(root)).toContain('Text');
+		expect(JSON.stringify(root)).not.toContain('https://x.test');
+	});
 });

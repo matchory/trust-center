@@ -4,6 +4,17 @@ import { SUBSET_NODE_TYPES } from './subset';
 const ALLOWED = new Set<string>(SUBSET_NODE_TYPES);
 
 /**
+ * Generic node type that encompasses all mdast nodes we process. All nodes
+ * have a `type` field; some have `value` (leaves), others have `children`.
+ */
+interface Node {
+	type: string;
+	value?: string;
+	children?: Node[];
+	[key: string]: unknown;
+}
+
+/**
  * §5.1's subset is what an agreement body may contain, and `parseAgreementBody`
  * refuses everything else. That refusal is right for a body somebody typed and
  * wrong for one converted out of a contract: a real DOCX carries links, images
@@ -23,7 +34,7 @@ export interface Downgraded {
 
 export function downgradeToSubset(root: Root): Downgraded {
 	const dropped = new Set<string>();
-	const children = rewriteAll(root.children, dropped);
+	const children = rewriteAll(root.children as Node[], dropped) as RootContent[];
 
 	return {
 		root: { type: 'root', children },
@@ -31,7 +42,7 @@ export function downgradeToSubset(root: Root): Downgraded {
 	};
 }
 
-function rewriteAll(nodes: RootContent[], dropped: Set<string>): RootContent[] {
+function rewriteAll(nodes: Node[], dropped: Set<string>): Node[] {
 	return nodes.flatMap((node) => rewrite(node, dropped));
 }
 
@@ -40,10 +51,10 @@ function rewriteAll(nodes: RootContent[], dropped: Set<string>): RootContent[] {
  * a hoist — a blockquote's children take its place rather than its content
  * being lost with it.
  */
-function rewrite(node: RootContent, dropped: Set<string>): RootContent[] {
+function rewrite(node: Node, dropped: Set<string>): Node[] {
 	if (ALLOWED.has(node.type)) {
-		if ('children' in node && Array.isArray(node.children)) {
-			return [{ ...node, children: rewriteAll(node.children as any[], dropped) }] as RootContent[];
+		if (Array.isArray(node.children)) {
+			return [{ ...node, children: rewriteAll(node.children, dropped) }];
 		}
 		return [node];
 	}
@@ -55,46 +66,70 @@ function rewrite(node: RootContent, dropped: Set<string>): RootContent[] {
 		// agreement is a term nobody agreed to, and the subset cannot render it.
 		case 'link':
 		case 'linkReference':
-			return rewriteAll(node.children as RootContent[], dropped);
+			return rewriteAll(node.children ?? [], dropped);
 
 		// A quote is a paragraph with an indent we cannot express; its contents
 		// are the part that matters.
 		case 'blockquote':
-			return rewriteAll(node.children as RootContent[], dropped);
+			return rewriteAll(node.children ?? [], dropped);
 
-		// Literal text, kept as text. `value` rather than children: these are
-		// leaves.
+		// Block code becomes a paragraph with literal text.
 		case 'code':
+			return [{ type: 'paragraph', children: [{ type: 'text', value: node.value ?? '' }] }];
+
+		// Inline code becomes a text node carrying its literal value. It must not
+		// become a paragraph, which would create invalid mdast (a block inside
+		// phrasing content).
 		case 'inlineCode':
-			return [{ type: 'paragraph', children: [{ type: 'text', value: node.value }] }];
+			return [{ type: 'text', value: node.value ?? '' }];
 
 		// One paragraph per row, cells joined — a table's information is the row,
-		// and a row read aloud is a sentence.
+		// and a row read aloud is a sentence. Table cells contain flow content,
+		// so run them through rewrite() to track all unsupported nodes in `dropped`.
 		case 'table':
-			return ((node.children ?? []) as unknown[]).flatMap((row) => rewriteRow(row, dropped));
+			return (node.children ?? []).flatMap((row) => rewriteRow(row, dropped));
 
-		// Images, raw HTML, footnotes and anything else a parser can produce
-		// carry nothing the subset can show.
+		// Inline nodes with children (like delete/strikethrough) carry contract
+		// text in their decoration. Unwrap them rather than discarding their
+		// content. Only genuine leaves (images, footnotes, HTML) are dropped.
 		default:
+			if (Array.isArray(node.children)) {
+				return rewriteAll(node.children, dropped);
+			}
 			return [];
 	}
 }
 
-function rewriteRow(row: unknown, dropped: Set<string>): RootContent[] {
-	const r = row as any;
-	if (!('children' in r) || !Array.isArray(r.children)) return [];
+function rewriteRow(row: Node, dropped: Set<string>): Node[] {
+	dropped.add('tableRow');
+	if (!Array.isArray(row.children)) return [];
 
-	const cells = (r.children as unknown[])
-		.map((cell: unknown) => textOf(cell, dropped).trim())
+	const cells = row.children
+		.flatMap((cell) => rewriteCell(cell, dropped))
+		.map((node) => textOfNode(node))
 		.filter((text) => text.length > 0);
 
 	if (cells.length === 0) return [];
 	return [{ type: 'paragraph', children: [{ type: 'text', value: cells.join(' — ') }] }];
 }
 
-function textOf(node: unknown, dropped: Set<string>): string {
-	const n = node as any;
-	if ('value' in n && typeof n.value === 'string') return n.value;
-	if (!('children' in n) || !Array.isArray(n.children)) return '';
-	return (n.children as unknown[]).map((child: unknown) => textOf(child, dropped)).join('');
+/**
+ * Rewrite a table cell's content. Run it through rewrite() so that any
+ * unsupported node types (like images, links) inside the cell are both
+ * mapped and recorded in `dropped`.
+ */
+function rewriteCell(cell: Node, dropped: Set<string>): Node[] {
+	dropped.add('tableCell');
+	if (!Array.isArray(cell.children)) return [];
+
+	const rewritten = cell.children.flatMap((child) => rewrite(child, dropped));
+	// Flatten nested paragraph structures from things like inlineCode
+	// inside cell content, and preserve text nodes.
+	return rewritten;
+}
+
+function textOfNode(node: Node): string {
+	if (typeof node.value === 'string') return node.value;
+	if (!Array.isArray(node.children)) return '';
+	return node.children.map((child) => textOfNode(child)).join('');
 }
