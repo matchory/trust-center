@@ -55,7 +55,10 @@ beforeAll(async () => {
 afterAll(async () => {
 	// The last case leaves a group pointing at a template; `access_group
 	// .nda_template_id` is ON DELETE RESTRICT, so another file's cleanup would
-	// fail on it. Children before parents, as everywhere else.
+	// fail on it. Children before parents, as everywhere else. A surviving
+	// grant is a child of the group too (`access_grant_group.group_id`, also
+	// RESTRICT), so it must go first — see nda-delivery.test.ts's `reset`.
+	await db.delete(accessGrant);
 	await db.delete(accessGroup);
 	await db.delete(ndaTemplateVersion);
 	await db.delete(ndaTemplate);
@@ -69,6 +72,10 @@ beforeEach(async () => {
 	await db.delete(outboundEmail);
 	// Children before parents: `access_group.nda_template_id` is ON DELETE
 	// RESTRICT, and a group left behind would gate `docId` for the next case.
+	// A grant referencing the group (`access_grant_group.group_id`, also
+	// RESTRICT) must go first, or the group delete throws 23001 intermittently
+	// depending on whether a prior case in this file minted a grant.
+	await db.delete(accessGrant);
 	await db.delete(ndaAcceptance);
 	await db.delete(accessGroup);
 	await db.delete(ndaTemplateVersion);
