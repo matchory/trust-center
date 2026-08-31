@@ -89,12 +89,15 @@ describe('scope sets', () => {
 		expect(await ruleTiers(db, ruleId)).toEqual(['nda', 'request']);
 	});
 
-	it('honours only the tiers this phase implements', () => {
-		// The NDA tier is storable and not yet honoured. Phase 3b deletes this
-		// filter; until then a rule naming it must not widen anything.
-		expect(honouredTiers(['request', 'nda'])).toEqual(['request']);
-		expect(honouredTiers(['nda'])).toEqual([]);
+	it('honours both tiers, and still nothing outside the set', () => {
+		// 3b honours the NDA tier: an acceptance can be recorded, so a grant
+		// naming it is one the system can complete. The filter stays because its
+		// other job never went away — a value from a row or a form that is not a
+		// tier at all must not survive it.
+		expect(honouredTiers(['request', 'nda'])).toEqual(['request', 'nda']);
+		expect(honouredTiers(['nda'])).toEqual(['nda']);
 		expect(honouredTiers([])).toEqual([]);
+		expect(honouredTiers(['public', 'nonsense'])).toEqual([]);
 	});
 });
 

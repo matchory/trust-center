@@ -53,6 +53,12 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
+	// The last case leaves a group pointing at a template; `access_group
+	// .nda_template_id` is ON DELETE RESTRICT, so another file's cleanup would
+	// fail on it. Children before parents, as everywhere else.
+	await db.delete(accessGroup);
+	await db.delete(ndaTemplateVersion);
+	await db.delete(ndaTemplate);
 	await close();
 });
 

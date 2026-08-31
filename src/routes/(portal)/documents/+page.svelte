@@ -77,10 +77,18 @@
 								{m.documents_request_access()}
 							</a>
 						{:else if doc.tier === 'nda'}
-							<!-- Phase 2 cannot honour an NDA, so this tier states its condition
-							     and offers no route. -->
+							<!-- The read model gives a gated row no file here either. The tier
+							     still states its condition, but it is a route now rather than a
+							     dead end: 3b can honour it. -->
 							<Badge>{m.documents_tier_nda()}</Badge>
 							<span class="text-sm text-neutral-500">{m.documents_nda_notice()}</span>
+							<a
+								data-testid="request-access-{doc.slug}"
+								href={localizePath('/request', data.locale)}
+								class="rounded bg-[var(--tc-primary,#171717)] px-3 py-1.5 text-sm font-medium text-white"
+							>
+								{m.documents_request_access()}
+							</a>
 						{:else if doc.file && validity}
 							<Badge tone={TONE[validity]}>{LABEL[validity]()}</Badge>
 							<span class="text-sm text-neutral-500">

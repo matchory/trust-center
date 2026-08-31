@@ -6,7 +6,8 @@ import {
 	accessGroup,
 	document,
 	documentCategory,
-	ndaTemplate
+	ndaTemplate,
+	ndaTemplateVersion
 } from '../../src/lib/server/db/schema';
 import {
 	createGroup,
@@ -36,6 +37,7 @@ beforeAll(() => {
 // this one alphabetically and does exactly that in its own beforeEach.
 afterAll(async () => {
 	await db.delete(accessGroup);
+	await db.delete(ndaTemplateVersion);
 	await db.delete(ndaTemplate);
 	await close();
 });
@@ -48,6 +50,7 @@ describe('access groups', () => {
 		// this file's whole premise is that no group exists when a case starts.
 		await db.delete(accessGrant);
 		await db.delete(accessGroup);
+		await db.delete(ndaTemplateVersion);
 		await db.delete(ndaTemplate);
 	});
 

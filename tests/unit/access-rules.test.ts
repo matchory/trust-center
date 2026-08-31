@@ -127,25 +127,27 @@ describe('decideFromRules', () => {
 		});
 	});
 
-	it('drops a tier this phase does not honour', () => {
-		// A rule may name `nda`, because the table admits it and the backfill
-		// preserved it. Dropping it here is what stops an NDA-tier document
-		// reaching a requester with no acceptance on file.
+	it('keeps both tiers now that the phase honours them', () => {
+		// `nda` used to be dropped here, because nothing could record an
+		// acceptance. It is kept now — what stops a pattern match handing out
+		// gated documents is `blanketNeedsAHuman` in verify.ts, which sends a
+		// blanket carrying an agreement to a person instead of dropping the tier
+		// and quietly granting the rest.
 		const decision = decideFromRules(
 			[rule({ pattern: 'acme.example', action: 'auto_approve', tiers: ['request', 'nda'] })],
 			'acme.example'
 		);
 
-		expect(decision.tiers).toEqual(['request']);
+		expect(decision.tiers).toEqual(['request', 'nda']);
 	});
 
-	it('drops the whole blanket when a rule names only nda', () => {
+	it('keeps a blanket a rule names as nda alone', () => {
 		const decision = decideFromRules(
 			[rule({ pattern: 'acme.example', action: 'auto_approve', tiers: ['nda'] })],
 			'acme.example'
 		);
 
-		expect(decision.tiers).toEqual([]);
+		expect(decision.tiers).toEqual(['nda']);
 	});
 });
 

@@ -49,6 +49,12 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
+	// Children before parents: `nda_acceptance.version_id` and
+	// `access_group.nda_template_id` are both ON DELETE RESTRICT, so rows left
+	// here fail another file's cleanup rather than this one's.
+	await db.delete(ndaAcceptance);
+	await db.delete(ndaTemplateVersion);
+	await db.delete(ndaTemplate);
 	await close();
 });
 

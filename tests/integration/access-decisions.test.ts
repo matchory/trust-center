@@ -276,27 +276,29 @@ describe('decideRequest', () => {
 		expect(await grantsFor(requestId)).toHaveLength(1);
 	});
 
-	it('refuses an approval naming an NDA-tier document', async () => {
+	it('approves a decision naming an NDA-tier document now that the tier is honoured', async () => {
+		// This refused until 3b, because nothing could record an acceptance. What
+		// stands in its place is not a refusal but a wait: with no requirement
+		// confirmed the grant is minted live, and §7.3's delivery re-check is what
+		// keeps the document itself closed until its agreement is satisfied.
 		const requestId = await pendingRequest();
 
-		await expect(
-			decideRequest(db, {
-				requestId,
-				staffUserId: staffId,
-				decision: 'approve',
-				documentIds: [docA, ndaDoc],
-				tiers: [],
-				groupIds: [],
-				termDays: DEFAULT_TTL_DAYS,
-				reason: null,
-				requirements: [],
-				acceptanceDueDays: 14,
-				locales: LOCALES,
-				acceptanceScope: 'person'
-			})
-		).rejects.toBeInstanceOf(DecisionRejected);
+		await decideRequest(db, {
+			requestId,
+			staffUserId: staffId,
+			decision: 'approve',
+			documentIds: [docA, ndaDoc],
+			tiers: [],
+			groupIds: [],
+			termDays: DEFAULT_TTL_DAYS,
+			reason: null,
+			requirements: [],
+			acceptanceDueDays: 14,
+			locales: LOCALES,
+			acceptanceScope: 'person'
+		});
 
-		expect(await grantsFor(requestId)).toHaveLength(0);
+		expect(await grantsFor(requestId)).toHaveLength(1);
 	});
 
 	it('grants the staff-chosen scope, not the requested one', async () => {

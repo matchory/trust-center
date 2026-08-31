@@ -25,16 +25,25 @@ export interface RequestableDocument {
 	id: string;
 	slug: string;
 	title: string;
+	/**
+	 * §9.1: the form says so before somebody asks, rather than letting the first
+	 * news of it be an approval mail that opens nothing.
+	 */
+	requiresAgreement: boolean;
 }
 
 /**
  * The only documents a prospect may put in a scope: published, and at a tier
- * this phase honours. NDA-tier is Phase 3b, and a public document needs no
- * request.
+ * this phase honours. A public document needs no request.
  */
 export async function requestableDocuments(db: Db, locale: string): Promise<RequestableDocument[]> {
 	const rows = await db
-		.select({ id: document.id, slug: document.slug, title: documentTranslation.title })
+		.select({
+			id: document.id,
+			slug: document.slug,
+			title: documentTranslation.title,
+			tier: document.tier
+		})
 		.from(document)
 		.leftJoin(
 			documentTranslation,
@@ -45,7 +54,16 @@ export async function requestableDocuments(db: Db, locale: string): Promise<Requ
 
 	// A document with no translation in this locale still has to be selectable,
 	// so the slug stands in — the same fallback the portal already uses.
-	return rows.map((row) => ({ id: row.id, slug: row.slug, title: row.title ?? row.slug }));
+	return rows.map((row) => ({
+		id: row.id,
+		slug: row.slug,
+		title: row.title ?? row.slug,
+		// The tier, not a resolved proposal: a group carrying an agreement gates
+		// its documents too, but saying so here would need the whole proposal per
+		// row on a public, uncached page. The tier is the part that is always
+		// true, and the approval mail carries the rest.
+		requiresAgreement: row.tier === 'nda'
+	}));
 }
 
 export interface SubmitRequestInput {

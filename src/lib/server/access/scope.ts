@@ -6,12 +6,15 @@ import type { ScopeTier } from '../../access-types';
 import type { Db } from '../db';
 
 /**
- * What this phase actually honours. `nda` is storable — the backfill preserves
- * a rule that named it — and is not yet granted, because nothing can record an
- * acceptance until Phase 3b. This constant is the single place that refusal
- * lives, replacing Phase 2's `PHASE_CEILING`, and 3b deletes it.
+ * What this phase honours. 3b honours both: the `nda` tier is reachable because
+ * an acceptance can now be recorded, and a grant that needs one waits inert
+ * until it is.
+ *
+ * Kept as a named constant rather than deleted — `honouredTiers` keeps its
+ * meaning, no call site changes, and "which tiers does this deployment gate?"
+ * still has exactly one answer.
  */
-export const PHASE_TIERS: readonly ScopeTier[] = ['request'];
+export const PHASE_TIERS: readonly ScopeTier[] = SCOPE_TIERS;
 
 /** `PHASE_TIERS ⊆ SCOPE_TIERS`, so filtering the phase set is the whole test. */
 export function honouredTiers(tiers: readonly string[]): ScopeTier[] {

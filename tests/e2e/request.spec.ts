@@ -155,13 +155,16 @@ test('an unverified request holds the submission and names no requester', async 
 	expect(await requestTiers(db, row!.id)).toEqual(['request']);
 });
 
-test('the form does not offer a tier this phase cannot honour', async ({ page }) => {
-	// Not rendered at all rather than rendered-and-refused: `load` returns only
-	// the tiers this phase honours, so there is no conditional to delete.
+test('the form offers the nda tier and says an agreement is required', async ({ page }) => {
+	// The subject of this case did not change, only the answer. 3b honours the
+	// NDA tier, so `load` returns it — and §9.1 wants a prospect to know what
+	// they are asking for before they ask, rather than first hearing of it in an
+	// approval mail that opens nothing.
 	await page.goto('/de/request');
 
 	await expect(page.getByTestId('request-tier-request')).toBeVisible();
-	await expect(page.getByTestId('request-tier-nda')).toHaveCount(0);
+	await expect(page.getByTestId('request-tier-nda')).toBeVisible();
+	await expect(page.getByTestId('request-tier-nda-agreement')).toBeVisible();
 });
 
 test('the submission limiter refuses a flood from one address', async ({ page }) => {

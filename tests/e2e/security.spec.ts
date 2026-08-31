@@ -32,7 +32,11 @@ test.beforeAll(async () => {
 
 	for (const [slug, tier] of [
 		['public-fixture', 'public'],
-		['gated-fixture', 'request']
+		['gated-fixture', 'request'],
+		// 3b honours this tier, so every guarantee below has to hold for it too —
+		// a tier that became reachable without being added here would be covered
+		// by nothing.
+		['nda-fixture', 'nda']
 	] as const) {
 		const id = await createDocument(db, { slug, categoryId, tier, position: 0 });
 		await setDocumentTranslation(db, id, 'de', { title: `Fixture ${slug}`, summary: null });
@@ -42,7 +46,7 @@ test.beforeAll(async () => {
 
 	const storage = createLocalStorage(process.env.STORAGE_DIR ?? './data/storage');
 
-	for (const slug of ['public-fixture', 'gated-fixture']) {
+	for (const slug of ['public-fixture', 'gated-fixture', 'nda-fixture']) {
 		const [row] = await db
 			.select({ id: document.id })
 			.from(document)
@@ -70,6 +74,7 @@ test.beforeAll(async () => {
 test.afterAll(async () => {
 	await db.delete(document).where(eq(document.slug, 'public-fixture'));
 	await db.delete(document).where(eq(document.slug, 'gated-fixture'));
+	await db.delete(document).where(eq(document.slug, 'nda-fixture'));
 	await db.delete(documentCategory).where(eq(documentCategory.slug, 'security-fixture'));
 	await closeDb();
 });
@@ -92,6 +97,26 @@ test("a gated document's file never appears in public HTML", async ({ page }) =>
 	await expect(page.getByTestId('request-access-gated-fixture')).toBeVisible();
 
 	await expect(page.getByTestId('download-gated-fixture')).toHaveCount(0);
+	expect(await page.content()).not.toContain(file.id);
+});
+
+test("an nda-tier document's file never appears in public HTML either", async ({ page }) => {
+	// The same guarantee at the tier 3b made reachable. It is named, and it now
+	// offers a route to ask — but the file id is still the download URL, and it
+	// stays out of the page.
+	const [file] = await db
+		.select({ id: documentFile.id })
+		.from(documentFile)
+		.innerJoin(document, eq(documentFile.documentId, document.id))
+		.where(eq(document.slug, 'nda-fixture'));
+	if (!file) throw new Error('fixture file missing — check beforeAll');
+
+	await page.goto('/de/documents');
+
+	await expect(page.getByTestId('document-nda-fixture')).toBeVisible();
+	await expect(page.getByTestId('request-access-nda-fixture')).toBeVisible();
+
+	await expect(page.getByTestId('download-nda-fixture')).toHaveCount(0);
 	expect(await page.content()).not.toContain(file.id);
 });
 
@@ -120,15 +145,19 @@ test('serves a public document file and records exactly one audit event', async 
 });
 
 test('refuses to serve a gated document file', async ({ request }) => {
-	const [file] = await db
-		.select({ id: documentFile.id })
-		.from(documentFile)
-		.innerJoin(document, eq(documentFile.documentId, document.id))
-		.where(eq(document.slug, 'gated-fixture'));
-	if (!file) throw new Error('fixture file missing — check beforeAll');
+	// Both gated tiers: the public endpoint matches on `public` alone, so adding
+	// a tier must not widen it by omission.
+	for (const slug of ['gated-fixture', 'nda-fixture']) {
+		const [file] = await db
+			.select({ id: documentFile.id })
+			.from(documentFile)
+			.innerJoin(document, eq(documentFile.documentId, document.id))
+			.where(eq(document.slug, slug));
+		if (!file) throw new Error(`fixture file ${slug} missing — check beforeAll`);
 
-	const response = await request.get(`/api/documents/${file.id}`);
-	expect(response.status()).toBe(404);
+		const response = await request.get(`/api/documents/${file.id}`);
+		expect(response.status(), `${slug} must not be served publicly`).toBe(404);
+	}
 });
 
 test('exposes no route that serves a storage key directly', async ({ request }) => {
@@ -182,6 +211,7 @@ test('serves a content security policy that permits only same-origin resources',
 test('a gated document never appears in the sitemap', async ({ request }) => {
 	const body = await (await request.get('/sitemap.xml')).text();
 	expect(body).not.toContain('gated-fixture');
+	expect(body).not.toContain('nda-fixture');
 });
 
 test('no public route sets a cookie', async ({ page, context }) => {

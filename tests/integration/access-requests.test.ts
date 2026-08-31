@@ -10,11 +10,7 @@ import {
 	documentTranslation,
 	magicLink
 } from '../../src/lib/server/db/schema';
-import {
-	requestableDocuments,
-	RequestRejected,
-	submitRequest
-} from '../../src/lib/server/access/requests';
+import { requestableDocuments, submitRequest } from '../../src/lib/server/access/requests';
 import { requestTiers } from '../../src/lib/server/access/scope';
 import type { Db } from '../../src/lib/server/db';
 
@@ -76,12 +72,13 @@ const submission = {
 };
 
 describe('requestableDocuments', () => {
-	it('offers published request-tier documents only', async () => {
+	it('offers every published gated document, at either tier', async () => {
 		const ids = (await requestableDocuments(db, 'en')).map((row) => row.id);
 
 		expect(ids).toContain(requestTierId);
-		// NDA-tier is Phase 3. Offering it would produce a grant nothing can honour.
-		expect(ids).not.toContain(ndaTierId);
+		// On offer from 3b: an acceptance can be recorded, so a grant naming it is
+		// one the system can honour. The form says an agreement is required.
+		expect(ids).toContain(ndaTierId);
 		// A public document needs no request.
 		expect(ids).not.toContain(publicTierId);
 		// A draft is not published, so it is not on offer either.
@@ -143,13 +140,13 @@ describe('submitRequest', () => {
 	});
 
 	it('refuses a document the requester may not ask for', async () => {
-		// The picker filters NDA-tier out; the server must too, or the filter is
-		// decoration rather than a control.
+		// The picker filters public documents out; the server must too, or the
+		// filter is decoration rather than a control.
 		await expect(
 			submitRequest(db, {
 				...submission,
 				email: `person-${randomUUID()}@acme.example`,
-				documentIds: [ndaTierId],
+				documentIds: [publicTierId],
 				tiers: []
 			})
 		).rejects.toThrow(/not requestable/i);
@@ -175,7 +172,7 @@ describe('submitRequest', () => {
 			submitRequest(db, {
 				...submission,
 				email: `person-${randomUUID()}@acme.example`,
-				documentIds: [ndaTierId],
+				documentIds: [publicTierId],
 				tiers: []
 			})
 		).rejects.toThrow();
@@ -194,17 +191,19 @@ describe('submitRequest', () => {
 		expect(await requestTiers(db, requestId)).toEqual(['request']);
 	});
 
-	it('refuses a submitted nda tier in this phase', async () => {
-		// The public form does not offer it; this is the server refusing a posted
-		// one, which is where Phase 2 put the same guarantee.
-		await expect(
-			submitRequest(db, {
-				...submission,
-				email: `person-${randomUUID()}@acme.example`,
-				documentIds: [],
-				tiers: ['nda']
-			})
-		).rejects.toThrow(RequestRejected);
+	it('accepts a submitted nda tier now that the phase honours it', async () => {
+		// Refused until 3b, because nothing could record an acceptance. What
+		// bounds it now is not the submission but the approval: a blanket carrying
+		// an agreement cannot be auto-approved (§10.1), and delivery re-checks per
+		// document (§7.3).
+		const { requestId } = await submitRequest(db, {
+			...submission,
+			email: `person-${randomUUID()}@acme.example`,
+			documentIds: [],
+			tiers: ['nda']
+		});
+
+		expect(await requestTiers(db, requestId)).toEqual(['nda']);
 	});
 
 	it('refuses a submission that names nothing at all', async () => {

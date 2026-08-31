@@ -30,7 +30,9 @@
 	<!-- The same renderer the admin preview uses. A second implementation is how
 	     the thing an operator approved and the thing a requester signs come to
 	     differ. -->
-	<article data-testid="agreement-body" class="max-w-prose rounded-lg border bg-white p-6">
+	<!-- The test id lives on the renderer, not here: two elements carrying it
+	     resolve to two matches and every assertion on it becomes ambiguous. -->
+	<article class="max-w-prose rounded-lg border bg-white p-6">
 		<AgreementBody root={data.agreement.root} />
 	</article>
 

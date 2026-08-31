@@ -27,6 +27,23 @@
 		: undefined}
 />
 
+{#if data.outstanding.length > 0}
+	<!-- §9.1: one step is left, said where the requester actually looks. The
+	     approval mail says it too, but a mailbox is not where somebody goes when
+	     they wonder why their documents are not here. -->
+	<p
+		data-testid="grant-pending-acceptance"
+		class="max-w-prose rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm"
+	>
+		{m.access_pending_acceptance({ count: data.outstanding.length })}
+		<a
+			data-testid="access-open-agreements"
+			href={localizePath('/access/agreements', data.locale)}
+			class="font-medium underline">{m.agreements_title()}</a
+		>
+	</p>
+{/if}
+
 {#if data.documents.length === 0}
 	<!-- Also what a requester whose request is still pending sees: there is
 	     nothing to show them yet, and the mail tells them when there is. -->

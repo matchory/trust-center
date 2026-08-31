@@ -1,5 +1,5 @@
 import { error, type RequestEvent } from '@sveltejs/kit';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, inArray } from 'drizzle-orm';
 import { mayDownload } from '../access/grants';
 import { recordEvent } from '../audit';
 import { getDb } from '../db/instance';
@@ -11,6 +11,7 @@ import { getStorage, StorageObjectNotFound } from '../storage';
 import { stampPdf } from './watermark';
 import { m } from '../../paraglide/messages.js';
 import { assertIsLocale } from '../../paraglide/runtime.js';
+import type { DocumentTier } from '../../content-types';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -39,8 +40,12 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
  */
 export async function serveDocumentFile(
 	event: RequestEvent<{ fileId: string }>,
-	tier: 'public' | 'request'
+	tiers: readonly DocumentTier[]
 ): Promise<Response> {
+	// Which route this is, restated for readability. `public` is the whole of
+	// the ungated set, so anything else is gated.
+	const gated = !tiers.includes('public');
+
 	const { params, request, locals } = event;
 
 	// A malformed id must 404 like an unknown one rather than surfacing a
@@ -69,7 +74,8 @@ export async function serveDocumentFile(
 			sizeBytes: documentFile.sizeBytes,
 			sha256: documentFile.sha256,
 			locale: documentFile.locale,
-			version: documentFile.version
+			version: documentFile.version,
+			tier: document.tier
 		})
 		.from(documentFile)
 		.innerJoin(document, eq(documentFile.documentId, document.id))
@@ -77,7 +83,7 @@ export async function serveDocumentFile(
 			and(
 				eq(documentFile.id, params.fileId),
 				eq(document.status, 'published'),
-				eq(document.tier, tier)
+				inArray(document.tier, [...tiers])
 			)
 		)
 		.limit(1);
@@ -86,7 +92,7 @@ export async function serveDocumentFile(
 
 	const requester = locals.requester;
 
-	if (tier === 'request') {
+	if (gated) {
 		// A 404 rather than a 403: an unauthorized caller learns nothing about
 		// whether this file id exists.
 		if (!requester) error(404, 'Not found');
@@ -98,7 +104,7 @@ export async function serveDocumentFile(
 	let contentLength: number;
 
 	try {
-		if (tier === 'request' && requester) {
+		if (gated && requester) {
 			// Buffered, because watermarking is not streamable. The bound is
 			// MAX_UPLOAD_MB, the same ceiling that admitted the file. Document
 			// uploads are PDF-only, so the stamper always applies.
@@ -146,8 +152,8 @@ export async function serveDocumentFile(
 			locale: row.locale,
 			version: row.version,
 			sha256: row.sha256,
-			tier,
-			watermarked: tier === 'request'
+			tier: row.tier,
+			watermarked: gated
 		}
 	});
 

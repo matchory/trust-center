@@ -18,9 +18,9 @@ export const load: PageServerLoad = async ({ locals, setHeaders }) => {
 
 	return {
 		documents: await requestableDocuments(getDb(), locals.locale),
-		// Only the tiers this phase honours, so the NDA tier is not rendered at
-		// all rather than rendered and refused — there is no conditional in the
-		// template for somebody to delete.
+		// Only the tiers this phase honours. From 3b that is both of them, and the
+		// NDA tier is labelled as requiring an agreement rather than hidden — a
+		// prospect should know what they are asking for before they ask.
 		tiers: [...PHASE_TIERS]
 	};
 };

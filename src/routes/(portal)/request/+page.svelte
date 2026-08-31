@@ -82,14 +82,31 @@
 			{#each data.tiers as tier (tier)}
 				<label class="mb-2 flex items-center gap-2">
 					<input data-testid="request-tier-{tier}" type="checkbox" name="tiers" value={tier} />
-					<span>{TIER_LABEL[tier]?.() ?? tier}</span>
+					<span>
+						{TIER_LABEL[tier]?.() ?? tier}
+						{#if tier === 'nda'}
+							<span data-testid="request-tier-nda-agreement" class="text-sm text-neutral-600">
+								— {m.request_requires_agreement()}
+							</span>
+						{/if}
+					</span>
 				</label>
 			{/each}
 
 			{#each data.documents as doc (doc.id)}
 				<label class="flex items-center gap-2">
 					<input type="checkbox" name="documentIds" value={doc.id} />
-					<span>{doc.title}</span>
+					<span>
+						{doc.title}
+						{#if doc.requiresAgreement}
+							<span
+								data-testid="request-document-agreement-{doc.slug}"
+								class="text-sm text-neutral-600"
+							>
+								— {m.request_requires_agreement()}
+							</span>
+						{/if}
+					</span>
 				</label>
 			{:else}
 				<p class="text-sm text-neutral-600">{m.request_none_available()}</p>

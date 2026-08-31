@@ -3,6 +3,8 @@ import { and, desc, eq, inArray, isNotNull } from 'drizzle-orm';
 import { localizePath } from '$lib/i18n/locale';
 import { grantedDocuments } from '$lib/server/access/grants';
 import { getConfig } from '$lib/server/config';
+import { outstandingAgreements } from '$lib/server/nda/acceptance';
+import { acceptanceScope } from '$lib/server/nda/settings';
 import { getDb } from '$lib/server/db/instance';
 import {
 	document,
@@ -22,7 +24,17 @@ export const load: PageServerLoad = async ({ locals }) => {
 	if (!requester) redirect(303, localizePath('/request', locals.locale));
 
 	const db = getDb();
-	const granted = await grantedDocuments(db, requester.id, { locales: getConfig().locales });
+	const config = getConfig();
+	const granted = await grantedDocuments(db, requester.id, { locales: config.locales });
+
+	// What they still owe. Without this a requester whose grant is waiting on an
+	// acceptance lands here, sees an empty page, and has no way to learn that one
+	// step is left — the approval mail is the only place it was ever said.
+	const outstanding = await outstandingAgreements(db, requester.id, {
+		locales: config.locales,
+		locale: locals.locale,
+		scope: await acceptanceScope(db)
+	});
 
 	// Listed whatever the state of their grants: a record is evidence of what
 	// they signed, and it outlives the access it was signed for.
@@ -50,7 +62,7 @@ export const load: PageServerLoad = async ({ locals }) => {
 	const acceptanceRecords = records.map((row) => ({ ...row, name: row.name ?? row.slug }));
 
 	if (granted.length === 0) {
-		return { documents: [], expiresAt: null, records: acceptanceRecords };
+		return { documents: [], expiresAt: null, records: acceptanceRecords, outstanding };
 	}
 
 	const rows = await db
@@ -100,6 +112,7 @@ export const load: PageServerLoad = async ({ locals }) => {
 
 	return {
 		expiresAt,
+		outstanding,
 		records: acceptanceRecords,
 		documents: rows.map((row) => ({ ...row, title: row.title ?? row.slug }))
 	};
