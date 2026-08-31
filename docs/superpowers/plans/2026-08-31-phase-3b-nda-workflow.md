@@ -2736,7 +2736,7 @@ it('activates every eligible grant of that requester from one acceptance', async
 
 **Files:**
 - Create: `assets/fonts/{regular,bold,italic,bold-italic}.ttf`, `assets/fonts/OFL.txt`, `src/lib/server/pdf/fonts.ts`, `src/lib/server/pdf/layout.ts`, `tests/unit/pdf-layout.test.ts`
-- Modify: `src/lib/server/delivery/watermark.ts`, `tests/unit/watermark.test.ts`, `src/lib/server/config/parse.ts`, `.env.example`, `Dockerfile`, `package.json`
+- Modify: `src/lib/server/delivery/watermark.ts`, `src/lib/server/delivery/serve.ts` (the only `stampPdf` call site — it gains the new argument, and without it `pnpm check` fails at the end of this task), `tests/unit/watermark.test.ts`, `src/lib/server/config/parse.ts`, `.env.example`, `Dockerfile`, `package.json`
 
 **Interfaces:**
 - Consumes: `parseAgreementBody` (Task 1).
@@ -2861,7 +2861,7 @@ Keep it under ~200 lines. If it grows past that, the cursor wants to be its own 
 	const font = faces.regular;
 ```
 
-and **delete `toWinAnsi()` entirely**. Add to `tests/unit/watermark.test.ts`:
+and **delete `toWinAnsi()` entirely**. Add to `tests/unit/watermark.test.ts` — declaring its own `const FONT_DIR = './assets/fonts';`, because vitest files share no module scope and the one in `pdf-layout.test.ts` is not visible here:
 
 ```ts
 it('stamps a name outside WinAnsi without mangling it', async () => {
@@ -3481,8 +3481,12 @@ Add to `admin/actions.ts`:
  * slugged type.
  */
 export function uniqueViolationField(cause: unknown, field: string): AdminActionFailure | null {
-	const code = (cause as { cause?: { code?: string } })?.cause?.code;
-	return code === '23505' ? { field, message: 'duplicate' } : null;
+	// `cause.code`, not `cause.cause.code`: this is the shape postgres-js
+	// actually throws, and it is what `groups.ts:129` already matches on for
+	// 23503. Reading one level deeper produces a helper that never matches and a
+	// duplicate-slug 500 that looks fixed.
+	if (typeof cause !== 'object' || cause === null || !('code' in cause)) return null;
+	return cause.code === '23505' ? { field, message: 'duplicate' } : null;
 }
 ```
 
