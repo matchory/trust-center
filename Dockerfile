@@ -34,6 +34,9 @@ COPY --from=build /app/build        ./build
 # The migrations travel with the image: the server applies them at start unless
 # RUN_MIGRATIONS=false.
 COPY --from=build /app/drizzle      ./drizzle
+# The agreement typefaces travel with the image too: a missing face is a
+# failure that first appears when somebody signs a contract.
+COPY --from=build /app/assets       ./assets
 COPY --from=build /app/package.json ./package.json
 COPY --from=build --chown=65532:65532 /data /data
 

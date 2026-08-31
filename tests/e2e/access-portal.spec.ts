@@ -224,7 +224,7 @@ test('a grant holder downloads a watermarked copy that names them', async ({ pag
 	// file ended, and a browser would report a corrupt download.
 	expect(Number(response.headers()['content-length'])).toBe(body.byteLength);
 
-	const drawn = drawnText(body);
+	const drawn = await drawnText(body);
 	expect(drawn).toContain(email);
 	expect(drawn).toContain('Acme');
 });

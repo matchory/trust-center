@@ -36,6 +36,8 @@ export interface AppConfig {
 	accessGrantDefaultDays: number;
 	accessGrantReminderDays: number;
 	ndaAcceptanceDueDays: number;
+	/** Directory holding the four faces the record PDF and the watermark embed. */
+	ndaFontDir: string;
 	mail: {
 		smtpUrl: string | undefined;
 		from: string;
@@ -79,6 +81,7 @@ function buildSchema(compiledLocales: readonly string[]) {
 			ACCESS_GRANT_DEFAULT_DAYS: z.coerce.number().int().positive().default(90),
 			ACCESS_GRANT_REMINDER_DAYS: z.coerce.number().int().positive().default(7),
 			NDA_ACCEPTANCE_DUE_DAYS: z.coerce.number().int().positive().default(14),
+			NDA_FONT_DIR: z.string().min(1).default('./assets/fonts'),
 			// Optional so `pnpm build` and the unit suite keep working with no mail
 			// server. getMailer() throws a named error when a send is attempted
 			// without it, rather than the application refusing to start.
@@ -146,6 +149,7 @@ export function parseConfig(
 		accessGrantDefaultDays: parsed.ACCESS_GRANT_DEFAULT_DAYS,
 		accessGrantReminderDays: parsed.ACCESS_GRANT_REMINDER_DAYS,
 		ndaAcceptanceDueDays: parsed.NDA_ACCEPTANCE_DUE_DAYS,
+		ndaFontDir: parsed.NDA_FONT_DIR,
 		mail: {
 			smtpUrl: parsed.SMTP_URL,
 			from: parsed.MAIL_FROM,

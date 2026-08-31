@@ -1,4 +1,5 @@
-import { degrees, PDFDocument, rgb, StandardFonts } from 'pdf-lib';
+import { degrees, PDFDocument, rgb } from 'pdf-lib';
+import { embedFaces } from '../pdf/fonts';
 
 export interface WatermarkRecipient {
 	name: string;
@@ -7,18 +8,6 @@ export interface WatermarkRecipient {
 	at: Date;
 	/** Localized confidentiality notice, rendered in the requester's locale. */
 	notice: string;
-}
-
-/**
- * Helvetica is a PDF standard font with no glyphs beyond WinAnsi, and pdf-lib
- * throws on anything it cannot encode. A name with a CJK character or an emoji
- * would otherwise fail the whole download rather than the stamp — so the text
- * is reduced to what the font can draw, and the unrepresentable part becomes a
- * marker rather than an exception. The identity still comes through: the email
- * address is ASCII by the time it reaches here.
- */
-function toWinAnsi(value: string): string {
-	return value.replace(/[^\x20-\x7E\xA0-\xFF]/g, '?');
 }
 
 /**
@@ -32,20 +21,23 @@ function toWinAnsi(value: string): string {
  */
 export async function stampPdf(
 	bytes: Uint8Array,
+	fontDir: string,
 	recipient: WatermarkRecipient
 ): Promise<Uint8Array> {
 	// `ignoreEncryption` is deliberately NOT set: a document we cannot fully
 	// parse is one we cannot prove we stamped, and a silently unstamped gated
 	// download is worse than a failed one.
 	const pdf = await PDFDocument.load(bytes);
-	const font = await pdf.embedFont(StandardFonts.Helvetica);
+	// The same embedded faces the record PDF draws with. A standard font is
+	// WinAnsi-only, and the name it could not encode is exactly the one this
+	// stamp exists to carry.
+	const faces = await embedFaces(pdf, fontDir);
+	const font = faces.regular;
 
 	const timestamp = `${recipient.at.toISOString().replace('T', ' ').slice(0, 19)} UTC`;
-	const footer = toWinAnsi(
-		`${recipient.name} · ${recipient.company} · ${recipient.email} · ${timestamp}`
-	);
-	const band = toWinAnsi(recipient.company);
-	const notice = toWinAnsi(recipient.notice);
+	const footer = `${recipient.name} · ${recipient.company} · ${recipient.email} · ${timestamp}`;
+	const band = recipient.company;
+	const notice = recipient.notice;
 
 	for (const page of pdf.getPages()) {
 		const { width, height } = page.getSize();

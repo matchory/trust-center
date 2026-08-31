@@ -176,7 +176,7 @@ test('a prospect requests, verifies, downloads, and is cut off on revocation', a
 	const body = await download.body();
 	expect(Number(download.headers()['content-length'])).toBe(body.byteLength);
 	expect(body.byteLength).toBeGreaterThan(storedBytes);
-	expect(drawnText(body)).toContain(email);
+	expect(await drawnText(body)).toContain(email);
 
 	// 9. Every download is audited, and the stamp is recorded as applied.
 	const [file] = await db

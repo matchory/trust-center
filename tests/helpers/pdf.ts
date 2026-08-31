@@ -1,5 +1,12 @@
-import { inflateSync } from 'node:zlib';
-import { PDFDocument } from 'pdf-lib';
+import {
+	decodePDFRawStream,
+	PDFArray,
+	PDFDict,
+	PDFDocument,
+	PDFName,
+	PDFRawStream,
+	type PDFPageLeaf
+} from 'pdf-lib';
 
 /** A real, loadable PDF — `stampPdf` refuses anything it cannot parse. */
 export async function blankPdf(pages = 1): Promise<Uint8Array> {
@@ -10,36 +17,92 @@ export async function blankPdf(pages = 1): Promise<Uint8Array> {
 }
 
 /**
- * The text a PDF actually draws on its pages. It never appears literally in the
- * saved bytes: pdf-lib Flate-compresses every content stream and writes
- * standard-font text as hex strings. So inflate the streams, then decode the
- * `<hex> Tj` operators. A grep over the raw bytes would silently pass for a
- * stamper that wrote nothing.
+ * The text a PDF actually draws on its pages, one drawn run per line.
+ *
+ * None of it appears literally in the saved bytes. pdf-lib Flate-compresses
+ * every content stream, and an embedded font is written with Identity-H
+ * encoding: `Tj` carries glyph indices into that one subset, not characters —
+ * `Łukasz` is `<0001000200030004000500060007>`. So the only honest way to read
+ * a page back is the way a viewer does it: follow `Tf` to the font in the
+ * page's resources, and run its `ToUnicode` CMap over the codes. A grep over
+ * the raw bytes, or one CMap applied to every font, would report confident
+ * nonsense — and the strings under test here are the typed names standing in
+ * for signatures.
  */
-export function drawnText(bytes: Uint8Array): string {
-	const buf = Buffer.from(bytes);
-	const streams: string[] = [];
-	let index = 0;
+export async function drawnText(bytes: Uint8Array): Promise<string> {
+	const pdf = await PDFDocument.load(bytes);
+	return pdf
+		.getPages()
+		.map((page) => decodePage(page.node))
+		.filter((text) => text.length > 0)
+		.join('\n');
+}
 
-	for (;;) {
-		const start = buf.indexOf('stream', index);
-		if (start === -1) break;
-		const end = buf.indexOf('endstream', start);
-		if (end === -1) break;
+/** Code → string for one font, or `undefined` for a single-byte simple font. */
+type CMap = Map<number, string> | undefined;
 
-		let from = start + 'stream'.length;
-		if (buf[from] === 0x0d) from++;
-		if (buf[from] === 0x0a) from++;
-
-		try {
-			streams.push(inflateSync(buf.subarray(from, end)).toString('latin1'));
-		} catch {
-			// Not a Flate stream — nothing this helper needs to read.
-		}
-		index = end + 'endstream'.length;
+function decodePage(node: PDFPageLeaf): string {
+	const fonts = new Map<string, CMap>();
+	const resources = node.Resources()?.lookupMaybe(PDFName.of('Font'), PDFDict);
+	for (const [name, value] of resources?.entries() ?? []) {
+		const font = node.context.lookup(value, PDFDict);
+		fonts.set(name.asString(), font ? toUnicodeCMap(font) : undefined);
 	}
 
-	return [...streams.join('\n').matchAll(/<([0-9A-Fa-f]+)>\s*Tj/g)]
-		.map((match) => Buffer.from(match[1]!, 'hex').toString('latin1'))
+	const runs: string[] = [];
+	let current: CMap;
+
+	// `/F1-0 12 Tf` selects a font; `<hex> Tj` draws with whichever is current.
+	const operators = /\/([^\s/[\]<>]+)\s+[\d.]+\s+Tf|<([0-9A-Fa-f]*)>\s*Tj/g;
+	for (const match of contentOf(node).matchAll(operators)) {
+		if (match[1] !== undefined) current = fonts.get(`/${match[1]}`);
+		else runs.push(decodeRun(match[2] ?? '', current));
+	}
+
+	return runs.join('\n');
+}
+
+function contentOf(node: PDFPageLeaf): string {
+	const contents = node.Contents();
+	const streams =
+		contents instanceof PDFArray
+			? contents.asArray().map((ref) => node.context.lookup(ref))
+			: [contents];
+
+	return streams
+		.filter((stream): stream is PDFRawStream => stream instanceof PDFRawStream)
+		.map((stream) => Buffer.from(decodePDFRawStream(stream).decode()).toString('latin1'))
 		.join('\n');
+}
+
+/**
+ * Only `bfchar` is read, not `bfrange`: every PDF this helper sees was written
+ * by pdf-lib, which emits nothing else. A file from elsewhere would decode
+ * short rather than wrong, and no test feeds it one.
+ */
+function toUnicodeCMap(font: PDFDict): CMap {
+	const stream = font.lookup(PDFName.of('ToUnicode'));
+	if (!(stream instanceof PDFRawStream)) return undefined;
+
+	const cmap = new Map<number, string>();
+	const source = Buffer.from(decodePDFRawStream(stream).decode()).toString('latin1');
+	for (const [, code, target] of source.matchAll(/<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>/g)) {
+		// CMap targets are UTF-16BE; Node only decodes UTF-16LE, hence the swap.
+		cmap.set(parseInt(code!, 16), Buffer.from(target!, 'hex').swap16().toString('utf16le'));
+	}
+	return cmap;
+}
+
+function decodeRun(hex: string, cmap: CMap): string {
+	const bytes = Buffer.from(hex, 'hex');
+
+	// A simple font — one of pdf-lib's WinAnsi standard fourteen — writes one
+	// byte per character; a composite font writes two-byte codes.
+	if (!cmap) return bytes.toString('latin1');
+
+	let text = '';
+	for (let index = 0; index + 1 < bytes.length; index += 2) {
+		text += cmap.get(bytes.readUInt16BE(index)) ?? '';
+	}
+	return text;
 }

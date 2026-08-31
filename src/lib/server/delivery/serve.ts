@@ -4,6 +4,7 @@ import { mayDownload } from '../access/grants';
 import { recordEvent } from '../audit';
 import { getDb } from '../db/instance';
 import { document, documentFile } from '../db/schema';
+import { getConfig } from '../config';
 import { clientIp } from '../http/client-ip';
 import { consumeRateLimit, rateLimitKey } from '../ratelimit';
 import { getStorage, StorageObjectNotFound } from '../storage';
@@ -103,7 +104,7 @@ export async function serveDocumentFile(
 			const stream = await getStorage().stream(row.storageKey);
 			const source = new Uint8Array(await new Response(stream).arrayBuffer());
 
-			const stamped = await stampPdf(source, {
+			const stamped = await stampPdf(source, getConfig().ndaFontDir, {
 				name: requester.name,
 				company: requester.company,
 				email: requester.email,
