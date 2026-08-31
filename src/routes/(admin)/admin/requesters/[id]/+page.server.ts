@@ -5,6 +5,7 @@ import { getDb } from '$lib/server/db/instance';
 import { clientIp } from '$lib/server/http/client-ip';
 import { getRequesterForAdmin } from '$lib/server/identity/requester';
 import { purgeRequester } from '$lib/server/purge';
+import { getStorage } from '$lib/server/storage';
 import type { Actions, PageServerLoad } from './$types';
 
 export const load: PageServerLoad = async ({ params, locals }) => {
@@ -35,7 +36,8 @@ export const actions: Actions = {
 		await purgeRequester(db, {
 			requesterId: event.params.id,
 			staffUserId: event.locals.staff!.id,
-			ip: clientIp(event)
+			ip: clientIp(event),
+			storage: getStorage()
 		});
 
 		return { purged: true };
