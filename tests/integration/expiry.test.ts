@@ -1,8 +1,12 @@
 import { randomUUID } from 'node:crypto';
 import { and, eq } from 'drizzle-orm';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { createGrant } from '../../src/lib/server/access/grants';
-import { sendExpiryReminders } from '../../src/lib/server/access/expiry';
+import { createGrant, grantState } from '../../src/lib/server/access/grants';
+import {
+	closeUnacceptedGrants,
+	sendAcceptanceReminders,
+	sendExpiryReminders
+} from '../../src/lib/server/access/expiry';
 import { createDb, type Db } from '../../src/lib/server/db';
 import {
 	accessGrant,
@@ -54,7 +58,8 @@ beforeEach(async () => {
 const days = (n: number) => new Date(Date.now() + n * 24 * 60 * 60 * 1000);
 
 async function seed(options: {
-	expiresAt: Date;
+	expiresAt: Date | null;
+	acceptanceDueAt?: Date | null;
 	locale?: string;
 	revoked?: boolean;
 }): Promise<{ requesterId: string; email: string; grantId: string }> {
@@ -78,7 +83,7 @@ async function seed(options: {
 		groupIds: [],
 		termDays: 30,
 		expiresAt: options.expiresAt,
-		acceptanceDueAt: null
+		acceptanceDueAt: options.acceptanceDueAt ?? null
 	});
 
 	if (options.revoked) {
@@ -166,5 +171,46 @@ describe('sendExpiryReminders', () => {
 
 		const [queued] = await reminders(email);
 		expect(queued?.locale).toBe('en');
+	});
+});
+
+describe('the acceptance nudge and the closing sweep', () => {
+	const soon = () => days(2);
+	const past = () => new Date(Date.now() - 24 * 60 * 60 * 1000);
+
+	it('nudges an inert grant before its acceptance deadline, once', async () => {
+		await seed({ expiresAt: null, acceptanceDueAt: soon() });
+
+		expect((await sendAcceptanceReminders(db, { reminderDays: 3 })).queued).toBe(1);
+		expect((await sendAcceptanceReminders(db, { reminderDays: 3 })).queued).toBe(0);
+	});
+
+	it('does not spend the expiry reminder on an inert grant', async () => {
+		// Reusing expiry_reminder_sent_at would stamp it while the grant is inert,
+		// and sendExpiryReminders filters isNull(expiryReminderSentAt) — so access
+		// would later end with no warning, for every grant that went through an NDA,
+		// with nothing failing and nothing logged.
+		const { grantId } = await seed({ expiresAt: null, acceptanceDueAt: soon() });
+		await sendAcceptanceReminders(db, { reminderDays: 3 });
+
+		const [row] = await db.select().from(accessGrant).where(eq(accessGrant.id, grantId));
+		expect(row?.acceptanceReminderSentAt).not.toBeNull();
+		expect(row?.expiryReminderSentAt).toBeNull();
+	});
+
+	it('leaves live grants to the expiry reminder', async () => {
+		await seed({ expiresAt: soon() });
+		expect((await sendAcceptanceReminders(db, { reminderDays: 3 })).queued).toBe(0);
+	});
+
+	it('closes a grant past its acceptance deadline', async () => {
+		const { grantId } = await seed({ expiresAt: null, acceptanceDueAt: past() });
+		await closeUnacceptedGrants(db);
+
+		const [row] = await db.select().from(accessGrant).where(eq(accessGrant.id, grantId));
+		expect(row?.closedAt).not.toBeNull();
+		// Correctness never depended on the sweep — the activation predicate already
+		// excluded this grant. The row is what Phase 5 will count.
+		expect(grantState(row!, new Date())).toBe('unaccepted');
 	});
 });

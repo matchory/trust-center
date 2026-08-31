@@ -222,6 +222,8 @@
 	"download_confidentiality_notice": "Confidential. Provided under an access grant to the named recipient; do not redistribute.",
 	"faq_empty": "No questions have been published yet.",
 	"faq_intro": "Answers to the questions we are asked most often.",
+	"mail_acceptance_expiring_body": "Your request was approved, and one agreement is still waiting for your acceptance. Until you accept it, the documents stay closed.\n\nThis approval lapses on {dueAt}. Accepting takes a minute: open your access page and read the agreement there.\n\nIf you no longer need the documents, you can ignore this and the approval will lapse on its own.",
+	"mail_acceptance_expiring_subject": "One step left before your documents open",
 	"mail_grant_expiring_body": "Your access to {documentCount} document(s) expires on {expiresAt}.\n\nIf you still need it, reply to this message and we will extend it.",
 	"mail_grant_expiring_subject": "Your document access expires soon",
 	"mail_nda_record_body": "Thank you. Attached is the record of your acceptance of {agreement}: the text as it stood when you accepted it, and the details of the acceptance itself.\n\nKeep it for your files. You can also download it again at any time from your access page.",

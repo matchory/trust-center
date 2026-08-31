@@ -1,7 +1,11 @@
 import { lt, sql } from 'drizzle-orm';
 import { getConfig } from '../config';
 import { getDb } from '../db/instance';
-import { sendExpiryReminders } from '../access/expiry';
+import {
+	closeUnacceptedGrants,
+	sendAcceptanceReminders,
+	sendExpiryReminders
+} from '../access/expiry';
 import { accessRequest, requesterSession, staffSession } from '../db/schema';
 import { getMailer, MailNotConfigured } from '../mail';
 import { drainOutbox } from '../mail/queue';
@@ -78,6 +82,11 @@ export const JOBS: readonly Job[] = [
 				reminderDays: config.accessGrantReminderDays,
 				locales: config.locales
 			});
+			// Two queries in one tick rather than one widened predicate: the expiry
+			// reminder filters `expires_at > now()`, which excludes exactly the
+			// inert grants this one is for.
+			await sendAcceptanceReminders(db, { reminderDays: config.accessGrantReminderDays });
+			await closeUnacceptedGrants(db);
 		}
 	},
 	{

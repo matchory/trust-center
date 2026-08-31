@@ -12,6 +12,10 @@ export const MAIL_TEMPLATES = [
 	'request_denied',
 	'sign_in',
 	'grant_expiring',
+	// The nudge for an approval still waiting on a signature. Distinct from
+	// `grant_expiring`: one says access is ending, the other says it never
+	// started.
+	'acceptance_expiring',
 	'staff_new_request',
 	// Carries the acceptance record as an attachment. The mail is a convenience:
 	// the record itself is the stored object and the portal view, so a
@@ -49,6 +53,7 @@ export function renderTemplate(
 	const agreementCount = String(payload.agreementCount ?? 0);
 	const expiresAt = String(payload.expiresAt ?? '');
 	const agreement = String(payload.agreement ?? '');
+	const dueAt = String(payload.dueAt ?? '');
 
 	switch (id) {
 		case 'verify_request':
@@ -83,6 +88,11 @@ export function renderTemplate(
 			return {
 				subject: m.mail_grant_expiring_subject({}, options),
 				text: m.mail_grant_expiring_body({ documentCount, expiresAt }, options)
+			};
+		case 'acceptance_expiring':
+			return {
+				subject: m.mail_acceptance_expiring_subject({}, options),
+				text: m.mail_acceptance_expiring_body({ dueAt }, options)
 			};
 		case 'staff_new_request':
 			return {
