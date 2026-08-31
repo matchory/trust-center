@@ -1,0 +1,1 @@
+ALTER TABLE "nda_template_version" ADD CONSTRAINT "nda_template_version_template_id_version_unique" UNIQUE("template_id","version");

@@ -7,6 +7,7 @@ import {
 	primaryKey,
 	text,
 	timestamp,
+	unique,
 	uuid
 } from 'drizzle-orm/pg-core';
 
@@ -72,7 +73,8 @@ export const ndaTemplateVersion = pgTable(
 	},
 	(table) => [
 		index('nda_template_version_template_idx').on(table.templateId, table.effectiveFrom),
-		check('nda_template_version_number_check', sql`${table.version} >= 1`)
+		check('nda_template_version_number_check', sql`${table.version} >= 1`),
+		unique('nda_template_version_template_id_version_unique').on(table.templateId, table.version)
 	]
 );
 

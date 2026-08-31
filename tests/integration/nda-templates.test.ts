@@ -49,6 +49,18 @@ describe('nda templates', () => {
 		expect((await createVersion(db, b)).version).toBe(1);
 	});
 
+	it('refuses a second version row with the same (template, number)', async () => {
+		// The row lock in `createVersion` is what actually serializes concurrent
+		// callers; this constraint is the backstop for anything that bypasses it,
+		// and the one thing an integration test can assert without a race.
+		const templateId = await createTemplate(db, { slug: 'mutual' });
+		await createVersion(db, templateId);
+
+		await expect(
+			db.insert(ndaTemplateVersion).values({ templateId, version: 1 })
+		).rejects.toThrow();
+	});
+
 	it('refuses to publish a version with a locale missing', async () => {
 		const templateId = await createTemplate(db, { slug: 'mutual' });
 		const { versionId } = await createVersion(db, templateId);

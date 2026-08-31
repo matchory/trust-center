@@ -97,14 +97,23 @@ export async function retireTemplate(db: Db, id: string): Promise<void> {
 }
 
 /**
- * The next version number for this family, taken inside the same transaction as
- * the insert so two operators publishing at once cannot both claim version 4.
+ * The next version number for this family. Under READ COMMITTED — the
+ * default, and what `createDb` leaves in place — a plain transaction does not
+ * stop two concurrent calls both reading the same max and both inserting the
+ * same next number: it only bundles the read and the write atomically for
+ * *this* call, not against a concurrent one. What actually serializes two
+ * operators is the `SELECT ... FOR UPDATE` on the template row below, which
+ * makes the second call block until the first commits and then re-read the
+ * now-higher max; `nda_template_version_template_id_version_unique` is the
+ * backstop if anything ever bypasses this function.
  */
 export async function createVersion(
 	db: Db,
 	templateId: string
 ): Promise<{ versionId: string; version: number }> {
 	return db.transaction(async (tx) => {
+		await tx.select().from(ndaTemplate).where(eq(ndaTemplate.id, templateId)).for('update');
+
 		const [current] = await tx
 			.select({ highest: max(ndaTemplateVersion.version) })
 			.from(ndaTemplateVersion)
