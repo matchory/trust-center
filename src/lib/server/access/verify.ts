@@ -108,14 +108,12 @@ export async function verifyRequest(
 					? 'denied'
 					: 'pending';
 
-		// The scope an auto-approval would actually mint, resolved before the
-		// status is written — because §10.1's guard may send it to a human after
-		// all, and the row must not first record an approval that never happened.
-		const scoped = await tx
-			.select({ documentId: accessRequestDocument.documentId })
-			.from(accessRequestDocument)
-			.where(eq(accessRequestDocument.requestId, request.id));
-
+		// The blanket an auto-approval would mint, resolved before the status is
+		// written — because §10.1's guard may send it to a human after all, and the
+		// row must not first record an approval that never happened. The explicit
+		// documents are read later, inside the approved branch: the guard does not
+		// look at them, and a denied verification should not pay for the query.
+		//
 		// P3.18: the rule's set bounds what its auto-approval may hand out, and
 		// the request's set bounds it further. `decision.tiers` was computed and
 		// never read before this phase, which made the rule's set decorative — a
@@ -159,6 +157,11 @@ export async function verifyRequest(
 		let grantId: string | null = null;
 
 		if (status === 'approved') {
+			const scoped = await tx
+				.select({ documentId: accessRequestDocument.documentId })
+				.from(accessRequestDocument)
+				.where(eq(accessRequestDocument.requestId, request.id));
+
 			({ grantId } = await createGrant(tx, {
 				requesterId: requester.id,
 				requestId: request.id,

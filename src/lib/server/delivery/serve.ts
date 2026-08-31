@@ -34,18 +34,18 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
  * and it would cost the portal its "public pages set no cookies" guarantee and
  * make every public response vary by cookie.
  *
- * `tier` is the caller's declaration of which route this is, and it is applied
- * as an equality in the query. A file of any other tier is simply not found —
- * adding a tier must not widen access by omission.
+ * `tiers` is the caller's declaration of which files this route serves, applied
+ * as a membership test in the query — a file of any other tier is simply not
+ * found, because adding a tier must not widen access by omission. `gated` is
+ * the caller's declaration of the *policy*, stated rather than inferred from
+ * that list: a mode derived from which tiers happen to be named is one a future
+ * caller can change by accident.
  */
 export async function serveDocumentFile(
 	event: RequestEvent<{ fileId: string }>,
-	tiers: readonly DocumentTier[]
+	route: { tiers: readonly DocumentTier[]; gated: boolean }
 ): Promise<Response> {
-	// Which route this is, restated for readability. `public` is the whole of
-	// the ungated set, so anything else is gated.
-	const gated = !tiers.includes('public');
-
+	const { tiers, gated } = route;
 	const { params, request, locals } = event;
 
 	// A malformed id must 404 like an unknown one rather than surfacing a

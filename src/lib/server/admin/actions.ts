@@ -1,5 +1,5 @@
 import { fail } from '@sveltejs/kit';
-import type { RequestEvent } from '@sveltejs/kit';
+import type { ActionFailure, RequestEvent } from '@sveltejs/kit';
 import type { z } from 'zod';
 import { recordEvent } from '../audit';
 import { getConfig } from '../config';
@@ -31,6 +31,21 @@ export type AdminActionFailure = { field: string; locale?: string; message?: str
  */
 export function uniqueViolationField(cause: unknown, field: string): AdminActionFailure | null {
 	return pgErrorCode(cause) === '23505' ? { field, message: 'duplicate' } : null;
+}
+
+/**
+ * The whole of a create action's catch block: report a taken value on `field`,
+ * and rethrow anything else.
+ *
+ * Every slugged create action wants exactly this, and eleven copies of the
+ * rethrow is eleven chances to forget it — a `catch` that swallowed an
+ * unrelated failure would tell an operator their slug was taken while the real
+ * error went unlogged.
+ */
+export function duplicateFail(cause: unknown, field: string): ActionFailure<AdminActionFailure> {
+	const duplicate = uniqueViolationField(cause, field);
+	if (!duplicate) throw cause;
+	return fail<AdminActionFailure>(409, duplicate);
 }
 
 /**
@@ -111,9 +126,7 @@ export function saveMetaAction<S extends z.ZodType>(opts: SaveMetaOptions<S>) {
 			// Renaming one row's slug onto another's is the same operator mistake
 			// as typing a taken one on a create form, and `fallbackField` already
 			// names the field that carries it on every content type.
-			const duplicate = uniqueViolationField(cause, opts.fallbackField);
-			if (!duplicate) throw cause;
-			return fail<AdminActionFailure>(409, duplicate);
+			return duplicateFail(cause, opts.fallbackField);
 		}
 
 		await recordEvent(db, {

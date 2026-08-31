@@ -14,4 +14,5 @@ import type { RequestHandler } from './$types';
  * is not the path but the grant — an `nda`-tier document is conferred only by a
  * grant whose agreements are satisfied, which `mayDownload` already asks.
  */
-export const GET: RequestHandler = (event) => serveDocumentFile(event, ['request', 'nda']);
+export const GET: RequestHandler = (event) =>
+	serveDocumentFile(event, { tiers: ['request', 'nda'], gated: true });

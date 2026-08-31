@@ -1,5 +1,4 @@
-import { uniqueViolationField } from '$lib/server/admin/actions';
-import type { AdminActionFailure } from '$lib/server/admin/actions';
+import { duplicateFail } from '$lib/server/admin/actions';
 import { fail } from '@sveltejs/kit';
 import { createGroup, groupSchema, listGroups } from '$lib/server/access/groups';
 import { recordEvent } from '$lib/server/audit';
@@ -27,9 +26,7 @@ export const actions: Actions = {
 			id = await createGroup(db, parsed.data);
 		} catch (cause) {
 			// A value somebody already used is an operator typo, not a 500.
-			const duplicate = uniqueViolationField(cause, 'slug');
-			if (!duplicate) throw cause;
-			return fail<AdminActionFailure>(409, duplicate);
+			return duplicateFail(cause, 'slug');
 		}
 
 		await recordEvent(db, {

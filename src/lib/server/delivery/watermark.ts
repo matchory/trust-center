@@ -1,5 +1,5 @@
 import { degrees, PDFDocument, rgb } from 'pdf-lib';
-import { embedFaces } from '../pdf/fonts';
+import { embedFace } from '../pdf/fonts';
 
 export interface WatermarkRecipient {
 	name: string;
@@ -28,23 +28,21 @@ export async function stampPdf(
 	// parse is one we cannot prove we stamped, and a silently unstamped gated
 	// download is worse than a failed one.
 	const pdf = await PDFDocument.load(bytes);
-	// The same embedded faces the record PDF draws with. A standard font is
+	// The same embedded typeface the record PDF draws with. A standard font is
 	// WinAnsi-only, and the name it could not encode is exactly the one this
-	// stamp exists to carry.
-	const faces = await embedFaces(pdf, fontDir);
-	const font = faces.regular;
+	// stamp exists to carry. One face, not four: the stamp draws in one, and
+	// embedding the rest would cost every gated download for nothing.
+	const font = await embedFace(pdf, fontDir, 'regular');
 
 	const timestamp = `${recipient.at.toISOString().replace('T', ' ').slice(0, 19)} UTC`;
 	const footer = `${recipient.name} · ${recipient.company} · ${recipient.email} · ${timestamp}`;
-	const band = recipient.company;
-	const notice = recipient.notice;
 
 	for (const page of pdf.getPages()) {
 		const { width, height } = page.getSize();
 
 		// A diagonal, low-opacity band across the middle: survives cropping the
 		// margins, which is the obvious way to remove a footer.
-		page.drawText(band, {
+		page.drawText(recipient.company, {
 			x: width * 0.12,
 			y: height * 0.42,
 			size: 42,
@@ -64,7 +62,7 @@ export async function stampPdf(
 			opacity: 0.85
 		});
 
-		page.drawText(notice, {
+		page.drawText(recipient.notice, {
 			x: 28,
 			y: 12,
 			size: 7,

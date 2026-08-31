@@ -6,7 +6,6 @@ import {
 	accessGrantGroup,
 	accessGrantNda,
 	accessGrantTier,
-	accessGroup,
 	document,
 	documentGroup,
 	requester,
@@ -14,7 +13,7 @@ import {
 } from '../db/schema';
 import { groupByKey } from '../collections';
 import { validAcceptance } from '../nda/acceptance';
-import { DefaultTemplateMissing, proposeFrom } from '../nda/requirements';
+import { requirementsByDocument } from '../nda/requirements';
 import { acceptanceScope, defaultTemplateId } from '../nda/settings';
 import { PHASE_TIERS, setGrantGroups, setGrantTiers } from './scope';
 import type { ScopeTier } from '../../access-types';
@@ -178,67 +177,45 @@ async function narrowByAgreements(
 ): Promise<ConferredRow[]> {
 	if (rows.length === 0) return [];
 
-	const documentIds = [...new Set(rows.map((row) => row.documentId))];
-	const scopeRows = await db
-		.select({ id: document.id, tier: document.tier, templateId: accessGroup.ndaTemplateId })
-		.from(document)
-		.leftJoin(documentGroup, eq(documentGroup.documentId, document.id))
-		.leftJoin(accessGroup, eq(accessGroup.id, documentGroup.groupId))
-		.where(inArray(document.id, documentIds));
-
-	// Nothing at the nda tier and no group carrying an agreement: the fast path
-	// out, and the state every deployment is in until an operator sets one up.
-	if (scopeRows.every((row) => row.templateId === null && row.tier !== 'nda')) return [...rows];
-
-	const defaultTemplate = await defaultTemplateId(db);
-	const required = new Map<string, string[] | 'unresolvable'>();
-
-	for (const [id, group] of groupByKey(scopeRows, (row) => row.id)) {
-		try {
-			required.set(
-				id,
-				proposeFrom(
-					[{ id, tier: group[0]!.tier, groupTemplateIds: group.map((row) => row.templateId) }],
-					{ defaultTemplateId: defaultTemplate }
+	// These four are independent of each other, and this is the gated download
+	// path — they go together rather than one round trip at a time.
+	const [defaultTemplate, waivers, scope, people] = await Promise.all([
+		defaultTemplateId(db),
+		db
+			.select({ grantId: accessGrantNda.grantId, templateId: accessGrantNda.ndaTemplateId })
+			.from(accessGrantNda)
+			.where(
+				and(
+					inArray(
+						accessGrantNda.grantId,
+						rows.map((row) => row.grantId)
+					),
+					eq(accessGrantNda.disposition, 'waived')
 				)
-			);
-		} catch (cause) {
-			// §4.4 fails closed: an nda-tier document with no default agreement is
-			// undeliverable rather than ungated.
-			if (!(cause instanceof DefaultTemplateMissing)) throw cause;
-			required.set(id, 'unresolvable');
-		}
-	}
+			),
+		acceptanceScope(db),
+		db
+			.select({ id: requester.id, companyDomain: requester.companyDomain })
+			.from(requester)
+			.where(inArray(requester.id, [...new Set(rows.map((row) => row.requesterId))]))
+	]);
 
-	const waivers = await db
-		.select({ grantId: accessGrantNda.grantId, templateId: accessGrantNda.ndaTemplateId })
-		.from(accessGrantNda)
-		.where(
-			and(
-				inArray(
-					accessGrantNda.grantId,
-					rows.map((row) => row.grantId)
-				),
-				eq(accessGrantNda.disposition, 'waived')
-			)
-		);
-
-	const waivedByGrant = new Map<string, Set<string>>();
-	for (const row of waivers) {
-		const set = waivedByGrant.get(row.grantId) ?? new Set<string>();
-		set.add(row.templateId);
-		waivedByGrant.set(row.grantId, set);
-	}
-
-	const scope = await acceptanceScope(db);
-	const domains = new Map(
-		(
-			await db
-				.select({ id: requester.id, companyDomain: requester.companyDomain })
-				.from(requester)
-				.where(inArray(requester.id, [...new Set(rows.map((row) => row.requesterId))]))
-		).map((row) => [row.id, row.companyDomain])
+	const { required, unresolvable } = await requirementsByDocument(
+		db,
+		[...new Set(rows.map((row) => row.documentId))],
+		{ defaultTemplateId: defaultTemplate }
 	);
+
+	// Nothing carries an agreement — the state every deployment is in until an
+	// operator sets one up, and every row passes untouched.
+	if (unresolvable.size === 0 && [...required.values()].every((list) => list.length === 0)) {
+		return [...rows];
+	}
+
+	// One flat set rather than a map of sets: the question asked below is always
+	// about a (grant, template) pair, never about a grant's waivers as a group.
+	const waived = new Set(waivers.map((row) => `${row.grantId}:${row.templateId}`));
+	const domains = new Map(people.map((row) => [row.id, row.companyDomain]));
 
 	// One lookup per (person, agreement), not per row: a requester's grants
 	// routinely confer many documents behind the same agreement.
@@ -266,14 +243,11 @@ async function narrowByAgreements(
 	const delivered: ConferredRow[] = [];
 
 	for (const row of rows) {
-		const templates = required.get(row.documentId) ?? [];
-		if (templates === 'unresolvable') continue;
+		if (unresolvable.has(row.documentId)) continue;
 
-		const waived = waivedByGrant.get(row.grantId);
 		let satisfied = true;
-
-		for (const templateId of templates) {
-			if (waived?.has(templateId)) continue;
+		for (const templateId of required.get(row.documentId) ?? []) {
+			if (waived.has(`${row.grantId}:${templateId}`)) continue;
 			if (await holds(row.requesterId, templateId)) continue;
 			satisfied = false;
 			break;

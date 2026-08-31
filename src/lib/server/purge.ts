@@ -66,18 +66,20 @@ export async function purgeRequester(
 				.set({ status: 'failed', lastError: 'requester purged' })
 				.where(and(eq(outboundEmail.to, row.email), eq(outboundEmail.status, 'pending')));
 
-			// The payload too, not only the address. `redactDeliveredMail` clears
-			// it after mailRetentionDays — an unrelated window a purge must not
-			// wait on — and this phase puts the highest-value payload in the
-			// system behind it: the key of a signed record.
-			await tx.update(outboundEmail).set({ payload: {} }).where(eq(outboundEmail.to, row.email));
-
 			// Every row, not just the pending ones: a delivered notification names
 			// the address as plainly as an undelivered one. The rows themselves
 			// stay — that a notification went out is a fact about the system, not
 			// about the person. `to` is NOT NULL, so it is blanked, not nulled.
-			// Last, because both updates above match on it.
-			await tx.update(outboundEmail).set({ to: '' }).where(eq(outboundEmail.to, row.email));
+			//
+			// The payload goes in the same statement, and not only the address:
+			// `redactDeliveredMail` clears it after mailRetentionDays, an unrelated
+			// window a purge must not wait on, and this phase puts the highest-value
+			// payload in the system behind it — the key of a signed record. Last,
+			// because it matches on the address the pending update above also used.
+			await tx
+				.update(outboundEmail)
+				.set({ to: '', payload: {} })
+				.where(eq(outboundEmail.to, row.email));
 		}
 
 		await tx
@@ -125,7 +127,8 @@ export async function purgeRequester(
 
 		return {
 			eventsPseudonymized: pseudonymized.length,
-			keys: records.flatMap((record) => (record.key ? [record.key] : []))
+			// `isNotNull` in the query above is what makes the `!` safe here.
+			keys: records.map((record) => record.key!)
 		};
 	});
 

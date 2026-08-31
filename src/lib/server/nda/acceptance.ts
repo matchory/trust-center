@@ -13,6 +13,7 @@ import {
 import { matchRule } from '../access/rules';
 import { groupByKey } from '../collections';
 import { effectiveVersion } from './templates';
+import type { EffectiveVersion } from './templates';
 import type { AccessRuleAction, ScopeTier } from '../../access-types';
 import type { AcceptanceScope } from '../../nda-types';
 import type { Db } from '../db';
@@ -59,7 +60,7 @@ export interface AcceptanceInput {
 export async function recordAcceptance(
 	db: Db,
 	input: AcceptanceInput
-): Promise<{ acceptanceId: string; created: boolean }> {
+): Promise<{ acceptanceId: string; created: boolean; effective: EffectiveVersion }> {
 	return db.transaction(async (tx) => {
 		const [version] = await tx
 			.select({ templateId: ndaTemplateVersion.templateId })
@@ -128,7 +129,7 @@ export async function recordAcceptance(
 				.limit(1);
 
 			if (!existing) throw new Error('conflicting acceptance vanished');
-			return { acceptanceId: existing.id, created: false };
+			return { acceptanceId: existing.id, created: false, effective };
 		}
 
 		// Stamped once. `first_accepted_at` is the immutability marker, and
@@ -140,7 +141,10 @@ export async function recordAcceptance(
 				and(eq(ndaTemplateVersion.id, input.versionId), isNull(ndaTemplateVersion.firstAcceptedAt))
 			);
 
-		return { acceptanceId: inserted.id, created: true };
+		// Returned rather than re-read: this is the version the caller must render
+		// the record from, it was resolved and validated here inside the
+		// transaction, and asking again outside one invites a different answer.
+		return { acceptanceId: inserted.id, created: true, effective };
 	});
 }
 

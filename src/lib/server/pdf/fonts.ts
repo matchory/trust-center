@@ -27,19 +27,33 @@ const FILES = {
  * needs no further configuration.
  */
 export async function embedFaces(pdf: PDFDocument, dir: string): Promise<Faces> {
-	// Registration is per document, not per process: pdf-lib holds the fontkit
-	// instance on the document it embeds into.
-	pdf.registerFontkit(fontkit);
-
-	const embed = async (file: string): Promise<PDFFont> =>
-		pdf.embedFont(await readFile(join(dir, file)), { subset: true });
-
 	const [regular, bold, italic, boldItalic] = await Promise.all([
-		embed(FILES.regular),
-		embed(FILES.bold),
-		embed(FILES.italic),
-		embed(FILES.boldItalic)
+		embedFace(pdf, dir, 'regular'),
+		embedFace(pdf, dir, 'bold'),
+		embedFace(pdf, dir, 'italic'),
+		embedFace(pdf, dir, 'boldItalic')
 	]);
 
 	return { regular, bold, italic, boldItalic };
+}
+
+/**
+ * One face, for a document that draws in one — the watermark is the case, and
+ * it stamps every gated download.
+ *
+ * Embedding is not free: parsing and subsetting the other three costs about
+ * 11 ms and 8 KB on every watermarked download, and the stamp would never draw
+ * a glyph from any of them.
+ */
+export async function embedFace(
+	pdf: PDFDocument,
+	dir: string,
+	face: keyof Faces
+): Promise<PDFFont> {
+	// Registration is per document, not per process: pdf-lib holds the fontkit
+	// instance on the document it embeds into. Calling it more than once for the
+	// same document is harmless.
+	pdf.registerFontkit(fontkit);
+
+	return pdf.embedFont(await readFile(join(dir, FILES[face])), { subset: true });
 }

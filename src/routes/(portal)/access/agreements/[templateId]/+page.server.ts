@@ -13,6 +13,7 @@ import { activateGrants } from '$lib/server/nda/activation';
 import { acceptanceScope } from '$lib/server/nda/settings';
 import { renderRecord, storeRecord } from '$lib/server/nda/record';
 import { effectiveVersion } from '$lib/server/nda/templates';
+import type { EffectiveVersion } from '$lib/server/nda/templates';
 import { consumeRateLimit, rateLimitKey } from '$lib/server/ratelimit';
 import { getStorage } from '$lib/server/storage';
 import type { Actions, PageServerLoad } from './$types';
@@ -94,8 +95,9 @@ export const actions: Actions = {
 
 		let acceptanceId: string;
 		let created: boolean;
+		let effective: EffectiveVersion;
 		try {
-			({ acceptanceId, created } = await recordAcceptance(db, {
+			({ acceptanceId, created, effective } = await recordAcceptance(db, {
 				requesterId: requester.id,
 				versionId,
 				typedName,
@@ -119,12 +121,12 @@ export const actions: Actions = {
 		// A re-submit is the same acceptance, so it renders nothing — a second
 		// render would orphan the first object and restamp the record's own date.
 		if (created) {
-			const effective = await effectiveVersion(db, event.params.templateId, config.locales);
-			const body = effective?.bodies[event.locals.locale];
+			// The version `recordAcceptance` resolved inside its transaction, not a
+			// second lookup: it validated the submitted hash against exactly these
+			// bytes, and asking again out here invites a different answer.
+			const body = effective.bodies[event.locals.locale];
 
-			// `recordAcceptance` has already refused anything but the effective
-			// version, so this is a type narrowing rather than a second check.
-			if (effective && body) {
+			if (body) {
 				const [name] = await db
 					.select({ name: ndaTemplateTranslation.name })
 					.from(ndaTemplateTranslation)
@@ -160,22 +162,23 @@ export const actions: Actions = {
 					{ filename: 'acceptance.pdf', contentType: 'application/pdf', storageKey }
 				];
 
-				await enqueueEmail(db, {
-					to: requester.email,
-					template: 'nda_record',
-					locale: event.locals.locale,
-					payload: { agreement, attachments }
-				});
-
 				// §9.5: an unset STAFF_NOTIFICATION_EMAIL is a valid deployment. "Both
 				// parties get a copy" then degrades to one, and the operator's copy is
 				// the stored object and the admin view — the record never depends on
-				// mail having been configured.
+				// mail having been configured. Each copy renders in its own reader's
+				// locale, which is why the operator's is not simply a second address.
+				const copies = [{ to: requester.email, locale: event.locals.locale }];
 				if (config.mail.staffNotificationEmail) {
-					await enqueueEmail(db, {
+					copies.push({
 						to: config.mail.staffNotificationEmail,
+						locale: config.defaultLocale
+					});
+				}
+
+				for (const copy of copies) {
+					await enqueueEmail(db, {
+						...copy,
 						template: 'nda_record',
-						locale: config.defaultLocale,
 						payload: { agreement, attachments }
 					});
 				}
