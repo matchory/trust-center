@@ -6,6 +6,7 @@ import { saveTranslationsFromForm } from '$lib/server/content/translations';
 import { getDb } from '$lib/server/db/instance';
 import { clientIp } from '$lib/server/http/client-ip';
 import {
+	createVersion,
 	getTemplate,
 	retireTemplate,
 	setTemplateTranslation,
@@ -61,6 +62,22 @@ export const actions: Actions = {
 			subjectId: id,
 			ip: clientIp(event) ?? undefined,
 			meta: { locales: written }
+		});
+
+		return { saved: true };
+	},
+
+	createVersion: async (event) => {
+		const db = getDb();
+		const { versionId, version } = await createVersion(db, event.params.id);
+
+		await recordEvent(db, {
+			action: 'nda_template_version.created',
+			actor: { type: 'staff', id: event.locals.staff!.id },
+			subjectType: 'nda_template_version',
+			subjectId: versionId,
+			ip: clientIp(event) ?? undefined,
+			meta: { version }
 		});
 
 		return { saved: true };

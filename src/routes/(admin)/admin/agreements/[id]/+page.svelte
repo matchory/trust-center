@@ -22,7 +22,7 @@
 	{#if data.template.retiredAt}
 		<p class="text-neutral-500">{m.admin_agreement_retired()}</p>
 	{:else if data.template.effectiveVersionNumber !== null}
-		<p class="text-green-700">
+		<p data-testid="agreement-effective-version" class="text-green-700">
 			{m.admin_agreement_effective({ version: data.template.effectiveVersionNumber })}
 		</p>
 	{:else}
@@ -87,13 +87,31 @@
 	</button>
 </form>
 
-{#if data.template.versions.length > 0}
-	<section class="mb-8 rounded border bg-white p-4">
-		<h2 class="mb-2 font-medium">{m.admin_agreement_versions()}</h2>
+<section class="mb-8 rounded border bg-white p-4">
+	<div class="mb-2 flex items-center gap-3">
+		<h2 class="font-medium">{m.admin_agreement_versions()}</h2>
+		{#if !data.template.retiredAt}
+			<form method="POST" action="?/createVersion" use:enhance class="ml-auto">
+				<button data-testid="agreement-new-version" class="rounded border px-3 py-1.5 text-sm">
+					{m.admin_agreement_new_version()}
+				</button>
+			</form>
+		{/if}
+	</div>
+	{#if data.template.versions.length > 0}
 		<ul class="divide-y text-sm">
 			{#each data.template.versions as version (version.id)}
 				<li class="flex flex-wrap items-center gap-3 py-2">
-					<span class="font-mono">v{version.version}</span>
+					<a
+						href={localizePath(
+							`/admin/agreements/${data.template.id}/versions/${version.id}`,
+							data.locale
+						)}
+						data-testid="version-{version.version}"
+						class="font-mono underline underline-offset-4"
+					>
+						v{version.version}
+					</a>
 					<span class="text-neutral-500">{version.locales.join(', ') || '—'}</span>
 					{#if version.retiredAt}
 						<span class="text-neutral-500">{m.admin_agreement_retired()}</span>
@@ -107,8 +125,8 @@
 				</li>
 			{/each}
 		</ul>
-	</section>
-{/if}
+	{/if}
+</section>
 
 {#if !data.template.retiredAt}
 	<form method="POST" action="?/retire" use:enhance>
