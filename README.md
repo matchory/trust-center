@@ -50,7 +50,7 @@ Requires Node 22+, [pnpm](https://pnpm.io), and Docker.
 cp .env.example .env
 
 # Postgres, Mailpit, and a dev OIDC provider for local staff login
-docker compose -f compose.dev.yaml up -d --wait
+pnpm dev:up
 
 pnpm install
 pnpm db:migrate
@@ -71,16 +71,17 @@ into the build; `LOCALES` selects which of them are enabled.
 
 ## Commands
 
-| Command                     | Description                                             |
-| --------------------------- | ------------------------------------------------------- |
-| `pnpm dev`                  | Start the dev server                                    |
-| `pnpm build`                | Build a production version of the app                   |
-| `pnpm test:unit`            | Run unit tests                                          |
-| `pnpm test:integration`     | Run integration tests against a disposable Postgres     |
-| `pnpm test:e2e`             | Run end-to-end tests against a production preview build |
-| `pnpm lint` / `pnpm format` | Check / fix formatting and lint issues                  |
-| `pnpm check`                | Type-check the project                                  |
-| `pnpm db:migrate`           | Apply database migrations                               |
-| `pnpm db:generate`          | Generate a migration from schema changes                |
+| Command                     | Description                                               |
+| --------------------------- | --------------------------------------------------------- |
+| `pnpm dev`                  | Start the dev server                                      |
+| `pnpm dev:up` / `dev:down`  | Start / stop Postgres, Mailpit, and the dev OIDC provider |
+| `pnpm build`                | Build a production version of the app                     |
+| `pnpm test:unit`            | Run unit tests                                            |
+| `pnpm test:integration`     | Run integration tests against a disposable Postgres       |
+| `pnpm test:e2e`             | Run end-to-end tests against a production preview build   |
+| `pnpm lint` / `pnpm format` | Check / fix formatting and lint issues                    |
+| `pnpm check`                | Type-check the project                                    |
+| `pnpm db:migrate`           | Apply database migrations                                 |
+| `pnpm db:generate`          | Generate a migration from schema changes                  |
 
 You can preview a production build with `pnpm preview`.
