@@ -174,6 +174,26 @@ edited.
   attachment named `acceptance.pdf`. **Nothing in the suite proves the SMTP
   adapter actually attaches it**; `createSmtpMailer`'s pass-through to nodemailer
   is unexercised.
+- **The delivery re-check costs one extra query even when nothing is gated.**
+  `narrowByAgreements` asks `requirementsByDocument` before it can know the
+  answer is empty, so every gated download and every portal list pays one
+  round trip to learn that no document carries an agreement — the state a
+  deployment is in until an operator configures one. Both callers already join
+  `document`; folding `document.tier` and the two group joins into *that* select
+  would make it free. Left alone because the shared read is what keeps the
+  requirements rule in one module, and collapsing it back into `grants.ts` is
+  the trade the quality pass deliberately refused.
+- **`countGrantDocuments` fetches rows to count them.** It asked Postgres for
+  `count(*)::int` until 3b; it now ships one (grant, document) row per conferred
+  document so the delivery filter can narrow them, which for a tier-wide grant
+  is the whole catalogue over the wire to produce an integer. It is called once
+  per due grant by the expiry reminder, so the cost is an N+1 in a six-hourly
+  job. The fix is to keep the aggregate when narrowing cannot remove anything,
+  which needs the probe above to be free first.
+- **`effectiveVersion` fetches every candidate version's full `bodyMd`**, and
+  `validAcceptance` put it on the download path. Testing locale-completeness
+  needs only `(versionId, locale)`; the full body is needed only to render.
+  Pre-existing code, newly hot.
 - **`AdminRequestDetail` still carries both `tiers` and `requestedTiers`**,
   unchanged from 3a. One is probably redundant.
 - **The e2e suite still starts two application servers against one database**,
