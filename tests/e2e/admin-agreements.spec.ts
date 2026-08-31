@@ -112,3 +112,32 @@ test('a version cannot be published twice', async ({ page }) => {
 	await submitAndWait(page, 'version-publish', '?/publish');
 	await expect(page.getByTestId('version-already-published')).toBeVisible();
 });
+
+test('an invalid body in one locale does not persist a valid body written to another', async ({
+	page
+}) => {
+	// A per-locale write loop with no pre-validation could write the German
+	// body, then throw on the English one and never reach `recordEvent` — a
+	// persisted mutation with no audit event for it. Every submitted body is
+	// validated before any of them is written, so a bad locale must leave
+	// every locale exactly as it was.
+	await signInAsAdmin(page);
+
+	const slug = `partial-invalid-${Date.now()}`;
+	await gotoAdmin(page, '/admin/agreements/new');
+	await page.getByTestId('agreement-slug').fill(slug);
+	await submitAndWait(page, 'agreement-create', '/admin/agreements/new');
+	await submitAndWait(page, 'agreement-new-version', '?/createVersion');
+	await page.getByTestId('version-1').click();
+
+	await page.getByTestId('body-de').fill('# Vertrag');
+	await page.getByTestId('body-en').fill('<script>alert(1)</script>');
+	await submitAndWait(page, 'version-save', '?/saveBody');
+	await expect(page.getByTestId('body-not-in-subset')).toBeVisible();
+
+	// Reload from the server: neither locale's body made it into the database.
+	await gotoAdmin(page, page.url());
+	await expect(page.getByTestId('body-de')).toHaveValue('');
+	await expect(page.getByTestId('body-en')).toHaveValue('');
+	await expect(page.getByTestId('agreement-body')).toHaveCount(0);
+});

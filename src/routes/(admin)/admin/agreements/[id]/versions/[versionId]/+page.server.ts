@@ -43,19 +43,35 @@ export const actions: Actions = {
 	saveBody: async (event) => {
 		const db = getDb();
 		const form = await event.request.formData();
-		const written: string[] = [];
 
+		const submitted = getConfig()
+			.locales.map((locale) => ({
+				locale,
+				body: String(form.get(`body.${locale}`) ?? '').trim()
+			}))
+			.filter((entry) => entry.body.length > 0);
+
+		// Validated in memory before anything is written: `setVersionBody` opens
+		// its own transaction per locale, so a bad body in the second locale
+		// must not leave the first locale's — already-written — body sitting in
+		// the database with no audit event for it.
 		try {
-			for (const locale of getConfig().locales) {
-				const body = String(form.get(`body.${locale}`) ?? '').trim();
-				if (!body) continue;
-				await setVersionBody(db, event.params.versionId, locale, body);
-				written.push(locale);
-			}
+			for (const entry of submitted) parseAgreementBody(entry.body);
 		} catch (cause) {
 			if (cause instanceof MarkdownNotInSubset) {
 				return fail<VersionFailure>(400, { field: 'body', message: cause.nodeType });
 			}
+			throw cause;
+		}
+
+		const written: string[] = [];
+
+		try {
+			for (const entry of submitted) {
+				await setVersionBody(db, event.params.versionId, entry.locale, entry.body);
+				written.push(entry.locale);
+			}
+		} catch (cause) {
 			if (cause instanceof VersionImmutable) {
 				return fail<VersionFailure>(409, { field: 'body', message: 'immutable' });
 			}

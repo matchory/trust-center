@@ -35,7 +35,12 @@
 			<p class="mt-3 leading-relaxed">{@render inline(children(node))}</p>
 		{:else if node.type === 'list'}
 			{#if node.ordered}
-				<ol class="mt-3 list-decimal space-y-1 pl-6">{@render blocks(children(node))}</ol>
+				<ol
+					class="mt-3 list-decimal space-y-1 pl-6"
+					start={node.start && node.start !== 1 ? node.start : undefined}
+				>
+					{@render blocks(children(node))}
+				</ol>
 			{:else}
 				<ul class="mt-3 list-disc space-y-1 pl-6">{@render blocks(children(node))}</ul>
 			{/if}
