@@ -95,7 +95,8 @@ describe('mayDownload', () => {
 			tiers: [],
 			groupIds: [],
 			termDays: 30,
-			expiresAt: IN_A_MONTH()
+			expiresAt: IN_A_MONTH(),
+			acceptanceDueAt: null
 		});
 
 		expect(await mayDownload(db, requesterId, documentId)).toBe(true);
@@ -110,7 +111,8 @@ describe('mayDownload', () => {
 			tiers: ['request'],
 			groupIds: [],
 			termDays: 30,
-			expiresAt: IN_A_MONTH()
+			expiresAt: IN_A_MONTH(),
+			acceptanceDueAt: null
 		});
 
 		expect(await mayDownload(db, requesterId, documentId)).toBe(true);
@@ -124,7 +126,8 @@ describe('mayDownload', () => {
 			tiers: [],
 			groupIds: [],
 			termDays: 30,
-			expiresAt: IN_A_MONTH()
+			expiresAt: IN_A_MONTH(),
+			acceptanceDueAt: null
 		});
 
 		expect(await mayDownload(db, requesterId, documentId)).toBe(true);
@@ -142,7 +145,8 @@ describe('mayDownload', () => {
 			tiers: [],
 			groupIds: [],
 			termDays: 30,
-			expiresAt: new Date(Date.now() - 1000)
+			expiresAt: new Date(Date.now() - 1000),
+			acceptanceDueAt: null
 		});
 
 		expect(await mayDownload(db, requesterId, documentId)).toBe(false);
@@ -156,7 +160,8 @@ describe('mayDownload', () => {
 			tiers: [],
 			groupIds: [],
 			termDays: 30,
-			expiresAt: IN_A_MONTH()
+			expiresAt: IN_A_MONTH(),
+			acceptanceDueAt: null
 		});
 
 		expect(await mayDownload(db, otherRequesterId, documentId)).toBe(false);
@@ -173,7 +178,8 @@ describe('mayDownload', () => {
 			tiers: ['request'],
 			groupIds: [],
 			termDays: 30,
-			expiresAt: IN_A_MONTH()
+			expiresAt: IN_A_MONTH(),
+			acceptanceDueAt: null
 		});
 
 		expect(await mayDownload(db, requesterId, documentId)).toBe(true);
@@ -191,7 +197,8 @@ describe('mayDownload', () => {
 			tiers: [],
 			groupIds: [],
 			termDays: 30,
-			expiresAt: IN_A_MONTH()
+			expiresAt: IN_A_MONTH(),
+			acceptanceDueAt: null
 		});
 
 		await db.update(documentTable).set({ status: 'draft' }).where(eq(documentTable.id, documentId));

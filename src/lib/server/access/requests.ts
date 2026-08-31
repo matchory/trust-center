@@ -9,9 +9,11 @@ import {
 	requester
 } from '../db/schema';
 import { issueMagicLink } from '../identity/magic-link';
+import { recordRequirements } from '../nda/requirements';
 import { createGrant } from './grants';
 import { honouredTiers, PHASE_TIERS, requestTiers, setRequestTiers } from './scope';
 import type { AccessRequestStatus, ScopeTier } from '../../access-types';
+import type { RequirementChoice } from '../nda/requirements';
 import type { Db } from '../db';
 
 /** A submission the server will not accept. Never surfaced to the submitter. */
@@ -151,6 +153,15 @@ export interface DecideRequestInput {
 	/** The approver's chosen term. The route resolves the default. */
 	termDays: number;
 	reason: string | null;
+	/**
+	 * The agreements this approval requires or waives, as the approver confirmed
+	 * them. Frozen onto the grant; an outstanding one mints it inert.
+	 */
+	requirements: readonly RequirementChoice[];
+	/** How long the requester has to accept. The route resolves the setting. */
+	acceptanceDueDays: number;
+	/** The enabled locales, so a requirement nobody could be shown is refused. */
+	locales: readonly string[];
 }
 
 /**
@@ -238,6 +249,9 @@ export async function decideRequest(
 			}
 		}
 
+		const outstanding = input.requirements.filter((entry) => entry.disposition === 'required');
+		const inert = outstanding.length > 0;
+
 		const { grantId } = await createGrant(tx, {
 			requesterId: request.requesterId,
 			requestId: request.id,
@@ -245,7 +259,15 @@ export async function decideRequest(
 			tiers,
 			groupIds,
 			termDays: input.termDays,
-			expiresAt: new Date(Date.now() + input.termDays * 24 * 60 * 60 * 1000)
+			// NULL means exactly one thing: waiting on an acceptance. The clock
+			// starts at acceptance, so a prospect who takes a week to read an NDA
+			// does not lose a week of access (P3.1).
+			expiresAt: inert ? null : new Date(Date.now() + input.termDays * 86_400_000),
+			acceptanceDueAt: inert ? new Date(Date.now() + input.acceptanceDueDays * 86_400_000) : null
+		});
+
+		await recordRequirements(tx, grantId, input.requirements, input.staffUserId, {
+			locales: input.locales
 		});
 
 		await tx

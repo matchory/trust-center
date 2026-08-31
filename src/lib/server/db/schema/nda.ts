@@ -10,6 +10,8 @@ import {
 	unique,
 	uuid
 } from 'drizzle-orm/pg-core';
+import { accessGrant } from './access';
+import { staffUser } from './staff';
 
 /**
  * The agreement family. §12 deviation 1: the main spec's flat
@@ -98,4 +100,36 @@ export const ndaTemplateBody = pgTable(
 		sha256: text('sha256').notNull()
 	},
 	(table) => [primaryKey({ columns: [table.versionId, table.locale] })]
+);
+
+/**
+ * What a grant is waiting on, frozen at approval. A waiver is a recorded row
+ * rather than an omitted one: §7.3's live delivery check re-derives what a
+ * document currently requires, so an omitted requirement would be silently
+ * re-imposed and the bypass would be useless. A recorded waiver is the grant's
+ * answer to a requirement the document still carries.
+ *
+ * `nda_template_id` is RESTRICT: under a cascade, deleting a superseded
+ * template would remove these rows and make "every recorded requirement is
+ * satisfied" vacuously true for every grant waiting on it.
+ */
+export const accessGrantNda = pgTable(
+	'access_grant_nda',
+	{
+		grantId: uuid('grant_id')
+			.notNull()
+			.references(() => accessGrant.id, { onDelete: 'cascade' }),
+		ndaTemplateId: uuid('nda_template_id')
+			.notNull()
+			.references(() => ndaTemplate.id, { onDelete: 'restrict' }),
+		disposition: text('disposition').notNull(),
+		decidedByStaffId: uuid('decided_by_staff_id').references(() => staffUser.id, {
+			onDelete: 'set null'
+		}),
+		reason: text('reason')
+	},
+	(table) => [
+		primaryKey({ columns: [table.grantId, table.ndaTemplateId] }),
+		check('access_grant_nda_disposition_check', sql`${table.disposition} IN ('required', 'waived')`)
+	]
 );

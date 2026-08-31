@@ -141,6 +141,11 @@ export async function verifyRequest(
 				// correct form of that is tiers and explicit documents only.
 				groupIds: [],
 				expiresAt: new Date(Date.now() + input.grantTtlDays * 24 * 60 * 60 * 1000),
+				// An auto-approved grant is never inert. §10.1 forbids a pattern
+				// match from handing out access an agreement gates, so there is
+				// nothing for it to wait on — Task 19 makes that a refusal rather
+				// than an assumption.
+				acceptanceDueAt: null,
 				termDays: input.grantTtlDays
 			}));
 		}

@@ -1,5 +1,9 @@
+import { randomUUID } from 'node:crypto';
+import { eq } from 'drizzle-orm';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { createGrant, grantedDocuments } from '../../src/lib/server/access/grants';
 import { createGroup, setDocumentGroups } from '../../src/lib/server/access/groups';
+import { decideRequest } from '../../src/lib/server/access/requests';
 import { createDb, type Db } from '../../src/lib/server/db';
 import {
 	accessGrant,
@@ -8,20 +12,46 @@ import {
 	documentCategory,
 	ndaTemplate,
 	ndaTemplateVersion,
-	requester
+	requester,
+	staffUser
 } from '../../src/lib/server/db/schema';
-import { DefaultTemplateMissing, proposeRequirements } from '../../src/lib/server/nda/requirements';
-import { seedAgreement, seedDocument } from '../setup/fixtures';
+import {
+	DefaultTemplateMissing,
+	grantRequirements,
+	proposeRequirements,
+	recordRequirements,
+	RequirementNotRenderable
+} from '../../src/lib/server/nda/requirements';
+import { createTemplate } from '../../src/lib/server/nda/templates';
+import {
+	seedAgreement,
+	seedDocument,
+	seedGrant,
+	seedRequest,
+	seedRequester
+} from '../setup/fixtures';
 
 const LOCALES = ['de', 'en'];
 
 let db: Db;
 let close: () => Promise<void>;
+let staffId: string;
 
-beforeAll(() => {
+beforeAll(async () => {
 	const url = process.env.TEST_DATABASE_URL;
 	if (!url) throw new Error('TEST_DATABASE_URL not set by global setup');
 	({ db, close } = createDb(url));
+
+	const [staff] = await db
+		.insert(staffUser)
+		.values({
+			oidcSub: `sub-${randomUUID()}`,
+			email: `approver-${randomUUID()}@matchory.example`,
+			name: 'An Approver',
+			role: 'approver'
+		})
+		.returning({ id: staffUser.id });
+	staffId = staff!.id;
 });
 
 // Children before parents: `access_group.nda_template_id` and
@@ -157,5 +187,138 @@ describe('proposing the agreements a scope requires', () => {
 				{ defaultTemplateId: null }
 			)
 		).rejects.toBeInstanceOf(DefaultTemplateMissing);
+	});
+});
+
+describe('recording what a grant is waiting on', () => {
+	let requesterId: string;
+	let acme: string;
+	let bosch: string;
+
+	beforeEach(async () => {
+		requesterId = await seedRequester(db);
+		({ templateId: acme } = await seedAgreement(db, { slug: 'acme', locales: LOCALES }));
+		({ templateId: bosch } = await seedAgreement(db, { slug: 'bosch', locales: LOCALES }));
+	});
+
+	it('mints an inert grant when a requirement is outstanding', async () => {
+		const { grantId } = await createGrant(db, {
+			requesterId,
+			requestId: null,
+			documentIds: [],
+			tiers: ['request'],
+			groupIds: [],
+			termDays: 30,
+			expiresAt: null,
+			acceptanceDueAt: new Date(Date.now() + 14 * 86_400_000)
+		});
+
+		const [row] = await db.select().from(accessGrant).where(eq(accessGrant.id, grantId));
+		expect(row?.expiresAt).toBeNull();
+
+		// Inert by construction, not by remembering: both download gates filter
+		// `expires_at > now()`, and SQL's NULL comparison excludes the row.
+		expect(await grantedDocuments(db, requesterId)).toEqual([]);
+	});
+
+	it('refuses a grant that is neither live nor waiting', async () => {
+		// The constraint name is on the driver's `cause`, not on the wrapper
+		// message drizzle throws — the same shape `groups.test.ts` asserts on.
+		await expect(
+			db.insert(accessGrant).values({ requesterId, termDays: 30, expiresAt: null })
+		).rejects.toMatchObject({
+			cause: { message: expect.stringContaining('access_grant_inert_check') }
+		});
+	});
+
+	it('records a waiver as a row, with the approver and the reason', async () => {
+		const grantId = await seedGrant(db, { requesterId });
+		await recordRequirements(
+			db,
+			grantId,
+			[
+				{ templateId: acme, disposition: 'required', reason: null },
+				{ templateId: bosch, disposition: 'waived', reason: 'signed on paper 2026-05-02' }
+			],
+			staffId,
+			{ locales: LOCALES }
+		);
+
+		const rows = await grantRequirements(db, grantId);
+		expect(rows).toHaveLength(2);
+		expect(rows.find((row) => row.ndaTemplateId === bosch)).toMatchObject({
+			disposition: 'waived',
+			reason: 'signed on paper 2026-05-02',
+			decidedByStaffId: staffId
+		});
+	});
+
+	it('refuses to record a requirement whose template has no renderable version', async () => {
+		// §5.2: the failure lands at the decision, where a person is present,
+		// rather than at the click-through, where one is not — and where the
+		// requester would sit on an "unavailable" page while their deadline ticked
+		// down.
+		const draftOnly = await createTemplate(db, { slug: 'unpublished' });
+		const grantId = await seedGrant(db, { requesterId });
+
+		await expect(
+			recordRequirements(
+				db,
+				grantId,
+				[{ templateId: draftOnly, disposition: 'required', reason: null }],
+				staffId,
+				{ locales: LOCALES }
+			)
+		).rejects.toBeInstanceOf(RequirementNotRenderable);
+	});
+
+	it('mints a live grant when every requirement is waived', async () => {
+		// Nothing is outstanding, so nothing is waited on. The clock starts now.
+		const documentId = await seedDocument(db, { slug: 'soc2', tier: 'request' });
+		const requestId = await seedRequest(db, { requesterId });
+
+		const { status, grantId } = await decideRequest(db, {
+			requestId,
+			staffUserId: staffId,
+			decision: 'approve',
+			documentIds: [documentId],
+			tiers: [],
+			groupIds: [],
+			termDays: 30,
+			reason: null,
+			requirements: [{ templateId: acme, disposition: 'waived', reason: 'on paper' }],
+			acceptanceDueDays: 14,
+			locales: LOCALES
+		});
+
+		expect(status).toBe('approved');
+		const [row] = await db.select().from(accessGrant).where(eq(accessGrant.id, grantId!));
+		expect(row?.expiresAt).not.toBeNull();
+		expect(row?.acceptanceDueAt).toBeNull();
+	});
+
+	it('mints an inert grant with a deadline when a requirement stands', async () => {
+		const documentId = await seedDocument(db, { slug: 'soc2', tier: 'request' });
+		const requestId = await seedRequest(db, { requesterId });
+
+		const { grantId } = await decideRequest(db, {
+			requestId,
+			staffUserId: staffId,
+			decision: 'approve',
+			documentIds: [documentId],
+			tiers: [],
+			groupIds: [],
+			termDays: 30,
+			reason: null,
+			requirements: [{ templateId: acme, disposition: 'required', reason: null }],
+			acceptanceDueDays: 14,
+			locales: LOCALES
+		});
+
+		const [row] = await db.select().from(accessGrant).where(eq(accessGrant.id, grantId!));
+		expect(row?.expiresAt).toBeNull();
+		expect(row?.acceptanceDueAt).not.toBeNull();
+		// The frozen set travels with the grant, waivers and all.
+		expect(await grantRequirements(db, grantId!)).toHaveLength(1);
 	});
 });

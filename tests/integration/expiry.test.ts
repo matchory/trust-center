@@ -75,7 +75,8 @@ async function seed(options: {
 		tiers: [],
 		groupIds: [],
 		termDays: 30,
-		expiresAt: options.expiresAt
+		expiresAt: options.expiresAt,
+		acceptanceDueAt: null
 	});
 
 	if (options.revoked) {

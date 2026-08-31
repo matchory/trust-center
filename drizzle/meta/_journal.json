@@ -162,6 +162,13 @@
       "when": 1788166527405,
       "tag": "0022_grant_lifecycle",
       "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1788175543268,
+      "tag": "0023_grant_requirements",
+      "breakpoints": true
     }
   ]
 }

@@ -1,5 +1,7 @@
-import { eq, inArray, or } from 'drizzle-orm';
-import { accessGroup, document, documentGroup } from '../db/schema';
+import { asc, eq, inArray, or } from 'drizzle-orm';
+import { accessGrantNda, accessGroup, document, documentGroup } from '../db/schema';
+import { effectiveVersion } from './templates';
+import type { NdaDisposition } from '../../nda-types';
 import type { Db } from '../db';
 
 /**
@@ -113,4 +115,91 @@ export async function proposeRequirements(
 	}
 
 	return proposeFrom([...documents.values()], options);
+}
+
+/**
+ * Raised when an approver requires an agreement nobody could be shown: the
+ * template has no currently-effective, locale-complete version (§5.2).
+ */
+export class RequirementNotRenderable extends Error {}
+
+/** One line of the approver's confirmed set. */
+export interface RequirementChoice {
+	templateId: string;
+	disposition: NdaDisposition;
+	reason: string | null;
+}
+
+export interface RequirementRow extends RequirementChoice {
+	grantId: string;
+	ndaTemplateId: string;
+	decidedByStaffId: string | null;
+}
+
+/**
+ * Freeze the approver's confirmed set onto the grant (P3.9). What is stored is
+ * what they confirmed — waivers included, as rows — because §7.3 re-derives
+ * what a document requires at delivery, and a requirement omitted here would be
+ * silently re-imposed there.
+ *
+ * A `required` entry whose template has no renderable version is refused, so
+ * the failure lands at the decision, where a person is present, rather than at
+ * the click-through, where one is not and the requester's deadline is already
+ * running. A `waived` entry is not checked: nobody will be shown it.
+ *
+ * `locales` is an argument rather than a `getConfig()` call, as everything
+ * below the route layer is.
+ */
+export async function recordRequirements(
+	db: Db,
+	grantId: string,
+	choices: readonly RequirementChoice[],
+	staffUserId: string,
+	options: { locales: readonly string[] }
+): Promise<void> {
+	// Checked before the transaction opens rather than inside it: the check is a
+	// read per template and refusing early keeps a doomed decision from holding
+	// write locks on the grant.
+	for (const choice of choices) {
+		if (choice.disposition !== 'required') continue;
+		if (await effectiveVersion(db, choice.templateId, options.locales)) continue;
+
+		throw new RequirementNotRenderable(
+			`agreement ${choice.templateId} has no effective version in every enabled locale`
+		);
+	}
+
+	// Replaced wholesale rather than diffed, in one transaction, for the reason
+	// the scope setters are: a half-applied set is neither what it was nor what
+	// the approver confirmed.
+	await db.transaction(async (tx) => {
+		await tx.delete(accessGrantNda).where(eq(accessGrantNda.grantId, grantId));
+		if (choices.length === 0) return;
+
+		const byTemplate = new Map(choices.map((choice) => [choice.templateId, choice]));
+		await tx.insert(accessGrantNda).values(
+			[...byTemplate.values()].map((choice) => ({
+				grantId,
+				ndaTemplateId: choice.templateId,
+				disposition: choice.disposition,
+				decidedByStaffId: staffUserId,
+				reason: choice.reason
+			}))
+		);
+	});
+}
+
+/** The frozen set, as the approver left it. */
+export async function grantRequirements(db: Db, grantId: string): Promise<RequirementRow[]> {
+	const rows = await db
+		.select()
+		.from(accessGrantNda)
+		.where(eq(accessGrantNda.grantId, grantId))
+		.orderBy(asc(accessGrantNda.ndaTemplateId));
+
+	return rows.map((row) => ({
+		...row,
+		templateId: row.ndaTemplateId,
+		disposition: row.disposition as NdaDisposition
+	}));
 }

@@ -14,6 +14,19 @@ export type AcceptanceScope = (typeof ACCEPTANCE_SCOPES)[number];
  * server module — the same reason `SCOPE_TIERS` lives in `access-types.ts`
  * instead of `server/access/scope.ts`.
  */
+/**
+ * What an approver decided about one agreement the scope proposed. `waived` is
+ * a stored disposition rather than an omission, because §7.3 re-derives what a
+ * document requires at delivery: a requirement left out of the record would be
+ * silently re-imposed there, and the bypass would do nothing.
+ *
+ * Here rather than in `server/nda/requirements.ts` because the decision form
+ * renders one control per disposition, and a component may not import a server
+ * module.
+ */
+export const NDA_DISPOSITIONS = ['required', 'waived'] as const;
+export type NdaDisposition = (typeof NDA_DISPOSITIONS)[number];
+
 export const GRANT_STATES = [
 	'active',
 	'expired',

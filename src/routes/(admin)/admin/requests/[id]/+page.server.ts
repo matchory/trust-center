@@ -13,6 +13,7 @@ import { PHASE_TIERS } from '$lib/server/access/scope';
 import { recordEvent } from '$lib/server/audit';
 import { getConfig } from '$lib/server/config';
 import { getDb } from '$lib/server/db/instance';
+import { acceptanceDueDays } from '$lib/server/nda/settings';
 import { clientIp } from '$lib/server/http/client-ip';
 import { issueMagicLink } from '$lib/server/identity/magic-link';
 import { enqueueEmail } from '$lib/server/mail/queue';
@@ -115,7 +116,13 @@ async function decide(event: Parameters<Actions[string]>[0], decision: Decision)
 			tiers,
 			groupIds,
 			termDays,
-			reason
+			reason,
+			// Task 10 gives the approver a control over these. Until then every
+			// approval confirms an empty set, which is the phase's existing
+			// behaviour stated explicitly rather than assumed.
+			requirements: [],
+			acceptanceDueDays: await acceptanceDueDays(db, config.ndaAcceptanceDueDays),
+			locales: config.locales
 		});
 	} catch (cause) {
 		// A race with another approver, or a scope naming something out of

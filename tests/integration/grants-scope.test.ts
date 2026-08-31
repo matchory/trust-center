@@ -56,6 +56,7 @@ describe('grant resolution over sets', () => {
 			tiers: [],
 			groupIds: [],
 			expiresAt: inNinetyDays(),
+			acceptanceDueAt: null,
 			termDays: 90
 		});
 
@@ -72,6 +73,7 @@ describe('grant resolution over sets', () => {
 			tiers: ['request'],
 			groupIds: [],
 			expiresAt: inNinetyDays(),
+			acceptanceDueAt: null,
 			termDays: 90
 		});
 
@@ -92,6 +94,7 @@ describe('grant resolution over sets', () => {
 			tiers: [],
 			groupIds: [groupId],
 			expiresAt: inNinetyDays(),
+			acceptanceDueAt: null,
 			termDays: 90
 		});
 
@@ -113,6 +116,7 @@ describe('grant resolution over sets', () => {
 			tiers: [],
 			groupIds: [],
 			expiresAt: inNinetyDays(),
+			acceptanceDueAt: null,
 			termDays: 90
 		});
 
@@ -130,6 +134,7 @@ describe('grant resolution over sets', () => {
 			tiers: ['nda'],
 			groupIds: [],
 			expiresAt: inNinetyDays(),
+			acceptanceDueAt: null,
 			termDays: 90
 		});
 
@@ -149,6 +154,7 @@ describe('grant resolution over sets', () => {
 			tiers: ['request'],
 			groupIds: [],
 			expiresAt: new Date(Date.now() - 1000),
+			acceptanceDueAt: null,
 			termDays: 90
 		});
 
@@ -172,6 +178,7 @@ describe('grant resolution over sets', () => {
 			tiers: ['request'],
 			groupIds: [groupId],
 			expiresAt: inNinetyDays(),
+			acceptanceDueAt: null,
 			termDays: 90
 		});
 

@@ -27,6 +27,7 @@ let ndaDoc: string;
 let staffId: string;
 
 const DEFAULT_TTL_DAYS = 30;
+const LOCALES = ['de', 'en'];
 
 beforeAll(async () => {
 	const url = process.env.TEST_DATABASE_URL;
@@ -118,7 +119,10 @@ describe('decideRequest', () => {
 			tiers: [],
 			groupIds: [],
 			termDays: DEFAULT_TTL_DAYS,
-			reason: null
+			reason: null,
+			requirements: [],
+			acceptanceDueDays: 14,
+			locales: LOCALES
 		});
 
 		expect(status).toBe('approved');
@@ -150,7 +154,10 @@ describe('decideRequest', () => {
 			tiers: [],
 			groupIds: [],
 			termDays: DEFAULT_TTL_DAYS,
-			reason: null
+			reason: null,
+			requirements: [],
+			acceptanceDueDays: 14,
+			locales: LOCALES
 		});
 
 		const [grant] = await grantsFor(requestId);
@@ -174,7 +181,10 @@ describe('decideRequest', () => {
 			tiers: ['request'],
 			groupIds: [],
 			termDays: 7,
-			reason: null
+			reason: null,
+			requirements: [],
+			acceptanceDueDays: 14,
+			locales: LOCALES
 		});
 
 		const [grant] = await grantsFor(requestId);
@@ -197,7 +207,10 @@ describe('decideRequest', () => {
 			tiers: [],
 			groupIds: [],
 			termDays: DEFAULT_TTL_DAYS,
-			reason: 'Not a customer'
+			reason: 'Not a customer',
+			requirements: [],
+			acceptanceDueDays: 14,
+			locales: LOCALES
 		});
 
 		expect(status).toBe('denied');
@@ -219,7 +232,10 @@ describe('decideRequest', () => {
 			tiers: [],
 			groupIds: [],
 			termDays: DEFAULT_TTL_DAYS,
-			reason: 'Which entity are you contracting through?'
+			reason: 'Which entity are you contracting through?',
+			requirements: [],
+			acceptanceDueDays: 14,
+			locales: LOCALES
 		});
 
 		expect(status).toBe('info_requested');
@@ -242,7 +258,10 @@ describe('decideRequest', () => {
 				tiers: [],
 				groupIds: [],
 				termDays: DEFAULT_TTL_DAYS,
-				reason: null
+				reason: null,
+				requirements: [],
+				acceptanceDueDays: 14,
+				locales: LOCALES
 			});
 
 		await approve();
@@ -263,7 +282,10 @@ describe('decideRequest', () => {
 				tiers: [],
 				groupIds: [],
 				termDays: DEFAULT_TTL_DAYS,
-				reason: null
+				reason: null,
+				requirements: [],
+				acceptanceDueDays: 14,
+				locales: LOCALES
 			})
 		).rejects.toBeInstanceOf(DecisionRejected);
 
@@ -284,7 +306,10 @@ describe('decideRequest', () => {
 			tiers: [],
 			groupIds: [groupId],
 			termDays: 30,
-			reason: null
+			reason: null,
+			requirements: [],
+			acceptanceDueDays: 14,
+			locales: LOCALES
 		});
 
 		expect(await grantTiers(db, grantId!)).toEqual([]);
@@ -303,7 +328,10 @@ describe('decideRequest', () => {
 				tiers: [],
 				groupIds: [],
 				termDays: DEFAULT_TTL_DAYS,
-				reason: null
+				reason: null,
+				requirements: [],
+				acceptanceDueDays: 14,
+				locales: LOCALES
 			})
 		).rejects.toBeInstanceOf(DecisionRejected);
 	});

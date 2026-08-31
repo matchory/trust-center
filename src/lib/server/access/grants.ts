@@ -24,6 +24,13 @@ export type { GrantState };
  * `getConfig()` cannot run without a fully configured environment, which makes
  * it untestable and tells it more than it needs to know. The caller owns the
  * lookup.
+ *
+ * A null `expiresAt` mints an **inert** grant — one waiting on an acceptance —
+ * and then `acceptanceDueAt` must say when that wait ends; the pairing is
+ * `access_grant_inert_check`. Both are stated by the caller rather than
+ * inferred here: which one applies follows from the requirements the approver
+ * confirmed, and inferring it would re-derive their decision from this
+ * function's own arguments.
  */
 export async function createGrant(
 	db: Db,
@@ -33,10 +40,11 @@ export async function createGrant(
 		documentIds: readonly string[];
 		tiers: readonly ScopeTier[];
 		groupIds: readonly string[];
-		expiresAt: Date;
+		expiresAt: Date | null;
+		acceptanceDueAt: Date | null;
 		termDays: number;
 	}
-): Promise<{ grantId: string; expiresAt: Date }> {
+): Promise<{ grantId: string; expiresAt: Date | null }> {
 	return db.transaction(async (tx) => {
 		const [row] = await tx
 			.insert(accessGrant)
@@ -44,7 +52,8 @@ export async function createGrant(
 				requesterId: input.requesterId,
 				requestId: input.requestId,
 				termDays: input.termDays,
-				expiresAt: input.expiresAt
+				expiresAt: input.expiresAt,
+				acceptanceDueAt: input.acceptanceDueAt
 			})
 			.returning({ id: accessGrant.id });
 

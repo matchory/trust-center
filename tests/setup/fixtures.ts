@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import {
 	accessGrant,
+	accessGrantNda,
 	accessRequest,
 	accessRule,
 	document,
@@ -81,6 +82,37 @@ export async function seedGrant(
 			acceptanceDueAt: input.acceptanceDueAt ?? null
 		})
 		.returning({ id: accessGrant.id });
+
+	return row!.id;
+}
+
+/**
+ * A grant waiting on an acceptance: no expiry, a deadline, and its frozen
+ * requirement set. The pairing is what `access_grant_inert_check` enforces, so
+ * building one by hand is how a test comes to describe a grant the database
+ * would refuse.
+ */
+export async function seedInertGrant(
+	db: Db,
+	input: { requesterId: string; requires: readonly string[]; dueInDays?: number }
+): Promise<string> {
+	const [row] = await db
+		.insert(accessGrant)
+		.values({
+			requesterId: input.requesterId,
+			termDays: 30,
+			expiresAt: null,
+			acceptanceDueAt: new Date(Date.now() + (input.dueInDays ?? 14) * 86_400_000)
+		})
+		.returning({ id: accessGrant.id });
+
+	for (const ndaTemplateId of input.requires) {
+		await db.insert(accessGrantNda).values({
+			grantId: row!.id,
+			ndaTemplateId,
+			disposition: 'required'
+		});
+	}
 
 	return row!.id;
 }
