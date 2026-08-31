@@ -22,6 +22,34 @@
 	// A decided request is read-only: `decideRequest` refuses a second decision,
 	// so offering the form would only produce a 409.
 	let decided = $derived(data.request.status === 'approved' || data.request.status === 'denied');
+
+	// The proposed set, resolved to what an operator can read. A template the
+	// proposal names is always in `templates` — both come from the same tables.
+	let requirements = $derived(
+		data.proposed.flatMap((id) => {
+			const template = data.templates.find((row) => row.id === id);
+			return template ? [template] : [];
+		})
+	);
+
+	// Waiving is a per-row choice the form has to reflect before it is submitted,
+	// because the reason field is only meaningful for a waived row.
+	let waived: string[] = $state([]);
+
+	// The default lives in `data`; only an operator's edit is local state, so
+	// the term stays derived rather than a copy that goes stale on navigation.
+	let termOverride: number | null = $state(null);
+	let termDays = $derived(termOverride ?? data.defaultTermDays);
+
+	// §7.2: the resolved date is shown only when it is knowable. With something
+	// outstanding the clock starts at acceptance, and a date that will not be
+	// the date is worse than no date.
+	let outstanding = $derived(requirements.filter((row) => !waived.includes(row.id)).length);
+	let resolvedExpiry = $derived(
+		Number.isInteger(termDays) && termDays > 0
+			? new Date(Date.now() + termDays * 24 * 60 * 60 * 1000)
+			: null
+	);
 </script>
 
 <div class="mb-6">
@@ -66,7 +94,7 @@
 
 {#if form?.failed}
 	<p data-testid="decision-error" class="mb-4 max-w-prose text-sm text-red-700">
-		{m.admin_decision_error()}
+		{form.unrenderable ? m.admin_requirement_unrenderable() : m.admin_decision_error()}
 	</p>
 {/if}
 
@@ -125,6 +153,57 @@
 			{/each}
 		</fieldset>
 
+		<fieldset>
+			<legend class="mb-2 text-sm font-medium">{m.admin_requirements()}</legend>
+
+			{#if data.noDefaultAgreement}
+				<p data-testid="requirement-no-default" class="text-sm text-red-700">
+					{m.admin_requirement_no_default()}
+				</p>
+			{:else if requirements.length === 0}
+				<p class="text-sm text-neutral-500">{m.admin_requirement_none()}</p>
+			{/if}
+
+			{#each requirements as row (row.id)}
+				<div data-testid="requirement-row" class="mb-3 rounded border p-3">
+					<!-- Posted for every proposed row. The checkbox beside it names
+					     only the waived subset, because an unchecked box posts
+					     nothing at all. -->
+					<input type="hidden" name="requirements" value={row.id} />
+
+					<p class="text-sm font-medium">{row.names[data.locale] ?? row.slug}</p>
+
+					{#if row.effectiveVersionNumber === null}
+						<p class="mt-1 text-sm text-amber-700">
+							{m.admin_agreement_no_effective_version()}
+						</p>
+					{/if}
+
+					<label class="mt-2 flex items-center gap-2 text-sm">
+						<input
+							type="checkbox"
+							name="waived"
+							value={row.id}
+							bind:group={waived}
+							data-testid="requirement-waive"
+						/>
+						<span>{m.admin_requirement_waive()}</span>
+					</label>
+
+					{#if waived.includes(row.id)}
+						<label class="mt-2 block">
+							<span class="mb-1 block text-sm">{m.admin_requirement_reason()}</span>
+							<input
+								name="reason.{row.id}"
+								data-testid="requirement-reason"
+								class="w-full rounded border px-2 py-1"
+							/>
+						</label>
+					{/if}
+				</div>
+			{/each}
+		</fieldset>
+
 		<label class="block">
 			<span class="mb-1 block text-sm font-medium">{m.admin_decision_term_days()}</span>
 			<input
@@ -132,10 +211,18 @@
 				min="1"
 				max="3650"
 				name="termDays"
-				value={data.defaultTermDays}
+				value={termDays}
+				oninput={(event) => (termOverride = event.currentTarget.valueAsNumber)}
 				data-testid="decision-term-days"
 				class="rounded border px-2 py-1"
 			/>
+			<span data-testid="decision-term-hint" class="mt-1 block text-xs text-neutral-500">
+				{#if outstanding > 0}
+					{m.admin_term_from_acceptance()}
+				{:else if resolvedExpiry}
+					{m.admin_term_until({ date: formatDate(resolvedExpiry, data.locale) })}
+				{/if}
+			</span>
 		</label>
 
 		<label class="block">

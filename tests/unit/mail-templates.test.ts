@@ -4,6 +4,7 @@ import { MAIL_TEMPLATES, renderTemplate } from '../../src/lib/server/mail/templa
 const SAMPLE = {
 	url: 'https://t.example/a',
 	documentCount: 2,
+	agreementCount: 1,
 	expiresAt: '2026-12-01',
 	reason: 'a reason'
 };
@@ -42,6 +43,20 @@ describe('renderTemplate', () => {
 				expect(rendered.subject, `${id}/${locale}`).not.toMatch(/\{[a-zA-Z]+\}/);
 			}
 		}
+	});
+
+	it('tells an approved requester with an outstanding agreement where to go next', () => {
+		// `request_approved` says access is ready. Under this phase an approval
+		// sometimes means one step remains, and the two land the reader in
+		// different places — so they are two templates, not one with a clause.
+		const rendered = renderTemplate('request_acceptance_required', 'en', {
+			url: 'https://trust.example/en/access',
+			documentCount: 3,
+			agreementCount: 1
+		});
+
+		expect(rendered.subject).not.toBe(renderTemplate('request_approved', 'en', SAMPLE).subject);
+		expect(rendered.text).toContain('https://trust.example/en/access');
 	});
 
 	it('renders the two locales differently for every template', () => {

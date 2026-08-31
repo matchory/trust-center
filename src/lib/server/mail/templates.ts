@@ -4,6 +4,10 @@ import { assertIsLocale } from '../../paraglide/runtime.js';
 export const MAIL_TEMPLATES = [
 	'verify_request',
 	'request_approved',
+	// Split from `request_approved` rather than a clause inside it: under this
+	// phase an approval sometimes means one step remains, and the two land the
+	// reader in different places — the documents, or the agreement.
+	'request_acceptance_required',
 	'request_denied',
 	'sign_in',
 	'grant_expiring',
@@ -37,6 +41,7 @@ export function renderTemplate(
 	const options = { locale: assertIsLocale(locale) };
 	const url = String(payload.url ?? '');
 	const documentCount = String(payload.documentCount ?? 0);
+	const agreementCount = String(payload.agreementCount ?? 0);
 	const expiresAt = String(payload.expiresAt ?? '');
 
 	switch (id) {
@@ -49,6 +54,14 @@ export function renderTemplate(
 			return {
 				subject: m.mail_request_approved_subject({}, options),
 				text: m.mail_request_approved_body({ url, documentCount, expiresAt }, options)
+			};
+		case 'request_acceptance_required':
+			return {
+				subject: m.mail_request_acceptance_required_subject({}, options),
+				text: m.mail_request_acceptance_required_body(
+					{ url, documentCount, agreementCount },
+					options
+				)
 			};
 		case 'request_denied':
 			return {

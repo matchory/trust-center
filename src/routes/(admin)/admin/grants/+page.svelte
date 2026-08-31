@@ -54,6 +54,20 @@
 		{:else if key === 'state'}
 			<div class="flex items-center gap-3">
 				<span data-testid="grant-state-{row.id}">{STATE_LABEL[row.state]?.() ?? row.state}</span>
+				<!-- §5.2: an inert grant whose agreement has stopped being
+				     renderable would otherwise fail silently — the requester waits
+				     on a page that cannot render while the deadline runs. -->
+				{#each row.blocked as blocked (blocked.slug)}
+					<span data-testid="grant-blocked-{row.id}" class="text-xs text-red-700">
+						{m.admin_grant_blocked({
+							name: blocked.names[data.locale] ?? blocked.slug,
+							locales:
+								blocked.locales.length > 0
+									? ` (${m.admin_agreement_blocked_locales({ locales: blocked.locales.join(', ') })})`
+									: ''
+						})}
+					</span>
+				{/each}
 				<!-- Only an active grant: revoking an expired one changes nothing a
 				     download path reads, and offering it suggests otherwise. -->
 				{#if row.state === 'active'}

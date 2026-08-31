@@ -40,7 +40,10 @@
 			{/each}
 		</select>
 	</FormField>
-	<button class="justify-self-start rounded border px-3 py-1.5 text-sm">{m.admin_save()}</button>
+	<button
+		data-testid="group-save-meta"
+		class="justify-self-start rounded border px-3 py-1.5 text-sm">{m.admin_save()}</button
+	>
 </form>
 
 <form

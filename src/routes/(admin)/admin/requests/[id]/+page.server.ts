@@ -13,7 +13,14 @@ import { PHASE_TIERS } from '$lib/server/access/scope';
 import { recordEvent } from '$lib/server/audit';
 import { getConfig } from '$lib/server/config';
 import { getDb } from '$lib/server/db/instance';
-import { acceptanceDueDays } from '$lib/server/nda/settings';
+import {
+	DefaultTemplateMissing,
+	proposeRequirements,
+	RequirementNotRenderable,
+	type RequirementChoice
+} from '$lib/server/nda/requirements';
+import { acceptanceDueDays, defaultTemplateId } from '$lib/server/nda/settings';
+import { listTemplates } from '$lib/server/nda/templates';
 import { clientIp } from '$lib/server/http/client-ip';
 import { issueMagicLink } from '$lib/server/identity/magic-link';
 import { enqueueEmail } from '$lib/server/mail/queue';
@@ -21,24 +28,60 @@ import type { Actions, PageServerLoad } from './$types';
 
 export const load: PageServerLoad = async ({ params, locals }) => {
 	const db = getDb();
+	const config = getConfig();
 
-	// Four independent reads. Awaited in sequence they were four round trips
-	// deep before this page rendered, and nothing here needs anything else here.
-	const [request, documents, groups, defaultTermDays] = await Promise.all([
-		getRequestForAdmin(db, params.id),
-		// The full list, not just what was asked for: §9.4 lets an approver
-		// narrow *or* widen.
-		requestableDocuments(db, locals.locale),
-		listGroups(db),
-		defaultGrantDays(db, getConfig().accessGrantDefaultDays)
-	]);
+	// Independent reads. Awaited in sequence they were one round trip each
+	// before this page rendered, and nothing here needs anything else here.
+	const [request, documents, groups, defaultTermDays, templates, defaultTemplate] =
+		await Promise.all([
+			getRequestForAdmin(db, params.id),
+			// The full list, not just what was asked for: §9.4 lets an approver
+			// narrow *or* widen.
+			requestableDocuments(db, locals.locale),
+			listGroups(db),
+			defaultGrantDays(db, config.accessGrantDefaultDays),
+			// For the names, so the requirement list reads as agreements rather
+			// than as uuids.
+			listTemplates(db, config.locales),
+			defaultTemplateId(db)
+		]);
 
 	if (!request) error(404, 'Not found');
 
-	return { request, documents, groups, tiers: [...PHASE_TIERS], defaultTermDays };
+	// The proposal is computed for the *requested* scope, so the form arrives
+	// pre-filled. The approver may then change the scope; what is stored is only
+	// ever the set they confirmed (P3.9), and §7.3's live check at delivery is
+	// what catches a scope widened past it.
+	let proposed: string[] = [];
+	let noDefaultAgreement = false;
+
+	try {
+		proposed = await proposeRequirements(
+			db,
+			{ documentIds: request.requestedDocumentIds, tiers: request.tiers, groupIds: [] },
+			{ defaultTemplateId: defaultTemplate }
+		);
+	} catch (cause) {
+		// An operator's configuration gap, not a server fault: an nda-tier
+		// document is in scope and nobody has said which agreement covers it.
+		// The page says so; it does not 500.
+		if (!(cause instanceof DefaultTemplateMissing)) throw cause;
+		noDefaultAgreement = true;
+	}
+
+	return {
+		request,
+		documents,
+		groups,
+		tiers: [...PHASE_TIERS],
+		defaultTermDays,
+		templates,
+		proposed,
+		noDefaultAgreement
+	};
 };
 
-type DecisionFailure = { failed: true };
+type DecisionFailure = { failed: true; unrenderable?: true };
 
 /**
  * The mail a decision produces carries a `sign_in` magic link rather than a
@@ -50,8 +93,8 @@ async function notifyRequester(
 	requesterId: string,
 	email: string,
 	locale: string,
-	template: 'request_approved' | 'request_denied',
-	payload: { documentCount: number; expiresAt: string; reason: string }
+	template: 'request_approved' | 'request_acceptance_required' | 'request_denied',
+	payload: { documentCount: number; agreementCount: number; expiresAt: string; reason: string }
 ): Promise<void> {
 	const db = getDb();
 	const config = getConfig();
@@ -106,6 +149,19 @@ async function decide(event: Parameters<Actions[string]>[0], decision: Decision)
 	const tiers = form.getAll('tiers').map(String).filter(Boolean);
 	const groupIds = form.getAll('groupIds').map(String).filter(Boolean);
 
+	// Two fields rather than one `templateId:disposition` pair per row: an
+	// unchecked checkbox posts nothing, so a single field would need a hidden
+	// twin per row and a rule for which of the two wins. `requirements` is the
+	// set the approver confirmed applies; `waived` is the subset they excused.
+	const waived = new Set(form.getAll('waived').map(String));
+	const requirements: RequirementChoice[] = [
+		...new Set(form.getAll('requirements').map(String).filter(Boolean))
+	].map((templateId) => ({
+		templateId,
+		disposition: waived.has(templateId) ? 'waived' : 'required',
+		reason: String(form.get(`reason.${templateId}`) ?? '').trim() || null
+	}));
+
 	let outcome;
 	try {
 		outcome = await decideRequest(db, {
@@ -117,10 +173,7 @@ async function decide(event: Parameters<Actions[string]>[0], decision: Decision)
 			groupIds,
 			termDays,
 			reason,
-			// Task 10 gives the approver a control over these. Until then every
-			// approval confirms an empty set, which is the phase's existing
-			// behaviour stated explicitly rather than assumed.
-			requirements: [],
+			requirements,
 			acceptanceDueDays: await acceptanceDueDays(db, config.ndaAcceptanceDueDays),
 			locales: config.locales
 		});
@@ -128,8 +181,15 @@ async function decide(event: Parameters<Actions[string]>[0], decision: Decision)
 		// A race with another approver, or a scope naming something out of
 		// bounds. Both are the operator's to see, unlike a submission rejection.
 		if (cause instanceof DecisionRejected) return fail<DecisionFailure>(409, { failed: true });
+		// An agreement nobody could be shown. §5.2: the failure lands here, where
+		// a person is present, rather than at the click-through where one is not.
+		if (cause instanceof RequirementNotRenderable) {
+			return fail<DecisionFailure>(409, { failed: true, unrenderable: true });
+		}
 		throw cause;
 	}
+
+	const outstanding = requirements.filter((entry) => entry.disposition === 'required');
 
 	await recordEvent(db, {
 		action: `access_request.${outcome.status}`,
@@ -146,28 +206,45 @@ async function decide(event: Parameters<Actions[string]>[0], decision: Decision)
 			tiers,
 			groupIds,
 			termDays,
-			documentCount: documentIds.length
+			documentCount: documentIds.length,
+			// Which agreements were required and which excused is the part of a
+			// decision an auditor asks about. Template ids are the company's own
+			// objects, not the requester's data.
+			requirements: requirements.map((entry) => `${entry.templateId}:${entry.disposition}`)
 		}
 	});
 
 	// `info_requested` is a question, not a decision, and this phase has no
 	// template for it — the operator follows up out of band.
 	if (outcome.status === 'approved' || outcome.status === 'denied') {
-		await notifyRequester(
-			request.requesterId,
-			request.email,
-			request.requesterLocale,
-			outcome.status === 'approved' ? 'request_approved' : 'request_denied',
-			{
-				// What the grant actually covers, asked of the grant. The form's
-				// document list is only one of three scope sources now, so counting
-				// it here would tell a requester granted a tier or a group that they
-				// have nothing.
-				documentCount: outcome.grantId ? await countGrantDocuments(db, outcome.grantId) : 0,
-				expiresAt: new Date(Date.now() + termDays * 24 * 60 * 60 * 1000).toISOString().slice(0, 10),
-				reason: reason ?? ''
-			}
-		);
+		// An approval with something outstanding is not "your access is ready" —
+		// the requester's next step is an agreement, and the mail has to say so.
+		const template =
+			outcome.status === 'denied'
+				? 'request_denied'
+				: outstanding.length > 0
+					? 'request_acceptance_required'
+					: 'request_approved';
+
+		await notifyRequester(request.requesterId, request.email, request.requesterLocale, template, {
+			// What the grant actually covers, asked of the grant. The form's
+			// document list is only one of three scope sources now, so counting
+			// it here would tell a requester granted a tier or a group that they
+			// have nothing.
+			//
+			// An inert grant confers nothing yet — `countGrantDocuments` filters
+			// `expires_at > now()` — so what it *will* cover is counted from the
+			// form's own scope instead of reporting zero.
+			documentCount:
+				outcome.grantId && outstanding.length === 0
+					? await countGrantDocuments(db, outcome.grantId)
+					: documentIds.length,
+			agreementCount: outstanding.length,
+			// Only meaningful for a grant whose clock has started; the
+			// acceptance-required body does not render it.
+			expiresAt: new Date(Date.now() + termDays * 24 * 60 * 60 * 1000).toISOString().slice(0, 10),
+			reason: reason ?? ''
+		});
 	}
 }
 

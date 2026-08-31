@@ -9,11 +9,12 @@ import { createDb, type Db } from '../../src/lib/server/db';
 import {
 	accessGrant,
 	accessGrantDocument,
+	accessGrantNda,
 	documentCategory,
 	document,
 	outboundEmail
 } from '../../src/lib/server/db/schema';
-import { gotoAdmin, signInAsAdmin } from '../helpers/admin';
+import { gotoAdmin, seedRequestForAgreement, signInAsAdmin, submitAndWait } from '../helpers/admin';
 
 const databaseUrl = process.env.DATABASE_URL;
 if (!databaseUrl) {
@@ -183,6 +184,65 @@ test('a decided request offers no second decision', async ({ page }) => {
 	await expect(page.getByTestId('request-detail-status')).toHaveText('Genehmigt');
 
 	await expect(page.getByTestId('decision-approve')).toHaveCount(0);
+});
+
+test('an approver waives an agreement and the grant starts immediately', async ({ page }) => {
+	await signInAsAdmin(page);
+	const { requestId } = await seedRequestForAgreement(page, db);
+
+	await gotoAdmin(page, `/de/admin/requests/${requestId}`);
+	// The document sits in a group carrying one agreement, so the proposal names
+	// exactly that one.
+	await expect(page.getByTestId('requirement-row')).toHaveCount(1);
+
+	await page.getByTestId('requirement-waive').check();
+	await page.getByTestId('requirement-reason').fill('Auf Papier unterschrieben');
+	await submitAndWait(page, 'decision-approve', '?/approve');
+
+	// Nothing is outstanding, so nothing is waited on: the clock starts now.
+	const [grant] = await db.select().from(accessGrant).where(eq(accessGrant.requestId, requestId));
+	expect(grant?.expiresAt).not.toBeNull();
+	expect(grant?.acceptanceDueAt).toBeNull();
+
+	// The waiver is a recorded row, not an omission — §7.3's live check at
+	// delivery re-derives the requirement and would otherwise re-impose it.
+	const [waiver] = await db
+		.select()
+		.from(accessGrantNda)
+		.where(eq(accessGrantNda.grantId, grant!.id));
+	expect(waiver?.disposition).toBe('waived');
+	expect(waiver?.reason).toBe('Auf Papier unterschrieben');
+
+	await gotoAdmin(page, '/de/admin/grants');
+	await expect(page.getByTestId(`grant-state-${grant!.id}`)).toHaveText('Aktiv');
+});
+
+test('an approval with an outstanding agreement waits on acceptance', async ({ page }) => {
+	await signInAsAdmin(page);
+	const { requestId, email } = await seedRequestForAgreement(page, db);
+
+	await gotoAdmin(page, `/de/admin/requests/${requestId}`);
+	// Confirmed rather than waived: the requirement stays outstanding, and the
+	// term hint stops promising a date the clock has not started for.
+	await expect(page.getByTestId('requirement-waive')).not.toBeChecked();
+	await expect(page.getByTestId('decision-term-hint')).toHaveText(/beginnt mit der Zustimmung/);
+	await submitAndWait(page, 'decision-approve', '?/approve');
+
+	const [grant] = await db.select().from(accessGrant).where(eq(accessGrant.requestId, requestId));
+	expect(grant?.expiresAt).toBeNull();
+	expect(grant?.acceptanceDueAt).not.toBeNull();
+
+	// The mail is the one that says a step remains, not "your access is ready".
+	const mail = (await db.select().from(outboundEmail).where(eq(outboundEmail.to, email))).map(
+		(row) => row.template
+	);
+	expect(mail).toContain('request_acceptance_required');
+	expect(mail).not.toContain('request_approved');
+
+	await gotoAdmin(page, '/de/admin/grants');
+	await expect(page.getByTestId(`grant-state-${grant!.id}`)).toHaveText('Zustimmung ausstehend');
+	// A grant that has not started has no end date to show.
+	await expect(page.getByTestId(`grant-${grant!.id}`)).toContainText('—');
 });
 
 test('the queue never lists an unverified request', async ({ page }) => {
