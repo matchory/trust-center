@@ -101,6 +101,7 @@
 	"admin_granted_at": "Granted",
 	"admin_grants_intro": "Who currently holds access, and until when. Revoking takes effect on the next download attempt.",
 	"admin_group": "Group",
+	"admin_group_agreement": "Agreement",
 	"admin_group_description": "Description",
 	"admin_group_in_use": "This group cannot be deleted while a grant still includes it.",
 	"admin_group_members": "Documents in this group",

@@ -1,10 +1,12 @@
+import { eq } from 'drizzle-orm';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { createDb, type Db } from '../../src/lib/server/db';
 import {
 	accessGrant,
 	accessGroup,
 	document,
-	documentCategory
+	documentCategory,
+	ndaTemplate
 } from '../../src/lib/server/db/schema';
 import {
 	createGroup,
@@ -15,6 +17,7 @@ import {
 	setGroupTranslation,
 	updateGroup
 } from '../../src/lib/server/access/groups';
+import { createTemplate } from '../../src/lib/server/nda/templates';
 import { seedDocument } from '../setup/fixtures';
 
 let db: Db;
@@ -26,7 +29,14 @@ beforeAll(() => {
 	({ db, close } = createDb(url));
 });
 
+// Groups before templates: access_group.nda_template_id is ON DELETE RESTRICT,
+// so a group naming a template holds it against deletion the same way a grant
+// holds a group. A file that leaves a group naming a template breaks whichever
+// file next tries to clear templates — nda-templates.test.ts runs right after
+// this one alphabetically and does exactly that in its own beforeEach.
 afterAll(async () => {
+	await db.delete(accessGroup);
+	await db.delete(ndaTemplate);
 	await close();
 });
 
@@ -38,6 +48,7 @@ describe('access groups', () => {
 		// this file's whole premise is that no group exists when a case starts.
 		await db.delete(accessGrant);
 		await db.delete(accessGroup);
+		await db.delete(ndaTemplate);
 	});
 
 	it('creates a group and lists it with a zero document count', async () => {
@@ -142,5 +153,40 @@ describe('access groups', () => {
 		expect(detail?.slug).toBe('new');
 		expect(detail?.position).toBe(5);
 		expect(detail?.documentIds).toEqual([documentId]);
+	});
+
+	it('refuses to delete a template a group still names', async () => {
+		const templateId = await createTemplate(db, { slug: 'partner' });
+		const groupId = await createGroup(db, { slug: 'partners', position: 0 });
+		await updateGroup(db, groupId, { slug: 'partners', position: 0, ndaTemplateId: templateId });
+
+		// The same shape as ScopeGroupInUse: the database refuses, and the operator
+		// retires rather than deletes. drizzle wraps the driver error under
+		// `.cause` here (`error.message` itself is just "Failed query: ..."), and
+		// Postgres's own wording for a RESTRICT-blocked delete is "violates
+		// RESTRICT setting of foreign key constraint" rather than the plainer
+		// "violates foreign key constraint" an INSERT-side violation produces.
+		await expect(
+			db.delete(ndaTemplate).where(eq(ndaTemplate.id, templateId))
+		).rejects.toMatchObject({
+			cause: { message: expect.stringContaining('foreign key constraint') }
+		});
+	});
+
+	it('carries the chosen agreement back out of the group', async () => {
+		const templateId = await createTemplate(db, { slug: 'reseller' });
+		const groupId = await createGroup(db, { slug: 'resellers', position: 0 });
+		await updateGroup(db, groupId, { slug: 'resellers', position: 0, ndaTemplateId: templateId });
+
+		expect((await getGroup(db, groupId))?.ndaTemplateId).toBe(templateId);
+	});
+
+	it('lets an operator clear the agreement again', async () => {
+		const templateId = await createTemplate(db, { slug: 'temporary' });
+		const groupId = await createGroup(db, { slug: 'temp', position: 0 });
+		await updateGroup(db, groupId, { slug: 'temp', position: 0, ndaTemplateId: templateId });
+		await updateGroup(db, groupId, { slug: 'temp', position: 0, ndaTemplateId: null });
+
+		expect((await getGroup(db, groupId))?.ndaTemplateId).toBeNull();
 	});
 });

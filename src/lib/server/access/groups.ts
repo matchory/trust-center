@@ -12,6 +12,8 @@ export interface AdminGroupRow {
 	/** Locale → name. A group with no translation in a locale is shown by slug. */
 	names: Record<string, string>;
 	documentCount: number;
+	/** The agreement this group carries, if any (§4.4 — one of the union's two inputs). */
+	ndaTemplateId: string | null;
 }
 
 export interface AdminGroupDetail extends AdminGroupRow {
@@ -30,7 +32,11 @@ export const groupSchema = z.object({
 		.trim()
 		.min(1)
 		.regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/),
-	position: z.coerce.number().int().min(-10_000).max(10_000)
+	position: z.coerce.number().int().min(-10_000).max(10_000),
+	// Optional: the create form never sends it, and omitting the key on an
+	// update leaves the column untouched rather than clearing it. Only the
+	// group's own form sends an explicit value, including `null` to clear it.
+	ndaTemplateId: z.string().uuid().nullable().optional()
 });
 
 export type GroupInput = z.output<typeof groupSchema>;
@@ -68,7 +74,8 @@ export async function listGroups(db: Db): Promise<AdminGroupRow[]> {
 		names: Object.fromEntries(
 			(namesByGroup.get(row.id) ?? []).map((name) => [name.locale, name.name])
 		),
-		documentCount: countByGroup.get(row.id) ?? 0
+		documentCount: countByGroup.get(row.id) ?? 0,
+		ndaTemplateId: row.ndaTemplateId
 	}));
 }
 
@@ -96,6 +103,7 @@ export async function getGroup(db: Db, id: string): Promise<AdminGroupDetail | n
 		slug: row.slug,
 		position: row.position,
 		names: Object.fromEntries(translations.map((t) => [t.locale, t.name])),
+		ndaTemplateId: row.ndaTemplateId,
 		// Only locales that actually have one: an empty description is absence,
 		// not an empty string, and the form must not render `""` as content.
 		descriptions: Object.fromEntries(

@@ -101,6 +101,7 @@
 	"admin_granted_at": "Erteilt",
 	"admin_grants_intro": "Wer derzeit Zugriff hat und bis wann. Ein Entzug wirkt beim nächsten Download-Versuch.",
 	"admin_group": "Bereich",
+	"admin_group_agreement": "Vereinbarung",
 	"admin_group_description": "Beschreibung",
 	"admin_group_in_use": "Diese Gruppe kann nicht gelöscht werden, solange eine Freigabe sie enthält.",
 	"admin_group_members": "Dokumente in dieser Gruppe",

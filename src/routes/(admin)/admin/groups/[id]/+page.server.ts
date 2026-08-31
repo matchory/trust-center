@@ -11,14 +11,18 @@ import { ScopeGroupInUse } from '$lib/server/access/scope';
 import { saveMetaAction, translationAction } from '$lib/server/admin/actions';
 import { saveTranslationsFromForm } from '$lib/server/content/translations';
 import { recordEvent } from '$lib/server/audit';
+import { getConfig } from '$lib/server/config';
 import { getDb } from '$lib/server/db/instance';
 import { clientIp } from '$lib/server/http/client-ip';
+import { listTemplates } from '$lib/server/nda/templates';
 import type { Actions, PageServerLoad } from './$types';
 
 export const load: PageServerLoad = async ({ params }) => {
-	const group = await getGroup(getDb(), params.id);
+	const db = getDb();
+	const group = await getGroup(db, params.id);
 	if (!group) error(404, 'Group not found');
-	return { group };
+	const templates = await listTemplates(db, getConfig().locales);
+	return { group, templates };
 };
 
 export const actions: Actions = {
@@ -27,7 +31,11 @@ export const actions: Actions = {
 	saveMeta: saveMetaAction({
 		type: 'access_group',
 		schema: groupSchema,
-		read: (form) => ({ slug: form.get('slug'), position: form.get('position') ?? 0 }),
+		read: (form) => ({
+			slug: form.get('slug'),
+			position: form.get('position') ?? 0,
+			ndaTemplateId: form.get('ndaTemplateId') || null
+		}),
 		update: (db, id, data) => updateGroup(db, id, data),
 		fallbackField: 'slug'
 	}),

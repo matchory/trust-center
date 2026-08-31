@@ -1,5 +1,6 @@
 import { index, integer, pgTable, primaryKey, text, timestamp, uuid } from 'drizzle-orm/pg-core';
 import { document } from './documents';
+import { ndaTemplate } from './nda';
 
 /**
  * A named, reusable bundle of documents — a saved scope — not a cohort of
@@ -7,15 +8,21 @@ import { document } from './documents';
  * because their flow is "invite a company, it sees its cohort's documents";
  * this product already has a grant carrying an explicit document list, so a
  * people axis would duplicate it.
- *
- * `nda_template_id` is deliberately absent. It would reference `nda_template`,
- * which arrives in Phase 3b — the same reason Phase 2 refused to ship
- * `access_grant.nda_acceptance_id` a phase early.
  */
 export const accessGroup = pgTable('access_group', {
 	id: uuid('id').primaryKey().defaultRandom(),
 	slug: text('slug').notNull().unique(),
 	position: integer('position').notNull().default(0),
+	/**
+	 * The agreement this bundle carries, if any. RESTRICT rather than the house
+	 * cascade: deleting a template out from under a group would remove the
+	 * requirement rows that reference it and make "every recorded requirement is
+	 * satisfied" vacuously true for every grant waiting on it. Templates retire
+	 * (P3.16); they do not delete.
+	 */
+	ndaTemplateId: uuid('nda_template_id').references(() => ndaTemplate.id, {
+		onDelete: 'restrict'
+	}),
 	createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow()
 });
 

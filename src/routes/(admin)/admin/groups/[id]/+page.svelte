@@ -28,6 +28,18 @@
 			class="rounded border px-2 py-1"
 		/>
 	</FormField>
+	<FormField label={m.admin_group_agreement()}>
+		<select name="ndaTemplateId" data-testid="group-agreement" class="rounded border px-2 py-1">
+			<option value="" selected={data.group.ndaTemplateId === null}>
+				{m.admin_agreement_default_template_none()}
+			</option>
+			{#each data.templates as template (template.id)}
+				<option value={template.id} selected={template.id === data.group.ndaTemplateId}>
+					{template.names[data.locale] ?? template.slug}
+				</option>
+			{/each}
+		</select>
+	</FormField>
 	<button class="justify-self-start rounded border px-3 py-1.5 text-sm">{m.admin_save()}</button>
 </form>
 

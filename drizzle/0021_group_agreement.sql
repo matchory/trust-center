@@ -1,0 +1,2 @@
+ALTER TABLE "access_group" ADD COLUMN "nda_template_id" uuid;--> statement-breakpoint
+ALTER TABLE "access_group" ADD CONSTRAINT "access_group_nda_template_id_nda_template_id_fk" FOREIGN KEY ("nda_template_id") REFERENCES "public"."nda_template"("id") ON DELETE restrict ON UPDATE no action;
