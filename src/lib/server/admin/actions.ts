@@ -4,6 +4,7 @@ import type { z } from 'zod';
 import { recordEvent } from '../audit';
 import { getConfig } from '../config';
 import { getDb } from '../db/instance';
+import { pgErrorCode } from '../db/errors';
 import { clientIp } from '../http/client-ip';
 import type { Db } from '../db';
 
@@ -13,6 +14,24 @@ import type { Db } from '../db';
  * upload rejected for its type or size is the case that needs it.
  */
 export type AdminActionFailure = { field: string; locale?: string; message?: string };
+
+/**
+ * Postgres reports a unique violation as 23505. No route under `src/` handled
+ * it before this phase, so typing a slug that already exists returned a 500 for
+ * every content type. The asymmetry is what forced the fix: 3a taught the group
+ * routes to catch 23503 and not its neighbour, and `nda_template` adds a sixth
+ * slugged type.
+ *
+ * Where the code actually lives is `pgErrorCode`'s problem, and it is not where
+ * it looks: Drizzle wraps the driver error, so a check written against
+ * `cause.code` never matches.
+ *
+ * Returns null for anything else, so an unrelated failure still throws rather
+ * than being reported to an operator as a bad slug.
+ */
+export function uniqueViolationField(cause: unknown, field: string): AdminActionFailure | null {
+	return pgErrorCode(cause) === '23505' ? { field, message: 'duplicate' } : null;
+}
 
 /**
  * Meta edits and translation edits are distinct occurrences and get distinct
@@ -85,7 +104,17 @@ export function saveMetaAction<S extends z.ZodType>(opts: SaveMetaOptions<S>) {
 
 		const data = parsed.data as z.output<S>;
 		const db = getDb();
-		await opts.update(db, event.params.id, data);
+
+		try {
+			await opts.update(db, event.params.id, data);
+		} catch (cause) {
+			// Renaming one row's slug onto another's is the same operator mistake
+			// as typing a taken one on a create form, and `fallbackField` already
+			// names the field that carries it on every content type.
+			const duplicate = uniqueViolationField(cause, opts.fallbackField);
+			if (!duplicate) throw cause;
+			return fail<AdminActionFailure>(409, duplicate);
+		}
 
 		await recordEvent(db, {
 			action: resolveMetaAction(opts.type, data, opts.isPublished),

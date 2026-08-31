@@ -1,3 +1,5 @@
+import { uniqueViolationField } from '$lib/server/admin/actions';
+import type { AdminActionFailure } from '$lib/server/admin/actions';
 import { fail, redirect } from '@sveltejs/kit';
 import { localizePath } from '$lib/i18n/locale';
 import { createRule, ruleSchema } from '$lib/server/access/rules';
@@ -22,7 +24,15 @@ export const actions: Actions = {
 		}
 
 		const db = getDb();
-		const id = await createRule(db, parsed.data);
+		let id: string;
+		try {
+			id = await createRule(db, parsed.data);
+		} catch (cause) {
+			// A value somebody already used is an operator typo, not a 500.
+			const duplicate = uniqueViolationField(cause, 'pattern');
+			if (!duplicate) throw cause;
+			return fail<AdminActionFailure>(409, duplicate);
+		}
 
 		// The whole rule, because a rule decides who gets documents without a
 		// human. It is operator configuration rather than requester data, so

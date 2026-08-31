@@ -1,3 +1,5 @@
+import { uniqueViolationField } from '$lib/server/admin/actions';
+import type { AdminActionFailure } from '$lib/server/admin/actions';
 import { fail, redirect } from '@sveltejs/kit';
 import { z } from 'zod';
 import { localizePath } from '$lib/i18n/locale';
@@ -32,7 +34,15 @@ export const actions: Actions = {
 		// Visibility is not offered here: an answer starts internal and reaches
 		// the public FAQ only when somebody decides on the edit page that it
 		// should.
-		const id = await createAnswer(db, parsed.data);
+		let id: string;
+		try {
+			id = await createAnswer(db, parsed.data);
+		} catch (cause) {
+			// A value somebody already used is an operator typo, not a 500.
+			const duplicate = uniqueViolationField(cause, 'slug');
+			if (!duplicate) throw cause;
+			return fail<AdminActionFailure>(409, duplicate);
+		}
 
 		await recordEvent(db, {
 			action: 'answer.created',

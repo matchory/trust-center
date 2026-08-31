@@ -1,3 +1,5 @@
+import { uniqueViolationField } from '$lib/server/admin/actions';
+import type { AdminActionFailure } from '$lib/server/admin/actions';
 import { fail, redirect } from '@sveltejs/kit';
 import { z } from 'zod';
 import { CONTROL_STATUSES } from '$lib/content-types';
@@ -31,7 +33,15 @@ export const actions: Actions = {
 		if (!parsed.success) return fail(400, { field: parsed.error.issues[0]?.path[0] ?? 'slug' });
 
 		const db = getDb();
-		const id = await createControl(db, parsed.data);
+		let id: string;
+		try {
+			id = await createControl(db, parsed.data);
+		} catch (cause) {
+			// A value somebody already used is an operator typo, not a 500.
+			const duplicate = uniqueViolationField(cause, 'slug');
+			if (!duplicate) throw cause;
+			return fail<AdminActionFailure>(409, duplicate);
+		}
 
 		await recordEvent(db, {
 			action: 'control.created',

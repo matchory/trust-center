@@ -49,7 +49,15 @@ export default defineConfig({
 			// BASE_URL matches the port this server listens on, so redirectUri() in
 			// src/lib/server/auth/oidc.ts resolves to an origin the dev IdP's client
 			// registration accepts (compose.dev.yaml lists both).
-			env: { BASE_URL: PREVIEW, DATABASE_URL: databaseUrl }
+			// The caps are lowered so the route's *refusal* is reachable in a test
+			// without building a 25 MB, thousand-page fixture. What is under test is
+			// how an over-cap upload is handled, not the number itself.
+			env: {
+				BASE_URL: PREVIEW,
+				DATABASE_URL: databaseUrl,
+				MAX_PDF_PAGES: '5',
+				MAX_UPLOAD_MB: '1'
+			}
 		},
 		{
 			command: 'pnpm preview --port 4174 --strictPort',

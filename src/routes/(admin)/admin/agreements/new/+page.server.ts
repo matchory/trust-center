@@ -1,3 +1,5 @@
+import { uniqueViolationField } from '$lib/server/admin/actions';
+import type { AdminActionFailure } from '$lib/server/admin/actions';
 import { fail, redirect } from '@sveltejs/kit';
 import { localizePath } from '$lib/i18n/locale';
 import { recordEvent } from '$lib/server/audit';
@@ -16,7 +18,15 @@ export const actions: Actions = {
 		}
 
 		const db = getDb();
-		const id = await createTemplate(db, parsed.data);
+		let id: string;
+		try {
+			id = await createTemplate(db, parsed.data);
+		} catch (cause) {
+			// A value somebody already used is an operator typo, not a 500.
+			const duplicate = uniqueViolationField(cause, 'slug');
+			if (!duplicate) throw cause;
+			return fail<AdminActionFailure>(409, duplicate);
+		}
 
 		// Operator configuration, not requester data, so the whole thing belongs
 		// in meta — the same reasoning `access_rule.created` and

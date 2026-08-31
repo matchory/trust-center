@@ -1,3 +1,5 @@
+import { uniqueViolationField } from '$lib/server/admin/actions';
+import type { AdminActionFailure } from '$lib/server/admin/actions';
 import { fail, redirect } from '@sveltejs/kit';
 import { z } from 'zod';
 import { DOCUMENT_TIERS } from '$lib/content-types';
@@ -34,7 +36,15 @@ export const actions: Actions = {
 		}
 
 		const db = getDb();
-		const id = await createDocument(db, parsed.data);
+		let id: string;
+		try {
+			id = await createDocument(db, parsed.data);
+		} catch (cause) {
+			// A value somebody already used is an operator typo, not a 500.
+			const duplicate = uniqueViolationField(cause, 'slug');
+			if (!duplicate) throw cause;
+			return fail<AdminActionFailure>(409, duplicate);
+		}
 
 		await recordEvent(db, {
 			action: 'document.created',

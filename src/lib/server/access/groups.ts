@@ -2,6 +2,7 @@ import { asc, eq, inArray, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { groupByKey } from '../collections';
 import { accessGroup, accessGroupTranslation, documentGroup } from '../db/schema';
+import { pgErrorCode } from '../db/errors';
 import { ScopeGroupInUse } from './scope';
 import type { Db } from '../db';
 
@@ -129,12 +130,22 @@ export async function updateGroup(db: Db, id: string, input: GroupInput): Promis
  * names cannot be removed. The Postgres error code is translated here rather
  * than in the route: which constraint fires is a fact about the tables, and a
  * route that has to know `23503` knows something it has no way to verify.
+ *
+ * This was written as `cause.code === '23503'` in 3a and was wrong twice over,
+ * so deleting a group a live grant named returned a 500 rather than the message
+ * the route has been rendering for it all along. Drizzle wraps the driver error,
+ * so the code is not where `cause.code` looks for it — hence `pgErrorCode`. And
+ * Postgres reports an explicit ON DELETE RESTRICT as 23001, not 23503; 23503 is
+ * what NO ACTION raises. Both are the same fact — a row still references this
+ * one — so both are matched, and neither reading depends on remembering which
+ * clause a future column is declared with.
  */
 export async function deleteGroup(db: Db, id: string): Promise<void> {
 	try {
 		await db.delete(accessGroup).where(eq(accessGroup.id, id));
 	} catch (cause) {
-		if (typeof cause === 'object' && cause !== null && 'code' in cause && cause.code === '23503') {
+		const code = pgErrorCode(cause);
+		if (code === '23001' || code === '23503') {
 			throw new ScopeGroupInUse('a grant still includes this group', { cause });
 		}
 		throw cause;

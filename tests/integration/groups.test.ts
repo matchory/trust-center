@@ -18,8 +18,9 @@ import {
 	setGroupTranslation,
 	updateGroup
 } from '../../src/lib/server/access/groups';
+import { ScopeGroupInUse, setGrantGroups } from '../../src/lib/server/access/scope';
 import { createTemplate } from '../../src/lib/server/nda/templates';
-import { seedDocument } from '../setup/fixtures';
+import { seedDocument, seedGrant } from '../setup/fixtures';
 
 let db: Db;
 let close: () => Promise<void>;
@@ -36,6 +37,9 @@ beforeAll(() => {
 // file next tries to clear templates — nda-templates.test.ts runs right after
 // this one alphabetically and does exactly that in its own beforeEach.
 afterAll(async () => {
+	// Grants first: `access_grant_group.group_id` is ON DELETE RESTRICT, which is
+	// the very thing the last case in this file proves.
+	await db.delete(accessGrant);
 	await db.delete(accessGroup);
 	await db.delete(ndaTemplateVersion);
 	await db.delete(ndaTemplate);
@@ -191,5 +195,16 @@ describe('access groups', () => {
 		await updateGroup(db, groupId, { slug: 'temp', position: 0, ndaTemplateId: null });
 
 		expect((await getGroup(db, groupId))?.ndaTemplateId).toBeNull();
+	});
+
+	it('refuses to delete a group a live grant still names', async () => {
+		// The route has rendered an "in use" message for this since 3a, but the
+		// code it matched on was never reachable — Drizzle wraps the driver error —
+		// so an operator got a 500 instead. Nothing tested it until now.
+		const groupId = await createGroup(db, { slug: 'in-use-pack', position: 0 });
+		const grantId = await seedGrant(db);
+		await setGrantGroups(db, grantId, [groupId]);
+
+		await expect(deleteGroup(db, groupId)).rejects.toBeInstanceOf(ScopeGroupInUse);
 	});
 });
