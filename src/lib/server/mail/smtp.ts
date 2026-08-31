@@ -10,7 +10,12 @@ export function createSmtpMailer(url: string): MailAdapter {
 				to: mail.to,
 				from: mail.from,
 				subject: mail.subject,
-				text: mail.text
+				text: mail.text,
+				attachments: mail.attachments?.map((attachment) => ({
+					filename: attachment.filename,
+					contentType: attachment.contentType,
+					content: Buffer.from(attachment.content)
+				}))
 			});
 
 			return { providerId: info.messageId };

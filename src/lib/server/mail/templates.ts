@@ -1,5 +1,6 @@
 import { m } from '../../paraglide/messages.js';
 import { assertIsLocale } from '../../paraglide/runtime.js';
+import type { MailAttachment } from './index';
 
 export const MAIL_TEMPLATES = [
 	'verify_request',
@@ -11,7 +12,11 @@ export const MAIL_TEMPLATES = [
 	'request_denied',
 	'sign_in',
 	'grant_expiring',
-	'staff_new_request'
+	'staff_new_request',
+	// Carries the acceptance record as an attachment. The mail is a convenience:
+	// the record itself is the stored object and the portal view, so a
+	// deployment with no SMTP at all still produces the evidence.
+	'nda_record'
 ] as const;
 export type MailTemplate = (typeof MAIL_TEMPLATES)[number];
 
@@ -20,7 +25,7 @@ export interface RenderedMail {
 	text: string;
 }
 
-export type MailPayload = Record<string, string | number>;
+export type MailPayload = Record<string, string | number | readonly MailAttachment[]>;
 
 /**
  * Every message function is called with an explicit `locale` option, so these
@@ -43,6 +48,7 @@ export function renderTemplate(
 	const documentCount = String(payload.documentCount ?? 0);
 	const agreementCount = String(payload.agreementCount ?? 0);
 	const expiresAt = String(payload.expiresAt ?? '');
+	const agreement = String(payload.agreement ?? '');
 
 	switch (id) {
 		case 'verify_request':
@@ -82,6 +88,11 @@ export function renderTemplate(
 			return {
 				subject: m.mail_staff_new_request_subject({}, options),
 				text: m.mail_staff_new_request_body({ url }, options)
+			};
+		case 'nda_record':
+			return {
+				subject: m.mail_nda_record_subject({ agreement }, options),
+				text: m.mail_nda_record_body({ agreement }, options)
 			};
 	}
 }

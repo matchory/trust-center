@@ -224,6 +224,8 @@
 	"faq_intro": "Answers to the questions we are asked most often.",
 	"mail_grant_expiring_body": "Your access to {documentCount} document(s) expires on {expiresAt}.\n\nIf you still need it, reply to this message and we will extend it.",
 	"mail_grant_expiring_subject": "Your document access expires soon",
+	"mail_nda_record_body": "Thank you. Attached is the record of your acceptance of {agreement}: the text as it stood when you accepted it, and the details of the acceptance itself.\n\nKeep it for your files. You can also download it again at any time from your access page.",
+	"mail_nda_record_subject": "Your signed agreement: {agreement}",
 	"mail_request_acceptance_required_body": "Your request has been approved. Before you can open {documentCount} document(s), please read and accept {agreementCount} agreement(s).\n\nContinue here:\n{url}\n\nThis link works once and expires shortly.",
 	"mail_request_acceptance_required_subject": "One step left before your document access",
 	"mail_request_approved_body": "Your request has been approved. You have access to {documentCount} document(s) until {expiresAt}.\n\nOpen your documents:\n{url}\n\nThis link works once and expires shortly.",

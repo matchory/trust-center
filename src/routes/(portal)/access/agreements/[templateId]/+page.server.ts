@@ -7,6 +7,7 @@ import { getConfig } from '$lib/server/config';
 import { getDb } from '$lib/server/db/instance';
 import { ndaTemplate, ndaTemplateTranslation } from '$lib/server/db/schema';
 import { clientIp } from '$lib/server/http/client-ip';
+import { enqueueEmail } from '$lib/server/mail/queue';
 import { recordAcceptance, VersionMoved } from '$lib/server/nda/acceptance';
 import { activateGrants } from '$lib/server/nda/activation';
 import { acceptanceScope } from '$lib/server/nda/settings';
@@ -135,13 +136,14 @@ export const actions: Actions = {
 					)
 					.limit(1);
 
-				await storeRecord(
+				const agreement = name?.name ?? event.params.templateId;
+				const storageKey = await storeRecord(
 					db,
 					getStorage(),
 					acceptanceId,
 					await renderRecord({
 						fontDir: config.ndaFontDir,
-						title: name?.name ?? event.params.templateId,
+						title: agreement,
 						version: effective.version,
 						bodyMd: body.bodyMd,
 						typedName,
@@ -153,6 +155,30 @@ export const actions: Actions = {
 						locale: event.locals.locale
 					})
 				);
+
+				const attachments = [
+					{ filename: 'acceptance.pdf', contentType: 'application/pdf', storageKey }
+				];
+
+				await enqueueEmail(db, {
+					to: requester.email,
+					template: 'nda_record',
+					locale: event.locals.locale,
+					payload: { agreement, attachments }
+				});
+
+				// §9.5: an unset STAFF_NOTIFICATION_EMAIL is a valid deployment. "Both
+				// parties get a copy" then degrades to one, and the operator's copy is
+				// the stored object and the admin view — the record never depends on
+				// mail having been configured.
+				if (config.mail.staffNotificationEmail) {
+					await enqueueEmail(db, {
+						to: config.mail.staffNotificationEmail,
+						template: 'nda_record',
+						locale: config.defaultLocale,
+						payload: { agreement, attachments }
+					});
+				}
 			}
 		}
 

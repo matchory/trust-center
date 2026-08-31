@@ -2,7 +2,8 @@ import { sql } from 'drizzle-orm';
 import { outboundEmail } from '../db/schema';
 import { renderTemplate } from './templates';
 import type { MailPayload, MailTemplate } from './templates';
-import type { MailAdapter } from './index';
+import type { MailAdapter, MailAttachment, OutgoingMail } from './index';
+import type { StorageAdapter } from '../storage';
 import type { Db } from '../db';
 
 /** Five attempts over roughly a quarter of an hour, then a permanent failure. */
@@ -36,14 +37,14 @@ interface ClaimedRow {
  * ahead, so a crash mid-send retries later rather than being retried by the
  * very next tick.
  *
- * `mailer` and `from` are passed in rather than resolved from config here: this
- * module would otherwise need a fully configured environment to drain a queue,
- * which is both untestable and more than it needs to know. The job that calls
- * it owns that lookup.
+ * `mailer`, `from` and `storage` are passed in rather than resolved from config
+ * here: this module would otherwise need a fully configured environment to
+ * drain a queue, which is both untestable and more than it needs to know. The
+ * job that calls it owns those lookups.
  */
 export async function drainOutbox(
 	db: Db,
-	options: { limit: number; mailer: MailAdapter; from: string }
+	options: { limit: number; mailer: MailAdapter; from: string; storage: StorageAdapter }
 ): Promise<{ sent: number; failed: number }> {
 	const claimed = await db.transaction(async (tx) => {
 		const rows = (await tx.execute(sql`
@@ -68,18 +69,24 @@ export async function drainOutbox(
 
 	if (claimed.length === 0) return { sent: 0, failed: 0 };
 
-	const { mailer, from } = options;
+	const { mailer, from, storage } = options;
 	let sent = 0;
 	let failed = 0;
 
 	for (const row of claimed) {
 		try {
 			const rendered = renderTemplate(row.template, row.locale, row.payload);
+			// Read before the send, so a missing object fails the row through the
+			// same retry path as an SMTP error. A mail that went out with the
+			// attachment silently dropped would be worse than one that did not go.
+			const attachments = await resolveAttachments(storage, row.payload);
+
 			const { providerId } = await mailer.send({
 				to: row.to,
 				from,
 				subject: rendered.subject,
-				text: rendered.text
+				text: rendered.text,
+				attachments
 			});
 
 			await db.execute(sql`
@@ -108,4 +115,27 @@ export async function drainOutbox(
 	}
 
 	return { sent, failed };
+}
+
+/**
+ * Turns the keys a queue row carries into bytes. `stream` throws
+ * `StorageObjectNotFound` for an object a purge removed between queueing and
+ * draining, which the caller's retry-then-fail path already handles.
+ */
+async function resolveAttachments(
+	storage: StorageAdapter,
+	payload: MailPayload
+): Promise<OutgoingMail['attachments']> {
+	const spec = payload.attachments;
+	if (!Array.isArray(spec) || spec.length === 0) return undefined;
+
+	return Promise.all(
+		(spec as readonly MailAttachment[]).map(async (attachment) => ({
+			filename: attachment.filename,
+			contentType: attachment.contentType,
+			content: new Uint8Array(
+				await new Response(await storage.stream(attachment.storageKey)).arrayBuffer()
+			)
+		}))
+	);
 }

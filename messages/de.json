@@ -224,6 +224,8 @@
 	"faq_intro": "Antworten auf die Fragen, die uns am häufigsten gestellt werden.",
 	"mail_grant_expiring_body": "Ihr Zugriff auf {documentCount} Dokument(e) läuft am {expiresAt} ab.\n\nFalls Sie ihn weiterhin benötigen, antworten Sie auf diese Nachricht — wir verlängern ihn dann.",
 	"mail_grant_expiring_subject": "Ihr Dokumentenzugriff läuft bald ab",
+	"mail_nda_record_body": "Vielen Dank. Im Anhang finden Sie den Nachweis Ihrer Annahme von {agreement}: den Text in der Fassung, die Sie angenommen haben, sowie die Angaben zur Annahme selbst.\n\nBewahren Sie ihn für Ihre Unterlagen auf. Sie können ihn jederzeit erneut über Ihre Zugriffsseite herunterladen.",
+	"mail_nda_record_subject": "Ihre unterzeichnete Vereinbarung: {agreement}",
 	"mail_request_acceptance_required_body": "Ihre Anfrage wurde genehmigt. Bevor Sie {documentCount} Dokument(e) öffnen können, lesen Sie bitte {agreementCount} Vereinbarung(en) und stimmen Sie ihnen zu.\n\nHier geht es weiter:\n{url}\n\nDieser Link ist einmalig gültig und läuft in Kürze ab.",
 	"mail_request_acceptance_required_subject": "Nur noch ein Schritt bis zu Ihrem Dokumentenzugriff",
 	"mail_request_approved_body": "Ihre Anfrage wurde genehmigt. Sie haben bis zum {expiresAt} Zugriff auf {documentCount} Dokument(e).\n\nDokumente öffnen:\n{url}\n\nDieser Link ist einmalig gültig und läuft in Kürze ab.",

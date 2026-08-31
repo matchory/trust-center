@@ -6,6 +6,7 @@ import { accessRequest, requesterSession, staffSession } from '../db/schema';
 import { getMailer, MailNotConfigured } from '../mail';
 import { drainOutbox } from '../mail/queue';
 import { redactDeliveredMail, sweepRateLimits } from '../retention';
+import { getStorage } from '../storage';
 import { runJob } from './runner';
 import type { Db } from '../db';
 
@@ -36,7 +37,12 @@ export async function drainMailQueue(db: Db): Promise<void> {
 	const { mail } = getConfig();
 
 	try {
-		await drainOutbox(db, { limit: 25, mailer: getMailer(), from: mail.from });
+		await drainOutbox(db, {
+			limit: 25,
+			mailer: getMailer(),
+			from: mail.from,
+			storage: getStorage()
+		});
 	} catch (cause) {
 		// A deployment with no SMTP_URL is a valid configuration — `pnpm build`
 		// and the unit suite both run that way. Queueing without draining is the
