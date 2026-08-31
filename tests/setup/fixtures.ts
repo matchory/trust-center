@@ -6,6 +6,7 @@ import {
 	accessRule,
 	document,
 	documentCategory,
+	staffUser,
 	requester
 } from '../../src/lib/server/db/schema';
 import { setRuleTiers } from '../../src/lib/server/access/scope';
@@ -82,6 +83,21 @@ export async function seedGrant(
 			acceptanceDueAt: input.acceptanceDueAt ?? null
 		})
 		.returning({ id: accessGrant.id });
+
+	return row!.id;
+}
+
+/** An approver, for the columns that record who decided something. */
+export async function seedStaff(db: Db): Promise<string> {
+	const [row] = await db
+		.insert(staffUser)
+		.values({
+			oidcSub: `sub-${randomUUID()}`,
+			email: `approver-${randomUUID()}@matchory.example`,
+			name: 'An Approver',
+			role: 'approver'
+		})
+		.returning({ id: staffUser.id });
 
 	return row!.id;
 }

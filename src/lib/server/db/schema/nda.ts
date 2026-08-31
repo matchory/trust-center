@@ -11,6 +11,7 @@ import {
 	uuid
 } from 'drizzle-orm/pg-core';
 import { accessGrant } from './access';
+import { requester } from './requesters';
 import { staffUser } from './staff';
 
 /**
@@ -132,4 +133,68 @@ export const accessGrantNda = pgTable(
 		primaryKey({ columns: [table.grantId, table.ndaTemplateId] }),
 		check('access_grant_nda_disposition_check', sql`${table.disposition} IN ('required', 'waived')`)
 	]
+);
+
+/**
+ * §6.1. `email`, `company` and `company_domain` are denormalized here at
+ * acceptance time, and that is not duplication:
+ *
+ * - `purgeRequester` rewrites `requester.email` and blanks `company_domain`. A
+ *   record retaining `typed_name` while losing the email is the worst of both —
+ *   it still holds personal data and can no longer identify the contracting
+ *   party by any means the database offers.
+ * - Domain-scoped validity (§6.3) resolves through `company_domain`. Purging
+ *   the one colleague who signed would otherwise revoke coverage for everyone
+ *   else at that company, while the record proving it still exists.
+ *
+ * `method` admits only 'clickthrough'. It widens when something can produce
+ * another value — deliberately unlike Phase 1's `tier` CHECK, which admitted
+ * 'nda' a phase early and then needed a clamp to stay safe.
+ */
+export const ndaAcceptance = pgTable(
+	'nda_acceptance',
+	{
+		id: uuid('id').primaryKey().defaultRandom(),
+		requesterId: uuid('requester_id')
+			.notNull()
+			.references(() => requester.id, { onDelete: 'cascade' }),
+		versionId: uuid('version_id')
+			.notNull()
+			.references(() => ndaTemplateVersion.id, { onDelete: 'restrict' }),
+		method: text('method').notNull().default('clickthrough'),
+		acceptedAt: timestamp('accepted_at', { withTimezone: true }).notNull().defaultNow(),
+		ip: text('ip'),
+		ua: text('ua'),
+		typedName: text('typed_name').notNull(),
+		email: text('email').notNull(),
+		company: text('company').notNull(),
+		companyDomain: text('company_domain').notNull(),
+		templateSha256: text('template_sha256').notNull(),
+		recordPdfKey: text('record_pdf_key')
+	},
+	(table) => [
+		// A double-submit is idempotent rather than a second record.
+		unique('nda_acceptance_person_version_key').on(table.requesterId, table.versionId),
+		index('nda_acceptance_domain_idx').on(table.companyDomain),
+		check('nda_acceptance_method_check', sql`${table.method} IN ('clickthrough')`)
+	]
+);
+
+/**
+ * Which acceptance activated which grant. Written by activation, not by
+ * acceptance (§12 deviation 11): an acceptance is a fact about a person and a
+ * version; *which grants it activated* is a fact about that activation, and a
+ * grant may activate months after the acceptance it relies on.
+ */
+export const accessGrantAcceptance = pgTable(
+	'access_grant_acceptance',
+	{
+		grantId: uuid('grant_id')
+			.notNull()
+			.references(() => accessGrant.id, { onDelete: 'cascade' }),
+		acceptanceId: uuid('acceptance_id')
+			.notNull()
+			.references(() => ndaAcceptance.id, { onDelete: 'restrict' })
+	},
+	(table) => [primaryKey({ columns: [table.grantId, table.acceptanceId] })]
 );

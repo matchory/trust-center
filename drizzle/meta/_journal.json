@@ -169,6 +169,13 @@
       "when": 1788175543268,
       "tag": "0023_grant_requirements",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1788177005973,
+      "tag": "0024_nda_acceptance",
+      "breakpoints": true
     }
   ]
 }
