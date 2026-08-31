@@ -1,5 +1,7 @@
 node_modules/
 .svelte-kit/
+.claude/worktrees/
+.claude/*.local.json
 build/
 src/lib/paraglide/
 .env
