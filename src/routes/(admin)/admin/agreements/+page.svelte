@@ -8,7 +8,7 @@
 
 	let columns = $derived([
 		{ key: 'name', header: m.admin_agreement_name() },
-		{ key: 'status', header: m.admin_agreement_versions() }
+		{ key: 'status', header: m.admin_agreement_status() }
 	]);
 </script>
 

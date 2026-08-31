@@ -119,7 +119,7 @@
 				if (!confirm(m.admin_agreement_retire_confirm())) event.preventDefault();
 			}}
 		>
-			{m.admin_agreement_retired()}
+			{m.admin_agreement_retire()}
 		</button>
 	</form>
 {/if}
