@@ -134,28 +134,28 @@ Every task's requirements implicitly include this section. Carried forward from 
 
 A task is done only when its final commit exists and the suite is green. Keep a running ledger as Phase 3a did.
 
-- [ ] 1 — The Markdown subset
-- [ ] 2 — Template family, versions and bodies
-- [ ] 3 — The agreement admin surface
-- [ ] 4 — Versions, bodies and the preview
-- [ ] 5 — NDA settings
-- [ ] 6 — A group carries an agreement
-- [ ] 7 — The inert grant: lifecycle columns and five states
-- [ ] 8 — The requirement proposal
-- [ ] 9 — Requirements recorded at approval
-- [ ] 10 — The decision form and the split approval mail
-- [ ] 11 — The acceptance record and the click-through
-- [ ] 12 — Activation, and the return-visit fast path
-- [ ] 13 — The PDF layout engine and the embedded font
-- [ ] 14 — The record document
-- [ ] 15 — Attachments through the mail port
-- [ ] 16 — Live delivery, narrowing only
-- [ ] 17 — The acceptance nudge and the closing sweep
-- [ ] 18 — Purge: the mail payload and the record object
-- [ ] 19 — Auto-approval: the intersection and the blanket guard
-- [ ] 20 — Widen the phase: the portal, the form, and the journey
-- [ ] 21 — Fold-ins: the dead action, the duplicate slug, the upload e2e
-- [ ] 22 — Documentation and phase close
+- [x] 1 — The Markdown subset
+- [x] 2 — Template family, versions and bodies
+- [x] 3 — The agreement admin surface
+- [x] 4 — Versions, bodies and the preview
+- [x] 5 — NDA settings
+- [x] 6 — A group carries an agreement
+- [x] 7 — The inert grant: lifecycle columns and five states
+- [x] 8 — The requirement proposal
+- [x] 9 — Requirements recorded at approval
+- [x] 10 — The decision form and the split approval mail
+- [x] 11 — The acceptance record and the click-through
+- [x] 12 — Activation, and the return-visit fast path
+- [x] 13 — The PDF layout engine and the embedded font
+- [x] 14 — The record document
+- [x] 15 — Attachments through the mail port
+- [x] 16 — Live delivery, narrowing only
+- [x] 17 — The acceptance nudge and the closing sweep
+- [x] 18 — Purge: the mail payload and the record object
+- [x] 19 — Auto-approval: the intersection and the blanket guard
+- [x] 20 — Widen the phase: the portal, the form, and the journey
+- [x] 21 — Fold-ins: the dead action, the duplicate slug, the upload e2e
+- [x] 22 — Documentation and phase close
 
 ---
 
@@ -176,7 +176,7 @@ The AST four consumers share. Nothing else in this phase can be written until th
   - `parseAgreementBody(markdown: string): Root` — throws `MarkdownNotInSubset`
   - `isInSubset(markdown: string): boolean`
 
-- [ ] **Step 1: Add the dependencies**
+- [x] **Step 1: Add the dependencies**
 
 ```bash
 pnpm add unified remark-parse
@@ -185,7 +185,7 @@ pnpm add -D @types/mdast
 
 `remark-gfm` is deliberately **not** installed. Without it a pipe table never becomes a `table` node — it parses as a paragraph of text — so "no tables" is enforced by what we refuse to teach the parser rather than by a rule the validator has to police. Say so in a comment; a later reader will otherwise add GFM to "fix" tables.
 
-- [ ] **Step 2: Write the failing test**
+- [x] **Step 2: Write the failing test**
 
 ```ts
 // tests/unit/markdown-subset.test.ts
@@ -254,12 +254,12 @@ describe('the restricted Markdown subset', () => {
 });
 ```
 
-- [ ] **Step 3: Run it and watch it fail**
+- [x] **Step 3: Run it and watch it fail**
 
 Run: `pnpm test:unit markdown-subset`
 Expected: FAIL — cannot resolve `../../src/lib/markdown/subset`.
 
-- [ ] **Step 4: Implement**
+- [x] **Step 4: Implement**
 
 ```ts
 // src/lib/markdown/subset.ts
@@ -344,12 +344,12 @@ export function isInSubset(markdown: string): boolean {
 }
 ```
 
-- [ ] **Step 5: Run it and watch it pass**
+- [x] **Step 5: Run it and watch it pass**
 
 Run: `pnpm test:unit markdown-subset`
 Expected: PASS, 9 tests.
 
-- [ ] **Step 6: Check, lint, commit**
+- [x] **Step 6: Check, lint, commit**
 
 Run `pnpm check && pnpm lint`, then stage `src/lib/markdown/subset.ts`, `tests/unit/markdown-subset.test.ts`, `package.json`, `pnpm-lock.yaml` and commit as
 `feat(nda): parse agreement bodies into one restricted AST`.
@@ -379,7 +379,7 @@ Four tables and the module that owns them. A version spans every enabled locale 
   - `AdminTemplateRow.effectiveVersionNumber: number | null` and `.blockedLocales: string[]` — the second is §5.2's blocked reason: a version that is published but incomplete in some enabled locale is not effective, and the admin must be told which locale is missing rather than discovering it at a click-through
   - `class VersionImmutable extends Error`, `class VersionIncomplete extends Error`
 
-- [ ] **Step 1: Write the schema**
+- [x] **Step 1: Write the schema**
 
 ```ts
 // src/lib/server/db/schema/nda.ts
@@ -477,11 +477,11 @@ export const ndaTemplateBody = pgTable(
 
 Add `export * from './nda';` to `src/lib/server/db/schema/index.ts`.
 
-- [ ] **Step 2: Generate and rename the migration**
+- [x] **Step 2: Generate and rename the migration**
 
 Run `pnpm db:generate`. Rename the generated file to `drizzle/0019_nda_templates.sql` and change its `tag` in `drizzle/meta/_journal.json` to `0019_nda_templates`. Nothing here is data movement, so the generated SQL needs no hand-editing — confirm that by reading it before running `pnpm db:migrate`.
 
-- [ ] **Step 3: Write the failing test**
+- [x] **Step 3: Write the failing test**
 
 ```ts
 // tests/integration/nda-templates.test.ts
@@ -654,12 +654,12 @@ describe('nda templates', () => {
 });
 ```
 
-- [ ] **Step 4: Run it and watch it fail**
+- [x] **Step 4: Run it and watch it fail**
 
 Run: `pnpm test:integration nda-templates`
 Expected: FAIL — cannot resolve `src/lib/server/nda/templates`.
 
-- [ ] **Step 5: Implement the module**
+- [x] **Step 5: Implement the module**
 
 ```ts
 // src/lib/server/nda/templates.ts
@@ -1025,12 +1025,12 @@ export async function getTemplate(
 }
 ```
 
-- [ ] **Step 6: Run it and watch it pass**
+- [x] **Step 6: Run it and watch it pass**
 
 Run: `pnpm test:integration nda-templates`
 Expected: PASS, 9 tests.
 
-- [ ] **Step 7: Add the shared fixture**
+- [x] **Step 7: Add the shared fixture**
 
 Six later tasks need a published agreement to seed against, and a sixth hand-rolled copy is where they start to disagree. Add to `tests/setup/fixtures.ts`:
 
@@ -1059,7 +1059,7 @@ export async function seedAgreement(
 
 **Cleanup order:** every file using this must delete versions before templates in `beforeEach` and clear both in `afterAll`. `nda_template_version.template_id` is RESTRICT.
 
-- [ ] **Step 8: Full check and commit**
+- [x] **Step 8: Full check and commit**
 
 Run `pnpm check && pnpm lint && pnpm test:integration`, then commit the schema, the module, `drizzle/`, the fixture, and the test as
 `feat(nda): add the agreement template family, versions and bodies`.
@@ -1078,7 +1078,7 @@ Templates become the fifth content type through `saveMetaAction` and `saveTransl
 - Consumes: `listTemplates`, `getTemplate`, `createTemplate`, `updateTemplate`, `setTemplateTranslation`, `retireTemplate`, `templateSchema` (Task 2); `saveMetaAction`, `translationAction` from `$lib/server/admin/actions`; `saveTranslationsFromForm` from `$lib/server/content/translations`.
 - Produces: the routes `/admin/agreements`, `/admin/agreements/new`, `/admin/agreements/[id]`; audit actions `nda_template.updated`, `nda_template.translation.updated`, `nda_template.created`, `nda_template.retired`.
 
-- [ ] **Step 1: Grep both catalogs for every key you are about to add**
+- [x] **Step 1: Grep both catalogs for every key you are about to add**
 
 ```bash
 grep -n "admin_agreement\|nav_agreements\|admin_retire" messages/en.json messages/de.json
@@ -1091,7 +1091,7 @@ Keys to add (both catalogs, English and German):
 
 Run `pnpm paraglide:compile` afterwards or `pnpm check` fails on missing message functions. Do **not** stage `src/lib/paraglide/` — it is gitignored.
 
-- [ ] **Step 2: Write the failing e2e**
+- [x] **Step 2: Write the failing e2e**
 
 ```ts
 // tests/e2e/admin-agreements.spec.ts
@@ -1130,12 +1130,12 @@ test('a new agreement has no effective version', async ({ page }) => {
 });
 ```
 
-- [ ] **Step 3: Run it and watch it fail**
+- [x] **Step 3: Run it and watch it fail**
 
 Run: `pnpm test:e2e admin-agreements`
 Expected: FAIL — `/admin/agreements/new` 404s.
 
-- [ ] **Step 4: Implement the three routes**
+- [x] **Step 4: Implement the three routes**
 
 `[id]/+page.server.ts` follows `/admin/groups/[id]/+page.server.ts` line for line — `saveMetaAction` for the slug, a hand-written `saveTranslations` action using `saveTranslationsFromForm` because the form submits every locale at once, and a `retire` action in place of `remove`:
 
@@ -1227,12 +1227,12 @@ The list page renders `listTemplates` through `DataTable`, showing the name in t
 
 Add `/admin/agreements` to the admin nav beside `/admin/groups`, keyed on `nav_agreements`.
 
-- [ ] **Step 5: Run it and watch it pass**
+- [x] **Step 5: Run it and watch it pass**
 
 Run: `pnpm test:e2e admin-agreements`
 Expected: PASS, 2 tests.
 
-- [ ] **Step 6: Full check and commit**
+- [x] **Step 6: Full check and commit**
 
 Run `pnpm check && pnpm lint && pnpm test:e2e`, then commit as
 `feat(admin): author agreements as a content type`.
@@ -1251,7 +1251,7 @@ The preview is the control that stands between a bad body and a signed agreement
 - Consumes: `parseAgreementBody` (Task 1); `createVersion`, `setVersionBody`, `publishVersion`, `getTemplate`, `VersionImmutable`, `VersionIncomplete` (Task 2).
 - Produces: `AgreementBody.svelte` taking `{ root: Root }`; the route `/admin/agreements/[id]/versions/[versionId]`.
 
-- [ ] **Step 1: Write the renderer**
+- [x] **Step 1: Write the renderer**
 
 ```svelte
 <!-- src/lib/components/AgreementBody.svelte -->
@@ -1308,7 +1308,7 @@ The preview is the control that stands between a bad body and a signed agreement
 
 Headings render one level down (`#` → `<h2>`) because the page already owns its `<h1>`.
 
-- [ ] **Step 2: Write the failing e2e**
+- [x] **Step 2: Write the failing e2e**
 
 ```ts
 // appended to tests/e2e/admin-agreements.spec.ts
@@ -1359,12 +1359,12 @@ test('publishing is refused while a locale has no body', async ({ page }) => {
 });
 ```
 
-- [ ] **Step 3: Run it and watch it fail**
+- [x] **Step 3: Run it and watch it fail**
 
 Run: `pnpm test:e2e admin-agreements`
 Expected: FAIL — no `agreement-new-version` control.
 
-- [ ] **Step 4: Implement the version route**
+- [x] **Step 4: Implement the version route**
 
 ```ts
 // src/routes/(admin)/admin/agreements/[id]/versions/[versionId]/+page.server.ts
@@ -1474,12 +1474,12 @@ The page renders one `<textarea data-testid="body-{locale}">` per enabled locale
 
 Add a `createVersion` action to `[id]/+page.server.ts` recording `nda_template_version.created`, and render the version list with `data-testid="version-{number}"`.
 
-- [ ] **Step 5: Run it and watch it pass**
+- [x] **Step 5: Run it and watch it pass**
 
 Run: `pnpm test:e2e admin-agreements`
 Expected: PASS, 4 tests.
 
-- [ ] **Step 6: Full check and commit**
+- [x] **Step 6: Full check and commit**
 
 `feat(admin): edit, preview and publish an agreement version`
 
@@ -1502,7 +1502,7 @@ Three settings (§8): which template covers the `nda` tier by default, whether a
   - `acceptanceScope(db): Promise<AcceptanceScope>`, `setAcceptanceScope(db, scope)`
   - `acceptanceDueDays(db, fallback: number): Promise<number>`, `setAcceptanceDueDays(db, days)`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Append to `tests/integration/setting.test.ts`, matching how `defaultGrantDays` is already covered there:
 
@@ -1540,27 +1540,27 @@ describe('nda settings', () => {
 });
 ```
 
-- [ ] **Step 2: Run it and watch it fail**
+- [x] **Step 2: Run it and watch it fail**
 
 Run: `pnpm test:integration setting`
 Expected: FAIL — cannot resolve `src/lib/server/nda/settings`.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 `src/lib/nda-types.ts` holds `ACCEPTANCE_SCOPES` because the settings form renders one radio per scope and a component may not import from `$lib/server/` (Ruling C8). `settings.ts` re-exports it so server modules read unchanged, exactly as `scope.ts` re-exports `SCOPE_TIERS`.
 
 Each getter follows `defaultGrantDays` precisely: a Zod parse of the stored JSON, `safeParse`, and a fallback rather than a throw. `acceptanceDueDays` takes its fallback as an argument — the route owns the `getConfig()` lookup.
 
-- [ ] **Step 4: Run it and watch it pass**
+- [x] **Step 4: Run it and watch it pass**
 
 Run: `pnpm test:integration setting`
 Expected: PASS, 5 new tests.
 
-- [ ] **Step 5: Extend `/admin/settings/access`**
+- [x] **Step 5: Extend `/admin/settings/access`**
 
 Add three controls beside the existing default-term field: a select over `listTemplates(db, locales)` (with an explicit "none" option), a radio pair over `ACCEPTANCE_SCOPES`, and a number field for the acceptance window. The scope control carries a hint saying plainly what `domain` widens — §6.3 calls it an operator's deliberate, informed widening, and a radio with no explanation is neither.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 `feat(admin): configure the default agreement, acceptance scope and window`
 
@@ -1578,7 +1578,7 @@ Add three controls beside the existing default-term field: a select over `listTe
 - Consumes: `ndaTemplate` (Task 2), `listTemplates` (Task 2).
 - Produces: `accessGroup.ndaTemplateId`; `groupSchema` gains `ndaTemplateId: string | null`; `AdminGroupRow` gains `ndaTemplateId: string | null`.
 
-- [ ] **Step 1: Add the column**
+- [x] **Step 1: Add the column**
 
 ```ts
 // in src/lib/server/db/schema/groups.ts, inside accessGroup
@@ -1596,7 +1596,7 @@ Add three controls beside the existing default-term field: a select over `listTe
 
 Generate, rename to `drizzle/0020_group_agreement.sql`, retag the journal, migrate.
 
-- [ ] **Step 2: Write the failing test**
+- [x] **Step 2: Write the failing test**
 
 ```ts
 // tests/integration/groups.test.ts
@@ -1632,23 +1632,23 @@ it('lets an operator clear the agreement again', async () => {
 
 **Cleanup order matters here.** `groups.test.ts` already clears grants before groups; it must now also clear groups before templates, and templates in `afterAll`. A file that leaves a group naming a template breaks whichever file next clears templates — this is exactly the flake Phase 3a's Task 9 found between `grants-scope` and `groups`.
 
-- [ ] **Step 3: Run it and watch it fail**
+- [x] **Step 3: Run it and watch it fail**
 
 Run: `pnpm test:integration groups`
 Expected: FAIL — `ndaTemplateId` is not a property of `GroupInput`.
 
-- [ ] **Step 4: Implement**
+- [x] **Step 4: Implement**
 
 Extend `groupSchema` with `ndaTemplateId: z.string().uuid().nullable()`, thread it through `updateGroup` and `getGroup`, and add a select to the group form listing `listTemplates(db, locales)` with an explicit "no agreement" option. The group's own page gains a line naming the agreement, because from here a group has a consequence a requester will feel and an operator should not have to infer it from a grant.
 
 Note for Task 8: this column plus `nda.default_template_id` are the two inputs to the proposal, and §4.4 takes their **union** — an `else` chain would let filing an `nda`-tier document into any NDA-carrying group silently remove the general agreement from it, which is a gate weakening produced by a filing action.
 
-- [ ] **Step 5: Run it and watch it pass**
+- [x] **Step 5: Run it and watch it pass**
 
 Run: `pnpm test:integration groups`
 Expected: PASS, 3 new tests.
 
-- [ ] **Step 6: Full check and commit**
+- [x] **Step 6: Full check and commit**
 
 `feat(access): let an access group carry an agreement`
 
@@ -1671,7 +1671,7 @@ Expected: PASS, 3 new tests.
   - `AdminGrantRow.expiresAt: Date | null`, `AdminGrantRow.acceptanceDueAt: Date | null`
   - `accessGrant.acceptanceDueAt`, `.acceptanceReminderSentAt`, `.closedAt`
 
-- [ ] **Step 1: Widen the schema**
+- [x] **Step 1: Widen the schema**
 
 In `accessGrant`, make `expiresAt` nullable and add three columns:
 
@@ -1710,7 +1710,7 @@ and add the CHECK that makes §7.4's states total:
 
 Generate, rename to `drizzle/0021_grant_lifecycle.sql`, retag the journal, migrate. Read the generated SQL first: dropping a NOT NULL is not data movement and drizzle-kit gets it right, but this is the migration where a hand-check is cheapest.
 
-- [ ] **Step 2: Write the failing unit test**
+- [x] **Step 2: Write the failing unit test**
 
 ```ts
 // tests/unit/access-grants.test.ts
@@ -1761,12 +1761,12 @@ describe('grantState', () => {
 });
 ```
 
-- [ ] **Step 3: Run it and watch it fail**
+- [x] **Step 3: Run it and watch it fail**
 
 Run: `pnpm test:unit access-grants`
 Expected: FAIL — `grantState` rejects a null `expiresAt` at the type level and returns the wrong value at runtime.
 
-- [ ] **Step 4: Implement**
+- [x] **Step 4: Implement**
 
 ```ts
 // src/lib/server/access/grants.ts
@@ -1806,16 +1806,16 @@ Then widen the types that flow out of `grants.ts`. `pnpm check` will list every 
 
 `listGrantsForAdmin` selects the two new columns and passes them to `grantState`.
 
-- [ ] **Step 5: Run it and watch it pass**
+- [x] **Step 5: Run it and watch it pass**
 
 Run: `pnpm test:unit access-grants`
 Expected: PASS, 6 tests.
 
-- [ ] **Step 6: Extend the fixtures**
+- [x] **Step 6: Extend the fixtures**
 
 `seedGrant` gains `acceptanceDueAt?: Date | null` and accepts `expiresAt: null`, so later tasks can seed an inert grant without hand-rolling one. Keep the existing default — a live grant thirty days out — so no existing test changes.
 
-- [ ] **Step 7: Full check and commit**
+- [x] **Step 7: Full check and commit**
 
 Run `pnpm check && pnpm lint && pnpm test:unit && pnpm test:integration && pnpm test:e2e`. Every pre-existing test must still pass unchanged: nothing writes a NULL expiry yet, so this task is purely a widening.
 
@@ -1839,7 +1839,7 @@ Run `pnpm check && pnpm lint && pnpm test:unit && pnpm test:integration && pnpm 
   - `proposeRequirements(db, scope: { documentIds; tiers; groupIds }, options: { defaultTemplateId }): Promise<string[]>`
   - `class DefaultTemplateMissing extends Error`
 
-- [ ] **Step 1: Write the failing unit test**
+- [x] **Step 1: Write the failing unit test**
 
 ```ts
 // tests/unit/nda-requirements.test.ts
@@ -1916,12 +1916,12 @@ describe('the requirement proposal', () => {
 });
 ```
 
-- [ ] **Step 2: Run it and watch it fail**
+- [x] **Step 2: Run it and watch it fail**
 
 Run: `pnpm test:unit nda-requirements`
 Expected: FAIL — module not found.
 
-- [ ] **Step 3: Implement the pure half**
+- [x] **Step 3: Implement the pure half**
 
 ```ts
 // src/lib/server/nda/requirements.ts (first half)
@@ -1972,18 +1972,18 @@ export function proposeFrom(
 }
 ```
 
-- [ ] **Step 4: Run it and watch it pass**
+- [x] **Step 4: Run it and watch it pass**
 
 Run: `pnpm test:unit nda-requirements`
 Expected: PASS, 6 tests.
 
-- [ ] **Step 5: Add the query half, and an integration test for it**
+- [x] **Step 5: Add the query half, and an integration test for it**
 
 `proposeRequirements(db, scope, options)` resolves the documents a scope currently covers — the same three sources `grantCoversDocument` unions, but against a *proposed* scope rather than a stored grant — left-joined to `document_group` and `access_group.nda_template_id`, then hands the rows to `proposeFrom`. One query, not one per document.
 
 The integration test covers what the unit test cannot: that a document reached **through a group** contributes that group's agreement, and that a document reached through a **tier blanket** contributes the default when it is `nda`-tier. Both are future-inclusive sources, which is exactly why §7.3 needs a second, live check at delivery — note that in the test file so the next reader does not think the proposal is the whole story.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 `feat(nda): propose the agreements a scope requires`
 
@@ -2009,7 +2009,7 @@ The approver confirms, adds or waives; what is stored is what they confirmed (P3
   - `decideRequest` gains `requirements: readonly RequirementChoice[]`, `acceptanceDueDays: number`, and `locales: readonly string[]` — the last two are arguments rather than `getConfig()` calls, as every module below the route layer is
   - `class RequirementNotRenderable extends Error`
 
-- [ ] **Step 1: Add the table**
+- [x] **Step 1: Add the table**
 
 ```ts
 // src/lib/server/db/schema/nda.ts
@@ -2048,7 +2048,7 @@ export const accessGrantNda = pgTable(
 
 Generate, rename to `drizzle/0022_grant_requirements.sql`, retag, migrate.
 
-- [ ] **Step 2: Write the failing test**
+- [x] **Step 2: Write the failing test**
 
 ```ts
 // tests/integration/nda-grants.test.ts
@@ -2138,12 +2138,12 @@ it('mints a live grant when every requirement is waived', async () => {
 });
 ```
 
-- [ ] **Step 3: Run it and watch it fail**
+- [x] **Step 3: Run it and watch it fail**
 
 Run: `pnpm test:integration nda-grants`
 Expected: FAIL — `createGrant` will not accept a null `expiresAt`.
 
-- [ ] **Step 4: Implement**
+- [x] **Step 4: Implement**
 
 `createGrant` takes `expiresAt: Date | null` and `acceptanceDueAt: Date | null` and writes both. It does not decide which: the caller knows whether anything is outstanding, and a function that inferred it from its own arguments would be re-deriving a decision the approver made.
 
@@ -2176,12 +2176,12 @@ Expected: FAIL — `createGrant` will not accept a null `expiresAt`.
 
 Every existing caller of `decideRequest` and `createGrant` must pass the new fields; `pnpm check` lists them. Pass `requirements: []` from `verify.ts` for now — Task 19 gives auto-approval its real behaviour, and an auto-approved decision that carries a requirement is exactly what §10.1 forbids.
 
-- [ ] **Step 5: Run it and watch it pass**
+- [x] **Step 5: Run it and watch it pass**
 
 Run: `pnpm test:integration nda-grants access-decisions`
 Expected: PASS.
 
-- [ ] **Step 6: Add the inert-grant fixture**
+- [x] **Step 6: Add the inert-grant fixture**
 
 Tasks 12, 16 and 17 all need one, and three hand-rolled copies would disagree about which of `expires_at` and `acceptance_due_at` is set. Add to `tests/setup/fixtures.ts`:
 
@@ -2218,7 +2218,7 @@ export async function seedInertGrant(
 }
 ```
 
-- [ ] **Step 7: Full check and commit**
+- [x] **Step 7: Full check and commit**
 
 `feat(access): record the agreements an approval requires`
 
@@ -2235,11 +2235,11 @@ The approver sees the proposal, confirms, adds or waives — and `request_approv
 - Consumes: `proposeRequirements` (Task 8), `recordRequirements`, `decideRequest` (Task 9), `acceptanceDueDays`, `defaultTemplateId` (Task 5), `listTemplates` (Task 2).
 - Produces: mail template `request_acceptance_required`; the decision form's `requirements` field encoding.
 
-- [ ] **Step 1: Grep both catalogs, then add the keys**
+- [x] **Step 1: Grep both catalogs, then add the keys**
 
 `admin_requirements`, `admin_requirement_waive`, `admin_requirement_reason`, `admin_requirement_none`, `admin_requirement_unrenderable`, `mail_request_acceptance_required_subject`, `mail_request_acceptance_required_body`. Compile afterwards.
 
-- [ ] **Step 2: Write the failing test for the template split**
+- [x] **Step 2: Write the failing test for the template split**
 
 ```ts
 // tests/unit/mail-templates.test.ts
@@ -2255,12 +2255,12 @@ it('tells an approved requester with an outstanding agreement where to go next',
 });
 ```
 
-- [ ] **Step 3: Run it and watch it fail**
+- [x] **Step 3: Run it and watch it fail**
 
 Run: `pnpm test:unit mail-templates`
 Expected: FAIL — `'request_acceptance_required'` is not in `MAIL_TEMPLATES`.
 
-- [ ] **Step 4: Implement the template, then the form**
+- [x] **Step 4: Implement the template, then the form**
 
 Add the id to `MAIL_TEMPLATES` and a `case` to `renderTemplate` reading `agreementCount` alongside the existing `url` and `documentCount`.
 
@@ -2298,7 +2298,7 @@ For the acceptance-required mail the link goes to `/{locale}/access` rather than
 
 **The resolved date is only shown when it is knowable.** §7.2: the form shows the resolved expiry beside the term for a grant with no requirements. With one outstanding, render the term and say the clock starts at acceptance. A date that will not be the date is worse than no date.
 
-- [ ] **Step 5: Write the failing e2e**
+- [x] **Step 5: Write the failing e2e**
 
 ```ts
 // tests/e2e/admin-requests.spec.ts
@@ -2333,7 +2333,7 @@ test('an approval with an outstanding agreement shows the grant as pending accep
 });
 ```
 
-- [ ] **Step 6: Define the e2e seed helper**
+- [x] **Step 6: Define the e2e seed helper**
 
 `seedRequestForAgreement` goes in `tests/helpers/admin.ts` — Playwright refuses to let one spec import another, which is why `signInAs` and `submitAndWait` already live there. It drives the real forms, the way `admin-groups.spec.ts` deliberately does:
 
@@ -2353,7 +2353,7 @@ It drives the real admin forms rather than seeding rows, because the point of th
 
 Tasks 10 and 20 both call it, so it is written once and in full here rather than inlined twice.
 
-- [ ] **Step 7: Run everything and commit**
+- [x] **Step 7: Run everything and commit**
 
 Run: `pnpm test:unit mail-templates && pnpm test:e2e admin-requests`, then the full suite.
 
@@ -2378,7 +2378,7 @@ An acceptance is a fact about a person and a template version (§6.1). This task
   - `class VersionMoved extends Error`
   - `outstandingAgreements(db, requesterId, locales): Promise<OutstandingAgreement[]>`
 
-- [ ] **Step 1: Add the tables**
+- [x] **Step 1: Add the tables**
 
 ```ts
 // src/lib/server/db/schema/nda.ts
@@ -2449,7 +2449,7 @@ export const accessGrantAcceptance = pgTable(
 
 Generate, rename to `drizzle/0023_nda_acceptance.sql`, retag, migrate.
 
-- [ ] **Step 2: Write the failing test**
+- [x] **Step 2: Write the failing test**
 
 ```ts
 // tests/integration/nda-acceptance.test.ts
@@ -2540,18 +2540,18 @@ it('lets a colleague cover another under domain scope, but only for a rule-match
 });
 ```
 
-- [ ] **Step 3: Run it and watch it fail**
+- [x] **Step 3: Run it and watch it fail**
 
 Run: `pnpm test:integration nda-acceptance`
 Expected: FAIL — module not found.
 
-- [ ] **Step 4: Implement `acceptance.ts`**
+- [x] **Step 4: Implement `acceptance.ts`**
 
 `recordAcceptance` runs one transaction: re-read the version, refuse with `VersionMoved` unless it is still the effective one **and** its stored `sha256` for that locale equals the one the form rendered; read the requester's identity columns and copy them onto the row; insert with `onConflictDoNothing` and read back on conflict; stamp `first_accepted_at` if unset.
 
 `validAcceptance` is the query §7.4's predicate leans on. Under `person` it matches `requester_id`; under `domain` it matches `company_domain` **and** requires that domain to be matched by an `auto_approve` rule or named explicitly by a rule — reuse `matchRule` rather than writing a second matcher.
 
-- [ ] **Step 5: Build the click-through**
+- [x] **Step 5: Build the click-through**
 
 `/{locale}/access/agreements` lists what this requester still owes, from `outstandingAgreements`. `/{locale}/access/agreements/[templateId]` renders the effective version through `AgreementBody.svelte` — the same component the preview uses — with:
 
@@ -2564,7 +2564,7 @@ If `effectiveVersion` returns null the page **refuses to render** rather than fa
 
 Add `data-testid="agreement-accept"` to the submit and `data-testid="agreement-typed-name"` to the field. Task 20's e2e drives these, and the accept button is the sharpest hydration exposure in the suite: a lost interaction there produces a **passing** test over a missing record.
 
-- [ ] **Step 6: Run it and watch it pass, then commit**
+- [x] **Step 6: Run it and watch it pass, then commit**
 
 Run: `pnpm test:integration nda-acceptance`
 Expected: PASS, 6 tests.
@@ -2585,7 +2585,7 @@ The predicate stated in full (§7.4), because "every grant thereby complete" is 
 - Consumes: `validAcceptance` (Task 11), `grantRequirements` (Task 9), `acceptanceScope` (Task 5).
 - Produces: `activateGrants(db, requesterId, options): Promise<{ activated: string[] }>`; `isActivatable(grant, satisfied, now): boolean`
 
-- [ ] **Step 1: Write the failing unit test for the predicate**
+- [x] **Step 1: Write the failing unit test for the predicate**
 
 ```ts
 // tests/unit/nda-activation.test.ts
@@ -2642,12 +2642,12 @@ describe('the activation predicate', () => {
 });
 ```
 
-- [ ] **Step 2: Run it and watch it fail**
+- [x] **Step 2: Run it and watch it fail**
 
 Run: `pnpm test:unit nda-activation`
 Expected: FAIL — module not found.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 ```ts
 // src/lib/server/nda/activation.ts
@@ -2678,11 +2678,11 @@ export function isActivatable(
 
 `activateGrants(db, requesterId, { scope, locales, now })` loads that requester's inert grants with their `required` template ids, asks `validAcceptance` once per distinct template, keeps the ones `isActivatable` admits, and in one transaction sets `expires_at = granted_at_or_now + term_days` and inserts the `access_grant_acceptance` rows. One acceptance can activate several grants, which is why this is a set operation and not a per-grant call.
 
-- [ ] **Step 4: Call it from both places**
+- [x] **Step 4: Call it from both places**
 
 From the click-through, immediately after `recordAcceptance`. From `decideRequest`, immediately after `recordRequirements` — **that call is the return-visit fast path.** A requester who already holds a valid acceptance has every requirement satisfied the moment the requirements are recorded, so the grant activates in the same transaction with no second click-through and no separate code path. §9.9 has gone two phases without an entry point precisely because it was imagined as a separate path.
 
-- [ ] **Step 5: Write the integration test for the fast path**
+- [x] **Step 5: Write the integration test for the fast path**
 
 ```ts
 it('activates in one step for a requester who already holds a valid acceptance', async () => {
@@ -2724,7 +2724,7 @@ it('activates every eligible grant of that requester from one acceptance', async
 });
 ```
 
-- [ ] **Step 6: Run it and watch it pass, then commit**
+- [x] **Step 6: Run it and watch it pass, then commit**
 
 `feat(nda): activate a grant when its agreements are satisfied`
 
@@ -2745,7 +2745,7 @@ it('activates every eligible grant of that requester from one acceptance', async
   - `layoutAgreement(pdf, root: Root, faces: Faces, options: { title: string }): void`
   - `config.ndaFontDir: string`
 
-- [ ] **Step 1: Vendor the font**
+- [x] **Step 1: Vendor the font**
 
 Download the four static TTFs of **Source Sans 3** (SIL OFL 1.1) from the Adobe release archive, rename them to `regular.ttf`, `bold.ttf`, `italic.ttf`, `bold-italic.ttf` under `assets/fonts/`, and copy the release's `OFL.txt` alongside. Then:
 
@@ -2763,7 +2763,7 @@ COPY --from=build /app/assets       ./assets
 
 Add `NDA_FONT_DIR=./assets/fonts` to `.env.example` with a comment, and to `config/parse.ts` with that default. §6.4 names a singular `NDA_PDF_FONT_PATH`; four faces cannot be named by one path, and a deployment needing CJK drops four files — or four copies of one file — into a directory.
 
-- [ ] **Step 2: Write the failing test**
+- [x] **Step 2: Write the failing test**
 
 ```ts
 // tests/unit/pdf-layout.test.ts
@@ -2834,12 +2834,12 @@ describe('the agreement layout engine', () => {
 });
 ```
 
-- [ ] **Step 3: Run it and watch it fail**
+- [x] **Step 3: Run it and watch it fail**
 
 Run: `pnpm test:unit pdf-layout`
 Expected: FAIL — module not found.
 
-- [ ] **Step 4: Implement**
+- [x] **Step 4: Implement**
 
 `fonts.ts` registers fontkit once per document (`pdf.registerFontkit(fontkit)`), reads the four files with `node:fs/promises`, and embeds them with `{ subset: true }` so a 300 KB face does not become 300 KB of every record.
 
@@ -2853,7 +2853,7 @@ Expected: FAIL — module not found.
 
 Keep it under ~200 lines. If it grows past that, the cursor wants to be its own small type rather than five variables threaded through six functions.
 
-- [ ] **Step 5: Move the watermark to the embedded font**
+- [x] **Step 5: Move the watermark to the embedded font**
 
 ```ts
 // src/lib/server/delivery/watermark.ts
@@ -2881,7 +2881,7 @@ it('stamps a name outside WinAnsi without mangling it', async () => {
 
 `stampPdf` gains a `fontDir` second argument rather than reading config — the route owns that lookup, like every other module below the route layer. `serve.ts` passes `getConfig().ndaFontDir`.
 
-- [ ] **Step 6: Run everything and commit**
+- [x] **Step 6: Run everything and commit**
 
 Run: `pnpm test:unit pdf-layout watermark && pnpm test:integration download`
 Expected: PASS. `download.test.ts` exercises `stampPdf` through the real delivery path and must not have changed behaviour beyond the encoding.
@@ -2902,7 +2902,7 @@ The evidence, rendered. Header, the body the signatory saw, and the signature bl
 - Consumes: `embedFaces`, `layoutAgreement` (Task 13); `parseAgreementBody` (Task 1); `getStorage`, `newStorageKey`.
 - Produces: `renderRecord(input): Promise<Uint8Array>`; `storeRecord(db, storage, acceptanceId, bytes): Promise<string>`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```ts
 it('renders a record naming the counterparty, the version and the hash', async () => {
@@ -2959,7 +2959,7 @@ it('records the stored key on the acceptance', async () => {
 });
 ```
 
-- [ ] **Step 2: Run it and watch it fail, then implement**
+- [x] **Step 2: Run it and watch it fail, then implement**
 
 `renderRecord` creates a document, embeds the faces, draws a header (the agreement's name and version, and a line saying this is a record of acceptance — from the catalog, in the signatory's locale), calls `layoutAgreement` for the body, then draws the signature block: typed name, email, company, timestamp in UTC, IP, and the full `sha256`. The hash is drawn in full rather than truncated: a hash you cannot compare is decoration.
 
@@ -2967,11 +2967,11 @@ It is generated **synchronously inside the click-through response** (§12 deviat
 
 `storeRecord` puts the bytes under a generated key and updates `nda_acceptance.record_pdf_key` in the same transaction as nothing else — if storage succeeds and the update fails, the object is orphaned rather than the row lying about an object that is not there.
 
-- [ ] **Step 3: Give the requester their copy**
+- [x] **Step 3: Give the requester their copy**
 
 Add a record link to `/{locale}/access` and a streaming route beside the gated document route, reusing `serveDocumentFile`'s discipline: the key never appears in a URL, and the read is audited. The requester can view their own record in the portal, not only in email (§10.3).
 
-- [ ] **Step 4: Run and commit**
+- [x] **Step 4: Run and commit**
 
 `feat(nda): render and store the acceptance record`
 
@@ -2992,13 +2992,13 @@ Add a record link to `/{locale}/access` and a streaming route beside the gated d
   - `enqueueEmail` payload gains an optional `attachments: MailAttachment[]`
   - mail template `nda_record`
 
-- [ ] **Step 1: Decide what the queue row carries — and write the reason down**
+- [x] **Step 1: Decide what the queue row carries — and write the reason down**
 
 The queue row carries the **storage key**, not the bytes. `outbound_email.payload` is `jsonb`, it is retained until `redactDeliveredMail` clears it, and `purgeRequester` must be able to blank it (Task 18). A base64 PDF in that column would make every purge and every retention sweep move megabytes, and would put a full copy of the signed record in a second place with its own lifetime. The drain loop resolves the key through `getStorage()` at send time.
 
 That also means no migration: `payload` already holds arbitrary JSON.
 
-- [ ] **Step 2: Write the failing test**
+- [x] **Step 2: Write the failing test**
 
 ```ts
 // tests/integration/mail-queue.test.ts
@@ -3045,7 +3045,7 @@ it('fails the row rather than the send when the object is gone', async () => {
 });
 ```
 
-- [ ] **Step 3: Run it, watch it fail, implement**
+- [x] **Step 3: Run it, watch it fail, implement**
 
 `drainOutbox` gains a `storage: StorageAdapter` option — an argument, not a `getStorage()` call, for the reason `mailer` and `from` already are. `drainMailQueue` in `jobs/index.ts` owns that lookup. Reading an attachment throws `StorageObjectNotFound`, which the existing retry/fail path already handles; the second test asserts it lands as a failure rather than a silent send.
 
@@ -3053,11 +3053,13 @@ it('fails the row rather than the send when the object is gone', async () => {
 
 Then queue `nda_record` from the click-through, to the requester and — when `STAFF_NOTIFICATION_EMAIL` is set — to the operator. **Unset is a valid deployment** (§9.5): the requester's copy is then the only mail, the operator's copy is the stored record and the portal view, and "both parties" degrades to one. The record never depends on mail.
 
-- [ ] **Step 4: Extend the Mailpit assertion**
+- [x] **Step 4: Extend the Mailpit assertion** — *done differently; see the note.*
 
 The e2e that reads Mailpit asserts the record mail arrives with one attachment named `acceptance.pdf`.
 
-- [ ] **Step 5: Commit**
+> **No spec reads Mailpit.** `access-journey.spec.ts` and `tests/helpers/admin.ts` both read `outbound_email` instead, deliberately — the mail is queued rather than sent inline, so going through a mail server would buy flakiness for nothing. The assertion is in `nda-journey.spec.ts` against the queued row, which carries the storage key and the filename. `createSmtpMailer`'s pass-through to nodemailer stays unexercised; carried in the 3c carry-over.
+
+- [x] **Step 5: Commit**
 
 `feat(mail): carry attachments through the port and the queue`
 
@@ -3075,7 +3077,7 @@ The second of §7.3's two layers. Activation uses the frozen set; delivery re-ch
 - Consumes: `accessGrantNda` (Task 9), `validAcceptance` (Task 11), `accessGroup.ndaTemplateId` (Task 6), `defaultTemplateId` (Task 5).
 - Produces: `grantConfersDocument()` gains a live requirement clause.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```ts
 // tests/integration/nda-delivery.test.ts
@@ -3132,7 +3134,7 @@ it('never adds a document the grant did not already cover', async () => {
 });
 ```
 
-- [ ] **Step 2: Run it, watch it fail, implement**
+- [x] **Step 2: Run it, watch it fail, implement**
 
 Add one clause to `grantConfersDocument()`: **for every agreement this document currently requires, the grant either records a waiver for it or the requester holds a valid acceptance of it.** Expressed as a `NOT EXISTS` over the document's currently-required templates minus the grant's waivers minus the requester's valid acceptances — one subquery, evaluated in Postgres, because `mayDownload` is the download hot path and Phase 3a's cleanup already moved it off materializing the catalogue in JS.
 
@@ -3140,7 +3142,7 @@ Add one clause to `grantConfersDocument()`: **for every agreement this document 
 
 This is narrowing-only by construction: the clause is `AND`-ed onto a predicate that already decided coverage, so it can remove a row and can never introduce one. Say that in the comment — it is the reason §7.3 is consistent with the domain-drift rule, which forbids recomputation that *widens* a past decision.
 
-- [ ] **Step 3: Full check and commit**
+- [x] **Step 3: Full check and commit**
 
 Run the whole suite. `download.test.ts`, `expiry.test.ts` and `grants-scope.test.ts` all exercise this predicate and must still pass unchanged, because no fixture in them names an agreement.
 
@@ -3158,7 +3160,7 @@ One nudge before the deadline, on a **distinct** column, and a sweep that gives 
 **Interfaces:**
 - Produces: `sendAcceptanceReminders(db, { reminderDays })`, `closeUnacceptedGrants(db)`; mail template `acceptance_expiring`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```ts
 it('nudges an inert grant before its acceptance deadline, once', async () => {
@@ -3198,13 +3200,13 @@ it('closes a grant past its acceptance deadline', async () => {
 });
 ```
 
-- [ ] **Step 2: Implement**
+- [x] **Step 2: Implement**
 
 `sendAcceptanceReminders` is `sendExpiryReminders`'s shape with `isNull(expiresAt)`, `isNull(acceptanceReminderSentAt)`, `gt(acceptanceDueAt, now())`, `lte(acceptanceDueAt, now() + reminderDays)`, `isNull(revokedAt)`, `isNull(closedAt)` and `isNull(requester.purgedAt)`. Stamp per grant immediately after queueing, so a crash mid-loop resends at most one.
 
 Both run in the existing `grants:remind` tick — two queries, not a widened predicate, because `sendExpiryReminders` filters `gt(expiresAt, now())` and that excludes exactly the rows this one wants.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 `feat(access): nudge and close a grant waiting on an acceptance`
 
@@ -3217,7 +3219,7 @@ Both run in the existing `grants:remind` tick — two queries, not a widened pre
 **Files:**
 - Modify: `src/lib/server/purge.ts`, `tests/integration/purge.test.ts`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```ts
 it('blanks the payload of every mail naming this person, not only the address', async () => {
@@ -3270,13 +3272,13 @@ it('keeps a domain-scoped colleague covered after one signatory is purged', asyn
 });
 ```
 
-- [ ] **Step 2: Implement**
+- [x] **Step 2: Implement**
 
 `purgeRequester` gains a `storage: StorageAdapter` argument — the route owns the lookup. Inside the existing transaction, after the two `outbound_email` updates, add a third setting `payload` to `{}` for every row matching that address. Then select the requester's `record_pdf_key`s, null the column, and delete the objects **after** the transaction commits: a delete that cannot be rolled back must not happen before the row that stops naming it.
 
 **The exception is confined to `nda_acceptance` and does not touch the audit log.** `audit_event` is pseudonymised exactly as spec §10 requires, unchanged.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 `fix(privacy): purge the record rendering and the mail payloads`
 
@@ -3293,7 +3295,7 @@ P3.18 and §10.1. **This task lands before Task 20 and that order is not negotia
 - Consumes: `proposeRequirements` (Task 8), `defaultTemplateId` (Task 5).
 - Produces: `verify.ts` grants `ruleTiers ∩ requestTiers`; `class AutoApprovalBlocked extends Error`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 `access-verify.test.ts` already has `submitFrom(domain)` and `verify(token)` helpers at the top of the file. Widen `submitFrom` to take the scope — `submitFrom(domain, { tiers, documentIds })`, defaulting to today's `tiers: [], documentIds: [docId]` so no existing case changes — and use them:
 
@@ -3356,7 +3358,7 @@ it('still auto-approves a blanket that carries no agreement', async () => {
 });
 ```
 
-- [ ] **Step 2: Implement**
+- [x] **Step 2: Implement**
 
 In `verify.ts`, replace `tiers: honouredTiers(tiers)` with the intersection of the rule's honoured set and the request's:
 
@@ -3374,7 +3376,7 @@ Both guards write the reason into the audit event's `meta` (`blockedBy: 'require
 
 Note in the code that the guard does **not** close §7.3's gap, which is about *staff*-approved blankets. Both are needed and they answer different questions.
 
-- [ ] **Step 3: Full check and commit**
+- [x] **Step 3: Full check and commit**
 
 `fix(access): let a rule's tier set bound its own auto-approval`
 
@@ -3388,7 +3390,7 @@ The one-line edit everything else has been arranged around, plus the surfaces it
 - Modify: `src/lib/server/access/scope.ts`, `src/lib/server/delivery/serve.ts`, `src/routes/(portal)/documents/+page.svelte`, `src/routes/(portal)/request/+page.server.ts` and `+page.svelte`, `tests/e2e/request.spec.ts`, `tests/e2e/security.spec.ts`, both catalogs
 - Create: `tests/e2e/nda-journey.spec.ts`
 
-- [ ] **Step 1: Widen the constant**
+- [x] **Step 1: Widen the constant**
 
 ```ts
 // src/lib/server/access/scope.ts
@@ -3403,13 +3405,13 @@ export const PHASE_TIERS: readonly ScopeTier[] = SCOPE_TIERS;
 
 Widen `serveDocumentFile`'s `tier` parameter to `'public' | 'request' | 'nda'`. It is still applied as an equality — adding a tier must not widen access by omission — and the gated route already lives under `/{locale}/access`, so the NDA tier needs no new path.
 
-- [ ] **Step 2: Update the request form**
+- [x] **Step 2: Update the request form**
 
 `requestableDocuments` already filters on `PHASE_TIERS` and now returns NDA-tier documents. The form states, per NDA-tier entry and per NDA blanket, that an agreement is required (§9.1). The existing e2e `'the form does not offer a tier this phase cannot honour'` in `request.spec.ts` **must be rewritten, not deleted** — its subject still exists, it is just that the answer changed. Assert instead that the NDA tier is offered and labelled as requiring an agreement.
 
 The portal document list's NDA branch gains a route to the request form rather than a badge and a dead end.
 
-- [ ] **Step 3: Write the journey**
+- [x] **Step 3: Write the journey**
 
 ```ts
 // tests/e2e/nda-journey.spec.ts
@@ -3444,11 +3446,11 @@ test('a second request by a requester holding a current acceptance activates at 
 });
 ```
 
-- [ ] **Step 4: Extend the security assertions**
+- [x] **Step 4: Extend the security assertions**
 
 `tests/e2e/security.spec.ts`: the existing assertion that no gated file id reaches public HTML extends to the NDA tier, and the public portal still sets no cookies with the NDA routes present. `'a gated document never appears in the sitemap'` gains an NDA-tier case.
 
-- [ ] **Step 5: Full suite and commit**
+- [x] **Step 5: Full suite and commit**
 
 Run everything. This is the task where a regression anywhere in the phase shows up.
 
@@ -3464,11 +3466,13 @@ Three items §15 and the 3a carry-over asked this phase to absorb. Grouped becau
 - Modify: `src/lib/server/admin/actions.ts`, `tests/unit/admin-actions.test.ts`, every `+page.server.ts` with a slugged create action
 - Create: `tests/e2e/admin-upload.spec.ts`
 
-- [ ] **Step 1: Delete `saveTranslationAction`**
+- [ ] **Step 1: Delete `saveTranslationAction`** — **NOT DONE, and it should not be.**
 
 Unused for three phases — every real form submits every locale at once, and two phases have now routed around it. Delete the function and its unit tests. `pnpm check` proves nothing imported it.
 
-- [ ] **Step 2: Handle `23505` once, everywhere**
+> **Refused at execution.** The premise is false. Six admin forms — FAQ, subprocessors, updates, controls, certifications, documents — register `saveTranslation` and post to `?/saveTranslation` one locale at a time, and five cases in `admin-content.spec.ts` drive them. `pnpm check` would not have caught it either: the routes import it. What is actually true is narrower — the helper does not fit editors that submit every locale at once, which is every content type added since Phase 1. See `docs/superpowers/phase-3c-carryover.md`.
+
+- [x] **Step 2: Handle `23505` once, everywhere**
 
 Add to `admin/actions.ts`:
 
@@ -3492,11 +3496,11 @@ export function uniqueViolationField(cause: unknown, field: string): AdminAction
 
 Use it in every create and update action that writes a slug — documents, categories, controls, control groups, certifications, subprocessors, FAQ, updates, access groups, rules, agreements — each rendering the existing duplicate-slug message. Unit-test the helper against a shaped error and against an unrelated code, so it cannot come to swallow everything.
 
-- [ ] **Step 3: Drive the admin file upload from a browser**
+- [x] **Step 3: Drive the admin file upload from a browser**
 
 The one gap where a page-count cap and a size cap are unit-tested but the route applying them has never been driven by a browser — and 3c adds a second upload route, which would otherwise inherit it. Assert a real PDF uploads and appears as the current file; that an over-cap page count is refused with the message, not a 500; and that an over-size file is refused the same way. Use `tests/helpers/pdf.ts`'s `blankPdf(pages)` to build both.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 `refactor(admin): handle duplicate slugs once and drop the dead action`
 
@@ -3508,13 +3512,13 @@ The one gap where a page-count cap and a size cap are unit-tested but the route 
 - Modify: `docs/` operator documentation, `.env.example`, `README` configuration table
 - Create: `docs/superpowers/phase-3c-carryover.md`
 
-- [ ] **Step 1: Document the workflow for operators**
+- [x] **Step 1: Document the workflow for operators**
 
 What an agreement is and how a version becomes effective; that publishing is all-or-nothing across locales and why; that a version becomes immutable once signed; that templates retire rather than delete, and what happens if you try; what the approver's requirement list means and what a waiver records; that a grant's clock starts at acceptance; what `nda.acceptance_scope = domain` widens, stated plainly, and that it is bounded to rule-matched domains.
 
 List the new environment variable (`NDA_FONT_DIR`) and say that a deployment needing scripts outside Latin/Greek/Cyrillic supplies four TTFs in a directory.
 
-- [ ] **Step 2: Write the carry-over**
+- [x] **Step 2: Write the carry-over**
 
 Same shape as `phase-3b-carryover.md`. Answer, at minimum:
 
@@ -3523,7 +3527,7 @@ Same shape as `phase-3b-carryover.md`. Answer, at minimum:
 - **Which of §7.3's three paths did a test actually catch?** All three are written down; say which were caught by the live check and which by review.
 - Everything still open, with the reasoning: what 3c inherits (`pdfjs-dist`, `mammoth`, Milkdown, admin bundle only), and everything still open from `phase-3b-carryover.md` that this phase did not touch — the e2e suite starting two application servers against one database, requester retention being manual only, invite-driven requests being modelled but unreachable, `document_file.page_count` unstored.
 
-- [ ] **Step 3: Final verification**
+- [x] **Step 3: Final verification**
 
 Run, and record the numbers in the ledger and the carry-over:
 
@@ -3534,7 +3538,7 @@ pnpm test:unit && pnpm test:integration && pnpm test:e2e
 
 and `pnpm build` with `DATABASE_URL`, `OIDC_CLIENT_SECRET` and `SMTP_URL` unset — the global constraint that has held for three phases.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 `docs: close phase 3b`
 

@@ -32,7 +32,8 @@ export const actions: Actions = {
 
 	// Not `saveTranslationAction`: that helper writes one locale per POST and
 	// this form submits every locale at once, the same way every other content
-	// type's does. Task 21 deletes the singular helper.
+	// type's does. The singular helper stays — six other admin forms do post to
+	// it one locale at a time, which 3b's plan had assumed nothing did.
 	saveTranslations: async (event) => {
 		const db = getDb();
 		const form = await event.request.formData();

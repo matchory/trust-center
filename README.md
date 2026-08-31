@@ -17,10 +17,17 @@ Licensed under [AGPL-3.0-or-later](./LICENSE).
   An approval's scope is a set: named documents, whole tiers, and named groups — reusable bundles
   granted by name. Grants carry an expiry, remind the holder once before they lapse, and can be
   revoked instantly.
+- **NDAs, click-through and versioned.** An operator writes an agreement in Markdown, per locale;
+  an approver confirms or waives the ones a request needs; the prospect reads and accepts. That
+  produces an immutable record — the exact text, the typed name, the time, and its SHA-256 — stored,
+  mailed to both parties, and downloadable afterwards. The grant's clock starts at acceptance, not
+  at approval, and a document that gains an agreement later stops being downloadable the same day.
 - **An append-only audit log** of every decision, sign-in, and download — enforced at the database,
   not by convention — with a filterable viewer for administrators.
 - **Erasure on request.** A requester's identity is blanked and their audit events pseudonymized,
-  without deleting the record that the access happened.
+  without deleting the record that the access happened. A signed agreement keeps the columns that
+  identify the counterparty — either the record identifies them or it should not be kept — while its
+  rendered PDF is deleted.
 
 ## Running it
 

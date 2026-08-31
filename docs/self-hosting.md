@@ -61,6 +61,8 @@ refusal is recorded in the audit log.
 | `MAGIC_LINK_TTL_MINUTES` | no | `30` | Lifetime of a single-use verification or sign-in link. |
 | `ACCESS_GRANT_DEFAULT_DAYS` | no | `90` | Default expiry when staff approve without naming one. |
 | `ACCESS_GRANT_REMINDER_DAYS` | no | `7` | How long before expiry the requester is reminded. The grant lapses on its own either way. |
+| `NDA_ACCEPTANCE_DUE_DAYS` | no | `14` | Default days a requester has to accept an outstanding agreement before the approval lapses, when staff approve without naming one. Overridden at `/admin/settings/access`. |
+| `NDA_FONT_DIR` | no | `./assets/fonts` | Directory holding the four typefaces the acceptance record and the download watermark embed — `regular.ttf`, `bold.ttf`, `italic.ttf`, `bold-italic.ttf`. See §7c. |
 | `PORT` | no | `3000` | Port the server listens on. |
 | `BODY_SIZE_LIMIT` | no | `32M` | Largest request body `adapter-node` accepts, uploads included. |
 | `ADDRESS_HEADER` | behind a proxy | — | Header to read the client address from. Set to `X-Forwarded-For`. See §8 — without it every audit event records your proxy's address. |
@@ -224,7 +226,7 @@ no scheduler to configure.
 | `mail:drain` | 15s | Sends queued mail from `outbound_email`, retrying with backoff. |
 | `sessions:cleanup` | 1h | Deletes expired staff and requester sessions. |
 | `requests:sweep` | 15m | Deletes access requests whose verification link expired unused. |
-| `grants:remind` | 6h | Mails a requester once, shortly before their access expires. |
+| `grants:remind` | 6h | Mails a requester once shortly before their access expires; nudges once before an outstanding agreement's deadline; and closes approvals whose deadline has passed. |
 | `retention:sweep` | 6h | Drops spent rate-limit counters and strips settled notifications of their address and payload. |
 
 Every tick takes a Postgres advisory lock named for its job, so running more
@@ -306,6 +308,130 @@ working — re-upload it if you need the new limit applied.
 
 **To erase a requester,** see [§10](#10-erasure-requests).
 
+## 7c. Agreements and the NDA tier
+
+A document at the **`nda` tier** is one nobody sees until they have accepted an
+agreement. The tier alone is not the whole rule: an access group can carry an
+agreement too, and then every document in that group requires it whatever tier
+it sits at.
+
+### Writing one
+
+Agreements live at `/admin/agreements`. A **template** is the agreement as a
+thing — "Mutual NDA" — with a name and description per locale. What people
+actually sign is a **version** of it, and a version has a body per locale.
+
+The body is Markdown, restricted to headings, paragraphs, bold, italic, ordered
+and unordered lists, and horizontal rules. No tables, images, or raw HTML. The
+restriction is checked when you save, not when somebody reads: an agreement that
+cannot be rendered must never become one a person is asked to sign. The preview
+on the version page is the same renderer the requester sees and the same one the
+record PDF is laid out from — there is no second implementation for the two to
+drift apart in.
+
+**Publishing is all-or-nothing across your locales.** A version with a body in
+German but not English cannot be published while both are enabled. Half a
+contract is not a contract, and the alternative — showing somebody the other
+language — is worse than showing them nothing. The version page names which
+locale is blocking.
+
+The **effective version** is the newest published, non-retired one that is
+complete in every enabled locale. That is what a requester is shown and what an
+approver may require. Enabling a new locale can therefore un-publish an
+agreement in practice: the version stays published but stops being effective
+until it has a body in the new language. The agreement page says so.
+
+**A version becomes immutable the moment somebody accepts it.** After that you
+cannot edit its body — you publish a new version instead, and the new version is
+a *new agreement* for the purposes of coverage: someone who accepted version 2
+does not thereby hold version 3. Everyone who needs the new one will be asked to
+accept it. Weigh that before publishing over a wording tweak.
+
+**Templates retire rather than delete.** Retiring one stops it being proposed or
+required; it does not touch the records of people who already signed it, and it
+cannot, because those records are the evidence the agreement exists for.
+
+### Requiring one
+
+When a request reaches `/admin/requests`, the decision page lists the agreements
+the requested scope currently requires — the union of the agreements carried by
+the groups those documents are in, plus the default agreement for anything at
+the `nda` tier. **The default is set at `/admin/settings/access`**, and an
+`nda`-tier document with no default configured cannot be approved at all: the
+page says so rather than quietly granting an ungated document.
+
+For each agreement the approver either **confirms** it or **waives** it with a
+reason. A waiver is recorded as a row, not as an omission — "we have this on
+paper, signed last year" is a decision somebody made, and the record of it is
+what stops the requirement being silently re-imposed later.
+
+**The clock starts at acceptance, not at approval.** An approval with an
+outstanding agreement mints a grant that confers nothing yet: it has no expiry,
+and the requester has `NDA_ACCEPTANCE_DUE_DAYS` (or the value at
+`/admin/settings/access`) to accept before the approval lapses. They get one
+reminder before that deadline. When they accept, the term you chose starts
+running from that moment — a prospect who took a week to read the agreement does
+not lose a week of access. The grants page shows such a grant as *pending
+acceptance* with no end date, and as *unaccepted* once the deadline passes.
+
+**Requirements are frozen at approval, and re-checked at delivery.** What the
+approver confirmed is what the grant waits on. But a document can gain an
+agreement afterwards — you add it to a group that carries one, or move it to the
+`nda` tier — and from that moment it stops being downloadable to anyone who has
+not accepted, without you revisiting a single existing grant. This only ever
+takes documents away, never adds them.
+
+### What a person signs, and what is kept
+
+The requester reads the agreement at `/{locale}/access/agreements`, types their
+name, and accepts. That produces an **acceptance record**: a PDF carrying the
+exact text they were shown, their typed name, email, company, the timestamp in
+UTC, the IP address, and the SHA-256 of the text. It is stored, mailed to them,
+mailed to `STAFF_NOTIFICATION_EMAIL` if you have set one, and downloadable from
+their access page afterwards.
+
+The hash is what makes it evidence: the record pins the exact bytes that person
+saw, and a version already accepted can no longer be edited, so the two agree
+permanently.
+
+**An erasure request does not erase the acceptance.** The name, address, company
+and hash on it stay — either the record identifies the counterparty or it should
+not be retained at all, and a record saying somebody once typed a name is the
+same as not keeping one. The *rendered PDF* is deleted, because it says the same
+things in richer form and the columns already hold what the exemption needs.
+Everything else about that person is erased as usual. See
+[§10](#10-erasure-requests).
+
+### Per person or per company
+
+`/admin/settings/access` offers an **acceptance scope**: `person` or `domain`.
+
+`person` is the default and means what it says — each individual signs.
+
+`domain` means one signature covers everyone at that company's email domain.
+This is what DACH practice usually expects and what Conveyor defaults to, and it
+is a real widening: a colleague of the person who signed gets access without
+signing anything, and without a record naming them. It is bounded to domains an
+`auto_approve` rule matches, so a free-mail address that reached you through a
+hand-approval cannot spread coverage to everybody else on that provider. Turn it
+on deliberately, not by default.
+
+### Typefaces
+
+The acceptance record and the download watermark embed four faces of Source Sans
+3 (SIL OFL 1.1, bundled), covering Latin, Latin Extended, Greek and Cyrillic in
+about 1.2 MB. A standard PDF font would mangle `Łukasz` or `Şule` into question
+marks, and on a contract the mangled string is the typed name standing in for a
+signature.
+
+If your signatories write in a script that is not covered — CJK, for instance —
+put four TTFs named `regular.ttf`, `bold.ttf`, `italic.ttf` and `bold-italic.ttf`
+into a directory and point `NDA_FONT_DIR` at it. Four faces, not one: the
+Markdown subset admits bold and italic, and therefore both at once, and a
+bold-italic run with no face to draw it is a silent substitution inside a
+contract. A name outside the loaded font's coverage currently fails the download
+rather than degrading, so supply the faces before you need them.
+
 ## 8. Reverse proxy
 
 The container serves plain HTTP. Terminate TLS in front of it and forward both
@@ -381,7 +507,8 @@ address — can be erased from `/admin/requesters/{id}`. Purging is immediate an
   `requester` row. The email is replaced with a unique unusable placeholder
   rather than emptied, because the column is unique and NOT NULL.
 - Their name, IP address, and user agent from every notification queued or sent
-  to them. A notification still waiting to go out is stopped.
+  to them, and the payload of every one of those notifications. A notification
+  still waiting to go out is stopped.
 - Their actor id, IP address, and user agent from every audit event they caused.
 - Every active session they hold.
 
@@ -396,6 +523,15 @@ address — can be erased from `/admin/requesters/{id}`. Purging is immediate an
   it, and dropping the row would take that history with it.
 - **Their grants and requests**, which continue to show what was asked for and
   what was decided.
+- **The identifying columns on any agreement they accepted** — the typed name,
+  address, company, domain, and the hash of the text. This is the one exception
+  to everything above, and it is confined to `nda_acceptance`: either the record
+  identifies the counterparty or it should not be retained at all, and a record
+  saying somebody once typed a name is the same as not keeping one. The rendered
+  PDF of that record *is* deleted, since it says the same things in richer form.
+  Keeping the company domain is also what lets a colleague stay covered under
+  `domain` acceptance scope when the one person who signed is erased. See
+  [§7c](#7c-agreements-and-the-nda-tier).
 
 **What it does not do**
 
