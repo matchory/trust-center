@@ -2,6 +2,7 @@ import { redirect } from '@sveltejs/kit';
 import { and, desc, eq, inArray, isNotNull } from 'drizzle-orm';
 import { localizePath } from '$lib/i18n/locale';
 import { grantedDocuments } from '$lib/server/access/grants';
+import { getConfig } from '$lib/server/config';
 import { getDb } from '$lib/server/db/instance';
 import {
 	document,
@@ -21,7 +22,7 @@ export const load: PageServerLoad = async ({ locals }) => {
 	if (!requester) redirect(303, localizePath('/request', locals.locale));
 
 	const db = getDb();
-	const granted = await grantedDocuments(db, requester.id);
+	const granted = await grantedDocuments(db, requester.id, { locales: getConfig().locales });
 
 	// Listed whatever the state of their grants: a record is evidence of what
 	// they signed, and it outlives the access it was signed for.

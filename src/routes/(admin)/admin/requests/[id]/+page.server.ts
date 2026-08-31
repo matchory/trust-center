@@ -238,7 +238,7 @@ async function decide(event: Parameters<Actions[string]>[0], decision: Decision)
 			// form's own scope instead of reporting zero.
 			documentCount:
 				outcome.grantId && outstanding.length === 0
-					? await countGrantDocuments(db, outcome.grantId)
+					? await countGrantDocuments(db, outcome.grantId, { locales: config.locales })
 					: documentIds.length,
 			agreementCount: outstanding.length,
 			// Only meaningful for a grant whose clock has started; the

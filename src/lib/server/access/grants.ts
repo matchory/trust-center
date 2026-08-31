@@ -4,17 +4,31 @@ import {
 	accessGrant,
 	accessGrantDocument,
 	accessGrantGroup,
+	accessGrantNda,
 	accessGrantTier,
+	accessGroup,
 	document,
 	documentGroup,
 	requester,
 	setting
 } from '../db/schema';
 import { groupByKey } from '../collections';
+import { validAcceptance } from '../nda/acceptance';
+import { DefaultTemplateMissing, proposeFrom } from '../nda/requirements';
+import { acceptanceScope, defaultTemplateId } from '../nda/settings';
 import { PHASE_TIERS, setGrantGroups, setGrantTiers } from './scope';
 import type { ScopeTier } from '../../access-types';
 import type { GrantState } from '../../nda-types';
 import type { Db } from '../db';
+
+/**
+ * `locales` decides which version of an agreement is the effective one, and so
+ * whether an acceptance of it is still valid (§6.2). An argument rather than a
+ * `getConfig()` call, as everything below the route layer is.
+ */
+export interface DeliveryOptions {
+	locales: readonly string[];
+}
 
 export type { GrantState };
 
@@ -126,20 +140,174 @@ function grantConfersDocument() {
 	)!;
 }
 
+/** One (grant, document) pair the scope query conferred, before the live re-check. */
+interface ConferredRow {
+	grantId: string;
+	requesterId: string;
+	documentId: string;
+	expiresAt: Date | null;
+}
+
+/**
+ * §7.3's second layer. A document is deliverable only if every agreement it
+ * *currently* requires is either waived on that grant or satisfied by a valid
+ * acceptance.
+ *
+ * **This may only remove rows, never add one.** It is a filter over what the
+ * scope query already conferred, which is what makes live evaluation consistent
+ * with the domain-drift rule: that rule forbids recomputation which *widens* a
+ * past decision, and narrowing-only is already the established pattern — it is
+ * exactly what the tier filter in `grantConfersDocument` does. The invariant is
+ * a test in `nda-delivery.test.ts`.
+ *
+ * The requirement lookup is one query over the conferred documents, and in the
+ * overwhelmingly common case — no document in the set carries an agreement — it
+ * is the only extra work a download pays for. Only when something is actually
+ * required does this go on to read waivers and acceptances.
+ *
+ * "Currently requires" is `proposeFrom`, the same rule the approver's proposal
+ * used, rather than a second expression of it here; "a valid acceptance" is
+ * `validAcceptance`, which owns the person-versus-domain scope and the
+ * `auto_approve` bound §6.3 needs. Restating either one in SQL would be a
+ * second implementation of a rule that gates access, and the two would drift.
+ */
+async function narrowByAgreements(
+	db: Db,
+	rows: readonly ConferredRow[],
+	options: DeliveryOptions
+): Promise<ConferredRow[]> {
+	if (rows.length === 0) return [];
+
+	const documentIds = [...new Set(rows.map((row) => row.documentId))];
+	const scopeRows = await db
+		.select({ id: document.id, tier: document.tier, templateId: accessGroup.ndaTemplateId })
+		.from(document)
+		.leftJoin(documentGroup, eq(documentGroup.documentId, document.id))
+		.leftJoin(accessGroup, eq(accessGroup.id, documentGroup.groupId))
+		.where(inArray(document.id, documentIds));
+
+	// Nothing at the nda tier and no group carrying an agreement: the fast path
+	// out, and the state every deployment is in until an operator sets one up.
+	if (scopeRows.every((row) => row.templateId === null && row.tier !== 'nda')) return [...rows];
+
+	const defaultTemplate = await defaultTemplateId(db);
+	const required = new Map<string, string[] | 'unresolvable'>();
+
+	for (const [id, group] of groupByKey(scopeRows, (row) => row.id)) {
+		try {
+			required.set(
+				id,
+				proposeFrom(
+					[{ id, tier: group[0]!.tier, groupTemplateIds: group.map((row) => row.templateId) }],
+					{ defaultTemplateId: defaultTemplate }
+				)
+			);
+		} catch (cause) {
+			// §4.4 fails closed: an nda-tier document with no default agreement is
+			// undeliverable rather than ungated.
+			if (!(cause instanceof DefaultTemplateMissing)) throw cause;
+			required.set(id, 'unresolvable');
+		}
+	}
+
+	const waivers = await db
+		.select({ grantId: accessGrantNda.grantId, templateId: accessGrantNda.ndaTemplateId })
+		.from(accessGrantNda)
+		.where(
+			and(
+				inArray(
+					accessGrantNda.grantId,
+					rows.map((row) => row.grantId)
+				),
+				eq(accessGrantNda.disposition, 'waived')
+			)
+		);
+
+	const waivedByGrant = new Map<string, Set<string>>();
+	for (const row of waivers) {
+		const set = waivedByGrant.get(row.grantId) ?? new Set<string>();
+		set.add(row.templateId);
+		waivedByGrant.set(row.grantId, set);
+	}
+
+	const scope = await acceptanceScope(db);
+	const domains = new Map(
+		(
+			await db
+				.select({ id: requester.id, companyDomain: requester.companyDomain })
+				.from(requester)
+				.where(inArray(requester.id, [...new Set(rows.map((row) => row.requesterId))]))
+		).map((row) => [row.id, row.companyDomain])
+	);
+
+	// One lookup per (person, agreement), not per row: a requester's grants
+	// routinely confer many documents behind the same agreement.
+	const held = new Map<string, boolean>();
+	const holds = async (requesterId: string, templateId: string): Promise<boolean> => {
+		const cacheKey = `${requesterId}:${templateId}`;
+		const cached = held.get(cacheKey);
+		if (cached !== undefined) return cached;
+
+		const companyDomain = domains.get(requesterId);
+		const valid =
+			companyDomain !== undefined &&
+			(await validAcceptance(db, {
+				requesterId,
+				companyDomain,
+				templateId,
+				scope,
+				locales: options.locales
+			})) !== null;
+
+		held.set(cacheKey, valid);
+		return valid;
+	};
+
+	const delivered: ConferredRow[] = [];
+
+	for (const row of rows) {
+		const templates = required.get(row.documentId) ?? [];
+		if (templates === 'unresolvable') continue;
+
+		const waived = waivedByGrant.get(row.grantId);
+		let satisfied = true;
+
+		for (const templateId of templates) {
+			if (waived?.has(templateId)) continue;
+			if (await holds(row.requesterId, templateId)) continue;
+			satisfied = false;
+			break;
+		}
+
+		if (satisfied) delivered.push(row);
+	}
+
+	return delivered;
+}
+
 /**
  * How many documents one grant covers right now. Used by the expiry reminder,
  * which speaks about a single grant's scope — a requester holding two grants
  * must not be told the wrong number about the one that is ending — and by the
  * approval mail, which tells a requester what they just received.
  */
-export async function countGrantDocuments(db: Db, grantId: string): Promise<number> {
-	const [row] = await db
-		.select({ count: sql<number>`count(*)::int` })
+export async function countGrantDocuments(
+	db: Db,
+	grantId: string,
+	options: DeliveryOptions
+): Promise<number> {
+	const rows = await db
+		.select({
+			grantId: accessGrant.id,
+			requesterId: accessGrant.requesterId,
+			documentId: document.id,
+			expiresAt: accessGrant.expiresAt
+		})
 		.from(accessGrant)
 		.innerJoin(document, grantConfersDocument())
 		.where(eq(accessGrant.id, grantId));
 
-	return row?.count ?? 0;
+	return (await narrowByAgreements(db, rows, options)).length;
 }
 
 /**
@@ -155,18 +323,25 @@ export async function countGrantDocuments(db: Db, grantId: string): Promise<numb
 export async function grantedDocuments(
 	db: Db,
 	requesterId: string,
-	documentId?: string
+	options: DeliveryOptions & { documentId?: string }
 ): Promise<{ documentId: string; expiresAt: Date }[]> {
-	const rows = await db
-		.select({ documentId: document.id, expiresAt: accessGrant.expiresAt })
+	const conferred = await db
+		.select({
+			grantId: accessGrant.id,
+			requesterId: accessGrant.requesterId,
+			documentId: document.id,
+			expiresAt: accessGrant.expiresAt
+		})
 		.from(accessGrant)
 		.innerJoin(document, grantConfersDocument())
 		.where(
 			and(
 				eq(accessGrant.requesterId, requesterId),
-				documentId ? eq(document.id, documentId) : undefined
+				options.documentId ? eq(document.id, options.documentId) : undefined
 			)
 		);
+
+	const rows = await narrowByAgreements(db, conferred, options);
 
 	// `grantConfersDocument` requires `expires_at > now()`, so every row here has
 	// one — the `!` states what the join already guarantees, not a fresh
@@ -188,9 +363,10 @@ export async function grantedDocuments(
 export async function mayDownload(
 	db: Db,
 	requesterId: string,
-	documentId: string
+	documentId: string,
+	options: DeliveryOptions
 ): Promise<boolean> {
-	return (await grantedDocuments(db, requesterId, documentId)).length > 0;
+	return (await grantedDocuments(db, requesterId, { ...options, documentId })).length > 0;
 }
 
 export async function revokeGrant(db: Db, grantId: string, staffUserId: string): Promise<void> {

@@ -73,7 +73,11 @@ export const JOBS: readonly Job[] = [
 		name: 'grants:remind',
 		everyMs: 6 * 60 * 60 * 1000,
 		run: async (db) => {
-			await sendExpiryReminders(db, { reminderDays: getConfig().accessGrantReminderDays });
+			const config = getConfig();
+			await sendExpiryReminders(db, {
+				reminderDays: config.accessGrantReminderDays,
+				locales: config.locales
+			});
 		}
 	},
 	{

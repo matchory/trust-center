@@ -14,6 +14,8 @@ import {
 	documentCategory,
 	requester
 } from '../../src/lib/server/db/schema';
+
+const LOCALES = ['de', 'en'];
 import { seedDocument, seedRequester } from '../setup/fixtures';
 
 let db: Db;
@@ -60,7 +62,7 @@ describe('grant resolution over sets', () => {
 			termDays: 90
 		});
 
-		expect(await mayDownload(db, requesterId, documentId)).toBe(true);
+		expect(await mayDownload(db, requesterId, documentId, { locales: LOCALES })).toBe(true);
 	});
 
 	it('covers a whole tier, including a document published later', async () => {
@@ -80,7 +82,7 @@ describe('grant resolution over sets', () => {
 		// Published after the grant was made. "Including documents published
 		// later" is what a blanket means.
 		const documentId = await seedDocument(db, { slug: 'later', tier: 'request' });
-		expect(await mayDownload(db, requesterId, documentId)).toBe(true);
+		expect(await mayDownload(db, requesterId, documentId, { locales: LOCALES })).toBe(true);
 	});
 
 	it('covers a whole group, including a document added to it later', async () => {
@@ -99,10 +101,10 @@ describe('grant resolution over sets', () => {
 		});
 
 		const documentId = await seedDocument(db, { slug: 'soc2', tier: 'request' });
-		expect(await mayDownload(db, requesterId, documentId)).toBe(false);
+		expect(await mayDownload(db, requesterId, documentId, { locales: LOCALES })).toBe(false);
 
 		await setDocumentGroups(db, documentId, [groupId]);
-		expect(await mayDownload(db, requesterId, documentId)).toBe(true);
+		expect(await mayDownload(db, requesterId, documentId, { locales: LOCALES })).toBe(true);
 	});
 
 	it('grants nothing from an empty scope', async () => {
@@ -120,7 +122,7 @@ describe('grant resolution over sets', () => {
 			termDays: 90
 		});
 
-		expect(await grantedDocuments(db, requesterId)).toEqual([]);
+		expect(await grantedDocuments(db, requesterId, { locales: LOCALES })).toEqual([]);
 	});
 
 	it('does not honour an nda tier entry in this phase', async () => {
@@ -140,7 +142,7 @@ describe('grant resolution over sets', () => {
 
 		// Storable, not yet honoured. Phase 3b is what makes this true, and
 		// this assertion is what stops it becoming true by accident.
-		expect(await mayDownload(db, requesterId, documentId)).toBe(false);
+		expect(await mayDownload(db, requesterId, documentId, { locales: LOCALES })).toBe(false);
 	});
 
 	it('counts only live, unrevoked scope', async () => {
@@ -162,7 +164,7 @@ describe('grant resolution over sets', () => {
 		// caller pre-filtered, so it was safe by accident; the expiry reminder
 		// would otherwise tell somebody how many documents an expired grant
 		// covers.
-		expect(await countGrantDocuments(db, grantId)).toBe(0);
+		expect(await countGrantDocuments(db, grantId, { locales: LOCALES })).toBe(0);
 	});
 
 	it('deduplicates a document covered by two sources', async () => {
@@ -182,7 +184,7 @@ describe('grant resolution over sets', () => {
 			termDays: 90
 		});
 
-		const granted = await grantedDocuments(db, requesterId);
+		const granted = await grantedDocuments(db, requesterId, { locales: LOCALES });
 		expect(granted).toHaveLength(1);
 	});
 });

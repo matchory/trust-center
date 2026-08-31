@@ -12,6 +12,8 @@ import {
 	requester
 } from '../../src/lib/server/db/schema';
 
+const LOCALES = ['de', 'en'];
+
 let db: Db;
 let close: () => Promise<void>;
 let docId: string;
@@ -97,7 +99,7 @@ describe('sendExpiryReminders', () => {
 	it('queues one reminder for a grant inside the reminder window', async () => {
 		const { email, grantId } = await seed({ expiresAt: days(3) });
 
-		await sendExpiryReminders(db, { reminderDays: REMINDER_DAYS });
+		await sendExpiryReminders(db, { reminderDays: REMINDER_DAYS, locales: LOCALES });
 
 		const queued = await reminders(email);
 		expect(queued).toHaveLength(1);
@@ -113,8 +115,8 @@ describe('sendExpiryReminders', () => {
 		// mails the same person every tick until the grant lapses.
 		const { email } = await seed({ expiresAt: days(3) });
 
-		await sendExpiryReminders(db, { reminderDays: REMINDER_DAYS });
-		await sendExpiryReminders(db, { reminderDays: REMINDER_DAYS });
+		await sendExpiryReminders(db, { reminderDays: REMINDER_DAYS, locales: LOCALES });
+		await sendExpiryReminders(db, { reminderDays: REMINDER_DAYS, locales: LOCALES });
 
 		expect(await reminders(email)).toHaveLength(1);
 	});
@@ -122,7 +124,7 @@ describe('sendExpiryReminders', () => {
 	it('ignores a grant that expires beyond the window', async () => {
 		const { email } = await seed({ expiresAt: days(REMINDER_DAYS + 5) });
 
-		await sendExpiryReminders(db, { reminderDays: REMINDER_DAYS });
+		await sendExpiryReminders(db, { reminderDays: REMINDER_DAYS, locales: LOCALES });
 
 		expect(await reminders(email)).toHaveLength(0);
 	});
@@ -130,7 +132,7 @@ describe('sendExpiryReminders', () => {
 	it('ignores a revoked grant', async () => {
 		const { email } = await seed({ expiresAt: days(3), revoked: true });
 
-		await sendExpiryReminders(db, { reminderDays: REMINDER_DAYS });
+		await sendExpiryReminders(db, { reminderDays: REMINDER_DAYS, locales: LOCALES });
 
 		expect(await reminders(email)).toHaveLength(0);
 	});
@@ -140,7 +142,7 @@ describe('sendExpiryReminders', () => {
 		// grantedDocuments filters on expiresAt, so access ends on its own.
 		const { email } = await seed({ expiresAt: days(-1) });
 
-		await sendExpiryReminders(db, { reminderDays: REMINDER_DAYS });
+		await sendExpiryReminders(db, { reminderDays: REMINDER_DAYS, locales: LOCALES });
 
 		expect(await reminders(email)).toHaveLength(0);
 	});
@@ -152,7 +154,7 @@ describe('sendExpiryReminders', () => {
 			.set({ purgedAt: new Date(), email: `purged-${randomUUID()}@invalid` })
 			.where(eq(requester.id, requesterId));
 
-		await sendExpiryReminders(db, { reminderDays: REMINDER_DAYS });
+		await sendExpiryReminders(db, { reminderDays: REMINDER_DAYS, locales: LOCALES });
 
 		expect(await reminders(email)).toHaveLength(0);
 	});
@@ -160,7 +162,7 @@ describe('sendExpiryReminders', () => {
 	it('sends the reminder in the requester locale', async () => {
 		const { email } = await seed({ expiresAt: days(3), locale: 'en' });
 
-		await sendExpiryReminders(db, { reminderDays: REMINDER_DAYS });
+		await sendExpiryReminders(db, { reminderDays: REMINDER_DAYS, locales: LOCALES });
 
 		const [queued] = await reminders(email);
 		expect(queued?.locale).toBe('en');

@@ -191,9 +191,14 @@ export async function publishVersion(
 
 		if (missing.length > 0) throw new VersionIncomplete(`no body for: ${missing.join(', ')}`);
 
+		// The database's clock, not the application's. `effectiveVersion` asks
+		// `effective_from <= now()` in Postgres, so stamping this from Node makes
+		// the comparison span two clocks: with the database even milliseconds
+		// behind, a version just published is briefly not yet in force — and
+		// nobody can be shown the agreement they were just told to sign.
 		await tx
 			.update(ndaTemplateVersion)
-			.set({ effectiveFrom: new Date() })
+			.set({ effectiveFrom: sql`now()` })
 			.where(eq(ndaTemplateVersion.id, versionId));
 	});
 }

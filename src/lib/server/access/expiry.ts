@@ -9,14 +9,14 @@ import type { Db } from '../db';
  * is no "expire the grant" job and no window in which a lapsed grant still
  * works. This job only sends the notice that precedes it.
  *
- * `reminderDays` is an argument rather than a `getConfig()` call, as in
- * `drainOutbox` and `sweepUnverifiedRequests`: the job that calls this owns the
- * lookup, and a function that needs a fully configured environment to answer a
- * question about rows is untestable.
+ * `reminderDays` and `locales` are arguments rather than `getConfig()` calls,
+ * as in `drainOutbox` and `sweepUnverifiedRequests`: the job that calls this
+ * owns the lookup, and a function that needs a fully configured environment to
+ * answer a question about rows is untestable.
  */
 export async function sendExpiryReminders(
 	db: Db,
-	options: { reminderDays: number }
+	options: { reminderDays: number; locales: readonly string[] }
 ): Promise<{ queued: number }> {
 	const due = await db
 		.select({
@@ -49,7 +49,7 @@ export async function sendExpiryReminders(
 			payload: {
 				// The `gt(expiresAt, now())` filter above guarantees this row has one.
 				expiresAt: row.expiresAt!.toISOString().slice(0, 10),
-				documentCount: await countGrantDocuments(db, row.grantId)
+				documentCount: await countGrantDocuments(db, row.grantId, { locales: options.locales })
 			}
 		});
 

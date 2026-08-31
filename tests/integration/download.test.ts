@@ -11,6 +11,8 @@ import {
 	staffUser
 } from '../../src/lib/server/db/schema';
 
+const LOCALES = ['de', 'en'];
+
 let db: Db;
 let close: () => Promise<void>;
 let documentId: string;
@@ -99,7 +101,7 @@ describe('mayDownload', () => {
 			acceptanceDueAt: null
 		});
 
-		expect(await mayDownload(db, requesterId, documentId)).toBe(true);
+		expect(await mayDownload(db, requesterId, documentId, { locales: LOCALES })).toBe(true);
 	});
 
 	it('admits a requester holding a whole-tier grant that names no document', async () => {
@@ -115,7 +117,7 @@ describe('mayDownload', () => {
 			acceptanceDueAt: null
 		});
 
-		expect(await mayDownload(db, requesterId, documentId)).toBe(true);
+		expect(await mayDownload(db, requesterId, documentId, { locales: LOCALES })).toBe(true);
 	});
 
 	it('refuses once the grant is revoked, with no restart and no cache to clear', async () => {
@@ -130,11 +132,11 @@ describe('mayDownload', () => {
 			acceptanceDueAt: null
 		});
 
-		expect(await mayDownload(db, requesterId, documentId)).toBe(true);
+		expect(await mayDownload(db, requesterId, documentId, { locales: LOCALES })).toBe(true);
 
 		await revokeGrant(db, grantId, staffId);
 
-		expect(await mayDownload(db, requesterId, documentId)).toBe(false);
+		expect(await mayDownload(db, requesterId, documentId, { locales: LOCALES })).toBe(false);
 	});
 
 	it('refuses once the grant has expired', async () => {
@@ -149,7 +151,7 @@ describe('mayDownload', () => {
 			acceptanceDueAt: null
 		});
 
-		expect(await mayDownload(db, requesterId, documentId)).toBe(false);
+		expect(await mayDownload(db, requesterId, documentId, { locales: LOCALES })).toBe(false);
 	});
 
 	it('refuses a different requester holding no grant of their own', async () => {
@@ -164,7 +166,7 @@ describe('mayDownload', () => {
 			acceptanceDueAt: null
 		});
 
-		expect(await mayDownload(db, otherRequesterId, documentId)).toBe(false);
+		expect(await mayDownload(db, otherRequesterId, documentId, { locales: LOCALES })).toBe(false);
 	});
 
 	it('refuses once the document is moved to the NDA tier', async () => {
@@ -182,11 +184,11 @@ describe('mayDownload', () => {
 			acceptanceDueAt: null
 		});
 
-		expect(await mayDownload(db, requesterId, documentId)).toBe(true);
+		expect(await mayDownload(db, requesterId, documentId, { locales: LOCALES })).toBe(true);
 
 		await db.update(documentTable).set({ tier: 'nda' }).where(eq(documentTable.id, documentId));
 
-		expect(await mayDownload(db, requesterId, documentId)).toBe(false);
+		expect(await mayDownload(db, requesterId, documentId, { locales: LOCALES })).toBe(false);
 	});
 
 	it('refuses once the document is unpublished', async () => {
@@ -203,6 +205,6 @@ describe('mayDownload', () => {
 
 		await db.update(documentTable).set({ status: 'draft' }).where(eq(documentTable.id, documentId));
 
-		expect(await mayDownload(db, requesterId, documentId)).toBe(false);
+		expect(await mayDownload(db, requesterId, documentId, { locales: LOCALES })).toBe(false);
 	});
 });

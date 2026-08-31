@@ -225,7 +225,7 @@ describe('recording what a grant is waiting on', () => {
 
 		// Inert by construction, not by remembering: both download gates filter
 		// `expires_at > now()`, and SQL's NULL comparison excludes the row.
-		expect(await grantedDocuments(db, requesterId)).toEqual([]);
+		expect(await grantedDocuments(db, requesterId, { locales: LOCALES })).toEqual([]);
 	});
 
 	it('refuses a grant that is neither live nor waiting', async () => {

@@ -90,7 +90,8 @@ export async function serveDocumentFile(
 		// A 404 rather than a 403: an unauthorized caller learns nothing about
 		// whether this file id exists.
 		if (!requester) error(404, 'Not found');
-		if (!(await mayDownload(db, requester.id, row.documentId))) error(404, 'Not found');
+		if (!(await mayDownload(db, requester.id, row.documentId, { locales: getConfig().locales })))
+			error(404, 'Not found');
 	}
 
 	let body: BodyInit;
