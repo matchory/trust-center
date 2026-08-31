@@ -13,7 +13,10 @@ import {
 import { groupByKey } from '../collections';
 import { PHASE_TIERS, setGrantGroups, setGrantTiers } from './scope';
 import type { ScopeTier } from '../../access-types';
+import type { GrantState } from '../../nda-types';
 import type { Db } from '../db';
+
+export type { GrantState };
 
 /**
  * `expiresAt` is required rather than defaulted from config, for the same
@@ -156,13 +159,17 @@ export async function grantedDocuments(
 			)
 		);
 
+	// `grantConfersDocument` requires `expires_at > now()`, so every row here has
+	// one — the `!` states what the join already guarantees, not a fresh
+	// assumption.
 	// Two live grants can cover the same document, and one grant can cover it
 	// from more than one source. The portal shows a document once, with the date
 	// access actually ends, so the latest expiry wins.
 	const latest = new Map<string, Date>();
 	for (const row of rows) {
+		const expiresAt = row.expiresAt!;
 		const seen = latest.get(row.documentId);
-		if (!seen || row.expiresAt > seen) latest.set(row.documentId, row.expiresAt);
+		if (!seen || expiresAt > seen) latest.set(row.documentId, expiresAt);
 	}
 
 	return [...latest].map(([documentId, expiresAt]) => ({ documentId, expiresAt }));
@@ -186,8 +193,6 @@ export async function revokeGrant(db: Db, grantId: string, staffUserId: string):
 		.where(and(eq(accessGrant.id, grantId), isNull(accessGrant.revokedAt)));
 }
 
-export type GrantState = 'active' | 'expired' | 'revoked';
-
 export interface AdminGrantRow {
 	id: string;
 	requesterId: string;
@@ -198,7 +203,8 @@ export interface AdminGrantRow {
 	groupIds: string[];
 	documentCount: number;
 	grantedAt: Date;
-	expiresAt: Date;
+	expiresAt: Date | null;
+	acceptanceDueAt: Date | null;
 	revokedAt: Date | null;
 	state: GrantState;
 }
@@ -206,15 +212,25 @@ export interface AdminGrantRow {
 /**
  * State is derived rather than stored: a grant that lapses does so by the clock
  * passing its expiry, and a column would have to be written by something to
- * stay true. Revocation wins over expiry — a revoked grant that later passes
- * its expiry was still ended by a person, and that is what an auditor asks
- * about.
+ * stay true.
+ *
+ * The order of the branches is the priority order, and it is not arbitrary.
+ * Revocation wins because a person ended it. `expires_at IS NULL` then means
+ * exactly one thing — waiting on an acceptance — and the deadline separates the
+ * two ways that can end.
  */
 export function grantState(
-	row: { revokedAt: Date | null; expiresAt: Date },
+	row: { revokedAt: Date | null; expiresAt: Date | null; acceptanceDueAt: Date | null },
 	now: Date
 ): GrantState {
 	if (row.revokedAt) return 'revoked';
+
+	if (row.expiresAt === null) {
+		// The CHECK guarantees a deadline exists here; the `??` is for the type
+		// checker, not for a row the database admits.
+		return (row.acceptanceDueAt ?? now) <= now ? 'unaccepted' : 'pending_acceptance';
+	}
+
 	return row.expiresAt <= now ? 'expired' : 'active';
 }
 
@@ -225,6 +241,7 @@ export async function listGrantsForAdmin(db: Db, now = new Date()): Promise<Admi
 			requesterId: accessGrant.requesterId,
 			grantedAt: accessGrant.grantedAt,
 			expiresAt: accessGrant.expiresAt,
+			acceptanceDueAt: accessGrant.acceptanceDueAt,
 			revokedAt: accessGrant.revokedAt,
 			email: requester.email,
 			name: requester.name,

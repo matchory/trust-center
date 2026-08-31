@@ -7,6 +7,14 @@
 	import type { PageProps } from './$types';
 
 	let { data, form }: PageProps = $props();
+
+	const STATE_LABEL: Record<string, () => string> = {
+		active: () => m.admin_grant_state_active(),
+		expired: () => m.admin_grant_state_expired(),
+		revoked: () => m.admin_grant_state_revoked(),
+		pending_acceptance: () => m.admin_grant_state_pending_acceptance(),
+		unaccepted: () => m.admin_grant_state_unaccepted()
+	};
 </script>
 
 <div class="mb-6">
@@ -49,14 +57,16 @@
 <ul class="mb-8 grid gap-1 text-sm" data-testid="requester-grants">
 	{#each data.requester.grants as grant (grant.id)}
 		<li>
-			{formatDate(grant.grantedAt, data.locale)} → {formatDate(grant.expiresAt, data.locale)}
+			{formatDate(grant.grantedAt, data.locale)} → {grant.expiresAt
+				? formatDate(grant.expiresAt, data.locale)
+				: '—'}
 			· <ScopeSummary
 				tiers={grant.tiers}
 				groupIds={grant.groupIds}
 				documentCount={grant.documentCount}
 				groupNames={data.groupNames}
 			/>
-			{#if grant.revokedAt}· {m.admin_grant_state_revoked()}{/if}
+			{#if grant.state !== 'active'}· {STATE_LABEL[grant.state]?.() ?? grant.state}{/if}
 		</li>
 	{:else}
 		<li class="text-neutral-500">{m.admin_no_entries()}</li>

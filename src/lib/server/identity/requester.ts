@@ -1,6 +1,7 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { and, asc, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
 import { groupByKey } from '../collections';
+import { grantState } from '../access/grants';
 import {
 	accessGrant,
 	accessGrantDocument,
@@ -13,6 +14,7 @@ import {
 	requesterSession
 } from '../db/schema';
 import type { ScopeTier } from '../../access-types';
+import type { GrantState } from '../../nda-types';
 import type { Db } from '../db';
 
 export const REQUESTER_SESSION_COOKIE = '__Secure-tc_requester_session';
@@ -200,14 +202,17 @@ export interface AdminRequesterDetail extends AdminRequesterRow {
 		groupIds: string[];
 		documentCount: number;
 		grantedAt: Date;
-		expiresAt: Date;
+		expiresAt: Date | null;
+		acceptanceDueAt: Date | null;
 		revokedAt: Date | null;
+		state: GrantState;
 	}[];
 }
 
 export async function getRequesterForAdmin(
 	db: Db,
-	id: string
+	id: string,
+	now = new Date()
 ): Promise<AdminRequesterDetail | null> {
 	const [row] = await db.select().from(requester).where(eq(requester.id, id)).limit(1);
 	if (!row) return null;
@@ -228,6 +233,7 @@ export async function getRequesterForAdmin(
 				id: accessGrant.id,
 				grantedAt: accessGrant.grantedAt,
 				expiresAt: accessGrant.expiresAt,
+				acceptanceDueAt: accessGrant.acceptanceDueAt,
 				revokedAt: accessGrant.revokedAt
 			})
 			.from(accessGrant)
@@ -286,7 +292,8 @@ export async function getRequesterForAdmin(
 		...grant,
 		tiers: (grantTiers.get(grant.id) ?? []).map((row) => row.tier as ScopeTier),
 		groupIds: (grantGroups.get(grant.id) ?? []).map((row) => row.groupId),
-		documentCount: grantDocuments.get(grant.id) ?? 0
+		documentCount: grantDocuments.get(grant.id) ?? 0,
+		state: grantState(grant, now)
 	}));
 
 	return { ...row, grantCount: grants.length, requests, grants };

@@ -55,12 +55,19 @@ export async function seedRequester(db: Db, input: { email?: string } = {}): Pro
 }
 
 /**
- * A live grant: a requester, and an expiry far enough out that a test asserting
- * on scope never trips over the clock.
+ * A live grant by default: a requester, and an expiry far enough out that a
+ * test asserting on scope never trips over the clock. Pass `expiresAt: null`
+ * (with an `acceptanceDueAt`) to seed an inert grant instead, without
+ * hand-rolling one.
  */
 export async function seedGrant(
 	db: Db,
-	input: { requesterId?: string; expiresAt?: Date; termDays?: number } = {}
+	input: {
+		requesterId?: string;
+		expiresAt?: Date | null;
+		termDays?: number;
+		acceptanceDueAt?: Date | null;
+	} = {}
 ): Promise<string> {
 	const requesterId = input.requesterId ?? (await seedRequester(db));
 	const [row] = await db
@@ -69,7 +76,9 @@ export async function seedGrant(
 			requesterId,
 			requestId: null,
 			termDays: input.termDays ?? 30,
-			expiresAt: input.expiresAt ?? new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)
+			expiresAt:
+				'expiresAt' in input ? input.expiresAt : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+			acceptanceDueAt: input.acceptanceDueAt ?? null
 		})
 		.returning({ id: accessGrant.id });
 

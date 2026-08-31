@@ -154,7 +154,7 @@ describe('decideRequest', () => {
 		});
 
 		const [grant] = await grantsFor(requestId);
-		const days = (grant!.expiresAt.getTime() - Date.now()) / (24 * 60 * 60 * 1000);
+		const days = (grant!.expiresAt!.getTime() - Date.now()) / (24 * 60 * 60 * 1000);
 
 		expect(days).toBeGreaterThan(DEFAULT_TTL_DAYS - 1);
 		expect(days).toBeLessThanOrEqual(DEFAULT_TTL_DAYS);
@@ -178,7 +178,7 @@ describe('decideRequest', () => {
 		});
 
 		const [grant] = await grantsFor(requestId);
-		const days = (grant!.expiresAt.getTime() - Date.now()) / (24 * 60 * 60 * 1000);
+		const days = (grant!.expiresAt!.getTime() - Date.now()) / (24 * 60 * 60 * 1000);
 
 		expect(days).toBeGreaterThan(6);
 		expect(days).toBeLessThanOrEqual(7);

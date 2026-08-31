@@ -124,13 +124,30 @@ export const accessGrant = pgTable(
 		// /admin/settings/access exists precisely so operators change it.
 		termDays: integer('term_days').notNull(),
 		grantedAt: timestamp('granted_at', { withTimezone: true }).notNull().defaultNow(),
-		expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+		expiresAt: timestamp('expires_at', { withTimezone: true }),
 		revokedAt: timestamp('revoked_at', { withTimezone: true }),
 		revokedByStaffId: uuid('revoked_by_staff_id').references(() => staffUser.id, {
 			onDelete: 'set null'
 		}),
 		// Set by the reminder job so a lapse notice goes out once, not once a tick.
-		expiryReminderSentAt: timestamp('expiry_reminder_sent_at', { withTimezone: true })
+		expiryReminderSentAt: timestamp('expiry_reminder_sent_at', { withTimezone: true }),
+		/**
+		 * When an inert grant stops being acceptable. Stored at approval rather
+		 * than derived from a setting, because a derived window would *resurrect*
+		 * dead grants the moment an operator lengthened it. The window a grant was
+		 * issued under is the window it lives by.
+		 */
+		acceptanceDueAt: timestamp('acceptance_due_at', { withTimezone: true }),
+		/**
+		 * Distinct from `expiry_reminder_sent_at` deliberately. Reusing that column
+		 * would stamp it while the grant is still inert, and `sendExpiryReminders`
+		 * filters `isNull(expiryReminderSentAt)` — so access would later end with
+		 * no warning, for every grant that went through an NDA, with nothing
+		 * failing and nothing logged.
+		 */
+		acceptanceReminderSentAt: timestamp('acceptance_reminder_sent_at', { withTimezone: true }),
+		/** Stamped by the sweep on a grant past its acceptance deadline. */
+		closedAt: timestamp('closed_at', { withTimezone: true })
 	},
 	(table) => [
 		index('access_grant_requester_idx').on(table.requesterId),
@@ -138,7 +155,14 @@ export const accessGrant = pgTable(
 		index('access_grant_expires_idx').on(table.expiresAt),
 		// NOT NULL alone would admit 0, which is a grant that expires the moment
 		// it starts.
-		check('access_grant_term_days_check', sql`${table.termDays} >= 1`)
+		check('access_grant_term_days_check', sql`${table.termDays} >= 1`),
+		// A grant with no expiry is waiting on an acceptance, and a grant waiting
+		// on an acceptance must have a deadline — otherwise it sits inert in
+		// neither `pending_acceptance` nor `unaccepted`, invisible to every sweep.
+		check(
+			'access_grant_inert_check',
+			sql`${table.expiresAt} IS NOT NULL OR ${table.acceptanceDueAt} IS NOT NULL`
+		)
 	]
 );
 

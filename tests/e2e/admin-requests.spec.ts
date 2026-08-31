@@ -145,8 +145,9 @@ test('an approver grants a group and a term in days', async ({ page }) => {
 	expect(await grantGroups(db, grant!.id)).toEqual([groupId]);
 	expect(grant?.termDays).toBe(14);
 
-	// The term is what the approver chose; the expiry is derived from it.
-	const days = (grant!.expiresAt.getTime() - Date.now()) / (24 * 60 * 60 * 1000);
+	// The term is what the approver chose; the expiry is derived from it. Not
+	// null: nothing in this phase yet mints an inert grant.
+	const days = (grant!.expiresAt!.getTime() - Date.now()) / (24 * 60 * 60 * 1000);
 	expect(days).toBeGreaterThan(13);
 	expect(days).toBeLessThanOrEqual(14);
 });

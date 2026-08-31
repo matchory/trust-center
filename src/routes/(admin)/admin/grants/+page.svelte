@@ -11,7 +11,9 @@
 	const STATE_LABEL: Record<string, () => string> = {
 		active: () => m.admin_grant_state_active(),
 		expired: () => m.admin_grant_state_expired(),
-		revoked: () => m.admin_grant_state_revoked()
+		revoked: () => m.admin_grant_state_revoked(),
+		pending_acceptance: () => m.admin_grant_state_pending_acceptance(),
+		unaccepted: () => m.admin_grant_state_unaccepted()
 	};
 
 	let columns = $derived([
@@ -48,7 +50,7 @@
 				groupNames={data.groupNames}
 			/>
 		{:else if key === 'grantedAt'}{formatDate(row.grantedAt, data.locale)}
-		{:else if key === 'expiresAt'}{formatDate(row.expiresAt, data.locale)}
+		{:else if key === 'expiresAt'}{row.expiresAt ? formatDate(row.expiresAt, data.locale) : '—'}
 		{:else if key === 'state'}
 			<div class="flex items-center gap-3">
 				<span data-testid="grant-state-{row.id}">{STATE_LABEL[row.state]?.() ?? row.state}</span>

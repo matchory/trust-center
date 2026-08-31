@@ -115,7 +115,7 @@ describe('verifyRequest', () => {
 
 		const grants = await db.select().from(accessGrant).where(eq(accessGrant.requestId, requestId));
 		expect(grants).toHaveLength(1);
-		expect(grants[0]!.expiresAt.getTime()).toBeGreaterThan(Date.now());
+		expect(grants[0]!.expiresAt!.getTime()).toBeGreaterThan(Date.now());
 
 		// Which rule decided is the question asked afterwards, and the audit log
 		// is the only place it can be answered — the rule itself can be edited or

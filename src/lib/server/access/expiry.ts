@@ -47,7 +47,8 @@ export async function sendExpiryReminders(
 			template: 'grant_expiring',
 			locale: row.locale,
 			payload: {
-				expiresAt: row.expiresAt.toISOString().slice(0, 10),
+				// The `gt(expiresAt, now())` filter above guarantees this row has one.
+				expiresAt: row.expiresAt!.toISOString().slice(0, 10),
 				documentCount: await countGrantDocuments(db, row.grantId)
 			}
 		});
