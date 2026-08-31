@@ -1,4 +1,7 @@
 import { randomUUID } from 'node:crypto';
+import { mkdtemp } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { eq } from 'drizzle-orm';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { createDb, type Db } from '../../src/lib/server/db';
@@ -16,6 +19,7 @@ import {
 	validAcceptance,
 	VersionMoved
 } from '../../src/lib/server/nda/acceptance';
+import { renderRecord, storeRecord } from '../../src/lib/server/nda/record';
 import { recordRequirements } from '../../src/lib/server/nda/requirements';
 import {
 	createVersion,
@@ -23,6 +27,8 @@ import {
 	setVersionBody,
 	VersionImmutable
 } from '../../src/lib/server/nda/templates';
+import { createLocalStorage } from '../../src/lib/server/storage/local';
+import { drawnText } from '../helpers/pdf';
 import {
 	seedAgreement,
 	seedGrant,
@@ -330,5 +336,64 @@ describe('what a requester still owes', () => {
 		);
 
 		expect(await outstandingAgreements(db, requesterId, options)).toEqual([]);
+	});
+});
+
+describe('the acceptance record', () => {
+	const FONT_DIR = './assets/fonts';
+
+	it('renders a record naming the counterparty, the version and the hash', async () => {
+		const bytes = await renderRecord({
+			fontDir: FONT_DIR,
+			title: 'Mutual NDA',
+			version: 3,
+			bodyMd: '# Mutual NDA\n\nYou agree to **keep it quiet**.',
+			typedName: 'Łukasz Nowak',
+			email: 'lukasz@acme.example',
+			company: 'Acme GmbH',
+			acceptedAt: new Date('2026-06-01T09:30:00Z'),
+			ip: '203.0.113.9',
+			sha256: 'a'.repeat(64),
+			locale: 'en'
+		});
+
+		const drawn = await drawnText(bytes);
+		expect(drawn).toContain('Łukasz Nowak');
+		expect(drawn).toContain('keep it quiet');
+		expect(drawn).toContain('a'.repeat(64));
+		// The metadata is what makes the signature enforceable (§10.2).
+		expect(drawn).toContain('203.0.113.9');
+	});
+
+	it('records the stored key on the acceptance', async () => {
+		const storage = createLocalStorage(await mkdtemp(join(tmpdir(), 'nda-record-')));
+		const { acceptanceId } = await recordAcceptance(db, {
+			requesterId,
+			versionId,
+			typedName: 'Łukasz Nowak',
+			sha256: bodySha,
+			ip: '203.0.113.9',
+			ua: 'test',
+			locales: LOCALES
+		});
+
+		const bytes = await renderRecord({
+			fontDir: FONT_DIR,
+			title: 'Mutual NDA',
+			version: 1,
+			bodyMd: '# Mutual NDA\n\nBody.',
+			typedName: 'Łukasz Nowak',
+			email: requesterEmail,
+			company: 'Acme GmbH',
+			acceptedAt: new Date(),
+			ip: '203.0.113.9',
+			sha256: bodySha,
+			locale: 'en'
+		});
+		await storeRecord(db, storage, acceptanceId, bytes);
+
+		const [row] = await db.select().from(ndaAcceptance).where(eq(ndaAcceptance.id, acceptanceId));
+		expect(row?.recordPdfKey).toMatch(/\S/);
+		expect(await storage.stat(row!.recordPdfKey!)).not.toBeNull();
 	});
 });

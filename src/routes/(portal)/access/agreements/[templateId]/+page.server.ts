@@ -1,5 +1,5 @@
 import { fail, redirect } from '@sveltejs/kit';
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { localizePath } from '$lib/i18n/locale';
 import { parseAgreementBody } from '$lib/markdown/subset';
 import { recordEvent } from '$lib/server/audit';
@@ -10,8 +10,10 @@ import { clientIp } from '$lib/server/http/client-ip';
 import { recordAcceptance, VersionMoved } from '$lib/server/nda/acceptance';
 import { activateGrants } from '$lib/server/nda/activation';
 import { acceptanceScope } from '$lib/server/nda/settings';
+import { renderRecord, storeRecord } from '$lib/server/nda/record';
 import { effectiveVersion } from '$lib/server/nda/templates';
 import { consumeRateLimit, rateLimitKey } from '$lib/server/ratelimit';
+import { getStorage } from '$lib/server/storage';
 import type { Actions, PageServerLoad } from './$types';
 
 type AcceptFailure = { failed: true; moved?: true; nameRequired?: true };
@@ -90,8 +92,9 @@ export const actions: Actions = {
 		if (!typedName) return fail<AcceptFailure>(400, { failed: true, nameRequired: true });
 
 		let acceptanceId: string;
+		let created: boolean;
 		try {
-			({ acceptanceId } = await recordAcceptance(db, {
+			({ acceptanceId, created } = await recordAcceptance(db, {
 				requesterId: requester.id,
 				versionId,
 				typedName,
@@ -107,6 +110,50 @@ export const actions: Actions = {
 				return fail<AcceptFailure>(409, { failed: true, moved: true });
 			}
 			throw cause;
+		}
+
+		// Rendered inside this response rather than by a job (§12 deviation 12): a
+		// job would leave a window in which the acceptance exists as a row with no
+		// evidence behind it, while the requester has already been told otherwise.
+		// A re-submit is the same acceptance, so it renders nothing — a second
+		// render would orphan the first object and restamp the record's own date.
+		if (created) {
+			const effective = await effectiveVersion(db, event.params.templateId, config.locales);
+			const body = effective?.bodies[event.locals.locale];
+
+			// `recordAcceptance` has already refused anything but the effective
+			// version, so this is a type narrowing rather than a second check.
+			if (effective && body) {
+				const [name] = await db
+					.select({ name: ndaTemplateTranslation.name })
+					.from(ndaTemplateTranslation)
+					.where(
+						and(
+							eq(ndaTemplateTranslation.templateId, event.params.templateId),
+							eq(ndaTemplateTranslation.locale, event.locals.locale)
+						)
+					)
+					.limit(1);
+
+				await storeRecord(
+					db,
+					getStorage(),
+					acceptanceId,
+					await renderRecord({
+						fontDir: config.ndaFontDir,
+						title: name?.name ?? event.params.templateId,
+						version: effective.version,
+						bodyMd: body.bodyMd,
+						typedName,
+						email: requester.email,
+						company: requester.company,
+						acceptedAt: new Date(),
+						ip,
+						sha256: body.sha256,
+						locale: event.locals.locale
+					})
+				);
+			}
 		}
 
 		// One acceptance can complete several grants — a prospect who asked twice

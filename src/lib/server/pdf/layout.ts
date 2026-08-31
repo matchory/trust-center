@@ -11,6 +11,19 @@ const HEADING_SIZE = [17, 13.5, 11.5] as const;
 export interface LayoutOptions {
 	/** Drawn once, above the body, as the document's own title. */
 	title: string;
+	/** A line under the title, before the body. The record's preamble. */
+	lead?: string;
+	/**
+	 * A labelled block after the body — the signature block of a record.
+	 *
+	 * Label and value rather than more Markdown, because the values are what a
+	 * requester typed: run through the parser, a name containing `**` would come
+	 * out bold on the one document where it must come out verbatim.
+	 */
+	closing?: {
+		heading: string;
+		fields: readonly { label: string; value: string }[];
+	};
 }
 
 /** One styled fragment of a line. Wrapping happens over these, not over nodes. */
@@ -36,7 +49,33 @@ export function layoutAgreement(
 	const cursor = new Cursor(pdf, faces);
 
 	heading([{ text: options.title, font: faces.bold }], cursor, HEADING_SIZE[0], 0);
+
+	if (options.lead !== undefined) {
+		cursor.space(BODY.leading * 0.5);
+		wrap([{ text: options.lead, font: faces.italic }], cursor, BODY.size, BODY.leading, 0);
+		cursor.rule();
+	}
+
 	blocks(root.children, cursor, 0);
+
+	if (options.closing) {
+		cursor.rule();
+		heading([{ text: options.closing.heading, font: faces.bold }], cursor, HEADING_SIZE[1], 0);
+
+		for (const field of options.closing.fields) {
+			cursor.space(BODY.leading * 0.35);
+			wrap(
+				[
+					{ text: `${field.label}: `, font: faces.bold },
+					{ text: field.value, font: faces.regular }
+				],
+				cursor,
+				BODY.size,
+				BODY.leading,
+				0
+			);
+		}
+	}
 }
 
 class Cursor {

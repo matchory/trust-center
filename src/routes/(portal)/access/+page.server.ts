@@ -1,9 +1,17 @@
 import { redirect } from '@sveltejs/kit';
-import { and, eq, inArray } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNotNull } from 'drizzle-orm';
 import { localizePath } from '$lib/i18n/locale';
 import { grantedDocuments } from '$lib/server/access/grants';
 import { getDb } from '$lib/server/db/instance';
-import { document, documentFile, documentTranslation } from '$lib/server/db/schema';
+import {
+	document,
+	documentFile,
+	documentTranslation,
+	ndaAcceptance,
+	ndaTemplate,
+	ndaTemplateTranslation,
+	ndaTemplateVersion
+} from '$lib/server/db/schema';
 import type { PageServerLoad } from './$types';
 
 export const load: PageServerLoad = async ({ locals }) => {
@@ -15,7 +23,34 @@ export const load: PageServerLoad = async ({ locals }) => {
 	const db = getDb();
 	const granted = await grantedDocuments(db, requester.id);
 
-	if (granted.length === 0) return { documents: [], expiresAt: null };
+	// Listed whatever the state of their grants: a record is evidence of what
+	// they signed, and it outlives the access it was signed for.
+	const records = await db
+		.select({
+			acceptanceId: ndaAcceptance.id,
+			acceptedAt: ndaAcceptance.acceptedAt,
+			slug: ndaTemplate.slug,
+			version: ndaTemplateVersion.version,
+			name: ndaTemplateTranslation.name
+		})
+		.from(ndaAcceptance)
+		.innerJoin(ndaTemplateVersion, eq(ndaTemplateVersion.id, ndaAcceptance.versionId))
+		.innerJoin(ndaTemplate, eq(ndaTemplate.id, ndaTemplateVersion.templateId))
+		.leftJoin(
+			ndaTemplateTranslation,
+			and(
+				eq(ndaTemplateTranslation.templateId, ndaTemplate.id),
+				eq(ndaTemplateTranslation.locale, locals.locale)
+			)
+		)
+		.where(and(eq(ndaAcceptance.requesterId, requester.id), isNotNull(ndaAcceptance.recordPdfKey)))
+		.orderBy(desc(ndaAcceptance.acceptedAt));
+
+	const acceptanceRecords = records.map((row) => ({ ...row, name: row.name ?? row.slug }));
+
+	if (granted.length === 0) {
+		return { documents: [], expiresAt: null, records: acceptanceRecords };
+	}
 
 	const rows = await db
 		.select({
@@ -64,6 +99,7 @@ export const load: PageServerLoad = async ({ locals }) => {
 
 	return {
 		expiresAt,
+		records: acceptanceRecords,
 		documents: rows.map((row) => ({ ...row, title: row.title ?? row.slug }))
 	};
 };

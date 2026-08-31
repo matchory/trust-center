@@ -61,3 +61,38 @@
 		{/each}
 	</ul>
 {/if}
+
+{#if data.records.length > 0}
+	<!-- §10.3: the record reaches them by mail, and it is also here — a mailbox
+	     they no longer have is not where evidence of a contract should live. -->
+	<SectionHeading title={m.access_records_title()} />
+
+	<ul class="divide-y divide-neutral-200 rounded-lg border border-neutral-200 bg-white">
+		{#each data.records as record (record.acceptanceId)}
+			<li
+				class="flex flex-wrap items-center gap-x-4 gap-y-2 p-4"
+				data-testid="access-record-{record.slug}"
+			>
+				<div class="min-w-0 flex-1">
+					<p class="font-medium">{record.name}</p>
+					<p class="mt-1 text-sm text-neutral-600">
+						{m.access_record_accepted_at({
+							acceptedAt: formatDate(record.acceptedAt, data.locale)
+						})}
+					</p>
+				</div>
+
+				<span class="text-sm text-neutral-500">
+					{m.documents_version({ version: record.version })}
+				</span>
+				<a
+					data-testid="access-record-download-{record.slug}"
+					href={localizePath(`/access/records/${record.acceptanceId}`, data.locale)}
+					class="rounded border border-neutral-300 px-3 py-1.5 text-sm font-medium"
+				>
+					{m.access_record_link()}
+				</a>
+			</li>
+		{/each}
+	</ul>
+{/if}
