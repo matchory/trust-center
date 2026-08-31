@@ -1,19 +1,27 @@
 import { randomUUID } from 'node:crypto';
 import { and, desc, eq } from 'drizzle-orm';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { grantedDocuments } from '../../src/lib/server/access/grants';
+import { createGroup, setDocumentGroups } from '../../src/lib/server/access/groups';
 import { submitRequest } from '../../src/lib/server/access/requests';
-import { seedRule } from '../setup/fixtures';
+import { grantTiers } from '../../src/lib/server/access/scope';
+import { seedAgreement, seedRule } from '../setup/fixtures';
 import { issueMagicLink } from '../../src/lib/server/identity/magic-link';
 import { consumeSignInLink, verifyRequest } from '../../src/lib/server/access/verify';
 import { createDb, type Db } from '../../src/lib/server/db';
 import {
 	accessGrant,
 	accessRequest,
+	accessGroup,
 	accessRule,
 	auditEvent,
 	documentCategory,
 	document as documentTable,
-	outboundEmail
+	ndaAcceptance,
+	ndaTemplate,
+	ndaTemplateVersion,
+	outboundEmail,
+	setting
 } from '../../src/lib/server/db/schema';
 
 let db: Db;
@@ -21,6 +29,7 @@ let close: () => Promise<void>;
 let docId: string;
 
 const GRANT_TTL_DAYS = 30;
+const LOCALES = ['de', 'en'];
 
 beforeAll(async () => {
 	const url = process.env.TEST_DATABASE_URL;
@@ -52,16 +61,26 @@ beforeEach(async () => {
 	// on per case, so it starts empty too.
 	await db.delete(accessRule);
 	await db.delete(outboundEmail);
+	// Children before parents: `access_group.nda_template_id` is ON DELETE
+	// RESTRICT, and a group left behind would gate `docId` for the next case.
+	await db.delete(ndaAcceptance);
+	await db.delete(accessGroup);
+	await db.delete(ndaTemplateVersion);
+	await db.delete(ndaTemplate);
+	await db.delete(setting);
 });
 
-async function submitFrom(domain: string) {
+async function submitFrom(
+	domain: string,
+	scope: { tiers?: readonly string[]; documentIds?: readonly string[] } = {}
+) {
 	return submitRequest(db, {
 		email: `person-${randomUUID()}@${domain}`,
 		name: 'A Person',
 		company: 'Acme',
 		justification: null,
-		documentIds: [docId],
-		tiers: [],
+		documentIds: [...(scope.documentIds ?? [docId])],
+		tiers: [...(scope.tiers ?? [])],
 		locale: 'de',
 		linkTtlMinutes: 60
 	});
@@ -199,5 +218,91 @@ describe('consumeSignInLink', () => {
 
 		expect(await consumeSignInLink(db, { token: magicLinkToken, ip: null, ua: null })).toBeNull();
 		expect((await verify(magicLinkToken)).ok).toBe(true);
+	});
+});
+
+describe('what an auto-approval may hand out', () => {
+	it('grants only the tiers the rule permits and the request asked for', async () => {
+		// decision.tiers was computed and never read: the grant took the request's
+		// set alone, so a rule permitting nothing still handed out a blanket.
+		await seedRule(db, { pattern: 'acme.example', action: 'auto_approve', tiers: [] });
+		const { magicLinkToken } = await submitFrom('acme.example', {
+			tiers: ['request'],
+			documentIds: []
+		});
+
+		const outcome = await verify(magicLinkToken);
+
+		expect(outcome.ok && outcome.grantId).toBeTruthy();
+		expect(await grantTiers(db, (outcome as { grantId: string }).grantId)).toEqual([]);
+	});
+
+	it('grants the intersection when both name a tier', async () => {
+		await seedRule(db, { pattern: 'acme.example', action: 'auto_approve', tiers: ['request'] });
+		const { magicLinkToken } = await submitFrom('acme.example', {
+			tiers: ['request'],
+			documentIds: []
+		});
+
+		const outcome = await verify(magicLinkToken);
+
+		expect(await grantTiers(db, (outcome as { grantId: string }).grantId)).toEqual(['request']);
+	});
+
+	it('still grants explicitly named documents when the rule permits no blanket', async () => {
+		// A rule with an empty set auto-approves explicit documents only. That is the
+		// useful shape: "auto-approve this domain, but never the blanket".
+		await seedRule(db, { pattern: 'acme.example', action: 'auto_approve', tiers: [] });
+		const { magicLinkToken } = await submitFrom('acme.example', {
+			tiers: [],
+			documentIds: [docId]
+		});
+
+		const outcome = await verify(magicLinkToken);
+
+		expect(
+			await grantedDocuments(db, (outcome as { requesterId: string }).requesterId, {
+				locales: LOCALES
+			})
+		).toHaveLength(1);
+	});
+
+	it('refuses to auto-approve a blanket whose proposal carries an agreement', async () => {
+		// §10.1: a stranger from an allow-listed domain would otherwise verify by
+		// magic link, be auto-approved with no human involved, click through, and
+		// hold every NDA-tier document — including ones published next month — for
+		// the full term. Every step is something an operator configured, and nobody
+		// looked.
+		const group = await createGroup(db, {
+			slug: `gated-${randomUUID().slice(0, 8)}`,
+			position: 0,
+			ndaTemplateId: (
+				await seedAgreement(db, { slug: `nda-${randomUUID().slice(0, 8)}`, locales: LOCALES })
+			).templateId
+		});
+		await setDocumentGroups(db, docId, [group]);
+
+		await seedRule(db, { pattern: 'acme.example', action: 'auto_approve', tiers: ['request'] });
+		const { magicLinkToken } = await submitFrom('acme.example', {
+			tiers: ['request'],
+			documentIds: []
+		});
+
+		const outcome = await verify(magicLinkToken);
+
+		expect(outcome.ok && outcome.status).toBe('pending');
+		expect(outcome.ok && outcome.grantId).toBeNull();
+	});
+
+	it('still auto-approves a blanket that carries no agreement', async () => {
+		await seedRule(db, { pattern: 'acme.example', action: 'auto_approve', tiers: ['request'] });
+		const { magicLinkToken } = await submitFrom('acme.example', {
+			tiers: ['request'],
+			documentIds: []
+		});
+
+		const outcome = await verify(magicLinkToken);
+
+		expect(outcome.ok && outcome.status).toBe('approved');
 	});
 });

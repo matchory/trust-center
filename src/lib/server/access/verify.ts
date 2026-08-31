@@ -8,6 +8,8 @@ import { enqueueEmail } from '../mail/queue';
 import { createGrant } from './grants';
 import { decideFromRules } from './rules';
 import { honouredTiers, requestTiers } from './scope';
+import { DefaultTemplateMissing, proposeRequirements } from '../nda/requirements';
+import { defaultTemplateId } from '../nda/settings';
 import type { AccessRequestStatus, AccessRuleAction, ScopeTier } from '../../access-types';
 import type { Db } from '../db';
 
@@ -99,12 +101,45 @@ export async function verifyRequest(
 			domainOf(requester.email)
 		);
 
-		const status =
+		let status: Extract<AccessRequestStatus, 'pending' | 'approved' | 'denied'> =
 			decision.action === 'auto_approve'
 				? 'approved'
 				: decision.action === 'deny'
 					? 'denied'
 					: 'pending';
+
+		// The scope an auto-approval would actually mint, resolved before the
+		// status is written — because §10.1's guard may send it to a human after
+		// all, and the row must not first record an approval that never happened.
+		const scoped = await tx
+			.select({ documentId: accessRequestDocument.documentId })
+			.from(accessRequestDocument)
+			.where(eq(accessRequestDocument.requestId, request.id));
+
+		// P3.18: the rule's set bounds what its auto-approval may hand out, and
+		// the request's set bounds it further. `decision.tiers` was computed and
+		// never read before this phase, which made the rule's set decorative — a
+		// rule permitting nothing still handed out whatever the request asked for.
+		const requested = honouredTiers(await requestTiers(tx, request.id));
+		const tiers =
+			status === 'approved' ? decision.tiers.filter((tier) => requested.includes(tier)) : [];
+
+		// §10.1: a pattern match may not hand out access an agreement gates.
+		// Without this, a stranger from an allow-listed domain verifies by magic
+		// link, is auto-approved with nobody involved, clicks through, and holds
+		// every gated document the blanket covers — including ones published next
+		// month — for the full term. Every step is something an operator
+		// configured, and nobody looked.
+		//
+		// Only a blanket is guarded. Explicitly named documents were named by a
+		// person and are unaffected at any tier.
+		//
+		// This does **not** close §7.3's gap, which is about blankets a *staff*
+		// approver grants. Both are needed and they answer different questions:
+		// that one asks what a document requires at delivery, this one asks
+		// whether a rule may decide at all.
+		const blockedBy = status === 'approved' && (await blanketNeedsAHuman(tx, tiers));
+		if (blockedBy) status = 'pending';
 
 		// Clearing the submitted columns and setting requesterId in the same
 		// UPDATE is what satisfies access_request_verification_check.
@@ -124,18 +159,11 @@ export async function verifyRequest(
 		let grantId: string | null = null;
 
 		if (status === 'approved') {
-			const scoped = await tx
-				.select({ documentId: accessRequestDocument.documentId })
-				.from(accessRequestDocument)
-				.where(eq(accessRequestDocument.requestId, request.id));
-
-			const tiers = await requestTiers(tx, request.id);
-
 			({ grantId } = await createGrant(tx, {
 				requesterId: requester.id,
 				requestId: request.id,
 				documentIds: scoped.map((row) => row.documentId),
-				tiers: honouredTiers(tiers),
+				tiers,
 				// An auto-approved decision grants no groups: §10.1 says a pattern
 				// match may not hand out a blanket, and in this phase the simplest
 				// correct form of that is tiers and explicit documents only.
@@ -162,7 +190,14 @@ export async function verifyRequest(
 			// after the rules change (spec §9's domain-drift case). The domain is
 			// the company's, not the person's — a personal address is not what
 			// rules match on, and spec §10 keeps the address itself out of meta.
-			meta: { ruleId: decision.ruleId, domain: domainOf(requester.email), grantId }
+			// `blockedBy` is why a domain an operator allow-listed reached the queue
+			// anyway. No email, name or company — spec §10.
+			meta: {
+				ruleId: decision.ruleId,
+				domain: domainOf(requester.email),
+				grantId,
+				...(blockedBy ? { blockedBy: 'requirement' } : {})
+			}
 		});
 
 		return { ok: true, requesterId: requester.id, requestId: request.id, status, grantId };
@@ -210,4 +245,30 @@ export async function consumeSignInLink(
 	});
 
 	return { requesterId: link.requesterId };
+}
+
+/**
+ * Whether the blanket a rule is about to hand out carries an agreement — in
+ * which case a person decides, not a pattern.
+ *
+ * The proposal is the same one an approver would be shown (§4.4), asked of the
+ * scope the rule would mint. A tier with no documents in it proposes nothing
+ * and passes; an `nda`-tier blanket with no default agreement configured cannot
+ * be resolved at all and is refused, which is §4.4's fail-closed rule reaching
+ * the same answer by a different route.
+ */
+async function blanketNeedsAHuman(db: Db, tiers: readonly ScopeTier[]): Promise<boolean> {
+	if (tiers.length === 0) return false;
+
+	try {
+		const proposal = await proposeRequirements(
+			db,
+			{ documentIds: [], tiers, groupIds: [] },
+			{ defaultTemplateId: await defaultTemplateId(db) }
+		);
+		return proposal.length > 0;
+	} catch (cause) {
+		if (cause instanceof DefaultTemplateMissing) return true;
+		throw cause;
+	}
 }
