@@ -9,6 +9,10 @@ the required-agreement set is now recorded by the approver rather than resolved 
 graph, and requirement checking happens in two layers rather than one. §18 logs every change and
 what prompted it.
 
+**Amended 2026-08-31, after Phase 3a landed.** Implementing 3a surfaced five things this document
+had not settled, three of which change behaviour and are recorded as P3.18–P3.20. §19 lists all
+five and the reasoning; §2, §5.6, §6.4, §8, §9 and §15 carry the amendments themselves.
+
 Supplements `2026-08-28-trust-center-design.md`. Where the two disagree, this document wins for
 Phase 3 and the main spec carries an amendment note pointing here. Everything below is a decision
 with the reasoning that produced it, because the reasoning is what the implementation plan needs and
@@ -51,6 +55,16 @@ removing guards rather than discovering them:
 The absences are equally deliberate: no `nda_template`, no `nda_acceptance`, and no
 `access_grant.nda_acceptance_id`, because Phase 2's Decision 1 refused to ship a column referencing
 a table that did not exist. This phase creates the tables first and the reference second.
+
+**Phase 3a relocated five of those seven guards without removing any of them,** so the table above
+describes Phase 2's arrangement rather than the code this phase opens. The clamp at `rules.ts:90`
+and the `tier = 'request'` equalities in `requests.ts` and `grants.ts` are now one constant —
+`PHASE_TIERS` in `src/lib/server/access/scope.ts`, applied through `honouredTiers()` at read time —
+and `grantCoversDocument` has been folded into `grantConfersDocument`. **`PHASE_TIERS` is what this
+phase widens, and it is a one-line edit; everything else follows from it.** Two entries are
+untouched by 3a and remain exactly as the table lists them: `delivery/serve.ts`'s
+`tier: 'public' | 'request'` literal union, applied as an equality, and the portal document list's
+NDA branch, which renders a badge and offers no route.
 
 ---
 
@@ -253,6 +267,25 @@ Every authoring path imports **into** the canonical body; nothing is stored as a
 Imports normalise through the same parser on the way in, so the stored body is canonical from the
 start and every later version diff shows semantic change rather than formatting churn.
 
+### 5.6 The template's name
+
+A template carries `nda_template_translation (template_id, locale) name, description?`, and is
+authored as a content type through `saveMetaAction` and `saveTranslationsFromForm` like every other.
+
+That name is requester-facing, which is a departure worth stating plainly, because §4.2 keeps groups
+staff-side and a group carrying `nda_template_id` looks like it would give groups a public meaning
+for the first time. It does not. What the requester reads is the *template's* name — "you are
+accepting: Acme Mutual NDA" — never the group's. §4.4's union means they routinely face more than
+one agreement at once, which is what makes naming them load-bearing rather than decorative, and the
+group stays what it was: a saved scope nobody outside the admin sees.
+
+Three surfaces need the name and none of them can use the slug — the click-through heading, the
+approver's requirement list at decision time, and §5.2's blocked reason on the admin grant list.
+Deriving it from the body's first heading was considered and rejected: a body with no heading would
+have no name, the name would change whenever a version did, and the admin surfaces must list
+templates that have no body in the current locale yet, which is precisely the state §5.2 exists to
+report.
+
 ---
 
 ## 6. Acceptance
@@ -336,8 +369,11 @@ with an embedded face — regular, bold and italic, since the subset has emphasi
 `Şule` are not representable, and on an NDA the mangled string would be the typed name standing in
 for a signature. No single bundled font covers Unicode — Noto Sans CJK alone is ~16 MB — so:
 
-- **Bundled:** a Latin / Latin Extended / Greek / Cyrillic face. Every European locale this product
-  plausibly serves renders correctly.
+- **Bundled:** Source Sans 3 (SIL OFL 1.1) — Regular, Bold, Italic and BoldItalic, covering Latin,
+  Latin Extended, Greek and Cyrillic in about 1.2 MB. Every European locale this product plausibly
+  serves renders correctly. **Four faces, not three:** §5.1's subset admits bold and italic, so it
+  admits them nested, and a bold-italic run with no face to draw it is a silent substitution inside
+  a contract.
 - **Overridable:** `NDA_PDF_FONT_PATH`, naming a TTF, defaulting to the bundled one. A deployment
   needing CJK supplies its own face. A hard wall becomes a self-hosting decision.
 - **Degrading:** text beyond the loaded font's coverage degrades visibly in the *rendering*. The
@@ -521,6 +557,7 @@ access_grant              + acceptance_due_at timestamptz?
                           ~ expires_at now nullable
 
 nda_template              id, slug, retired_at?, created_at
+nda_template_translation  (template_id, locale) name, description?
 nda_template_version      id, template_id, version, effective_from,
                           first_accepted_at?, retired_at?
 nda_template_body         (version_id, locale) body_md, sha256
@@ -569,7 +606,9 @@ to every sweep.
    NDA-tier entries state that an agreement is required.
 2. **Verify.** Unchanged from Phase 2.
 3. **Rules.** `decideFromRules` returns a set of permitted tiers rather than a ceiling. The clamp at
-   `rules.ts:90` is removed.
+   `rules.ts:90` has since become `honouredTiers()` over `PHASE_TIERS` (§2) and is widened rather
+   than deleted, and the set it returns now **bounds the grant**: an auto-approved decision grants
+   `ruleTiers ∩ requestTiers`, not the request's set alone (P3.18, §19).
 4. **Decision.** Staff approve with a scope across documents, tiers and groups, and a term in days.
    The system proposes the requirement set (§4.4); the approver confirms, adds, or waives; what they
    confirmed is recorded.
@@ -674,6 +713,9 @@ Requester personal data still appears in `audit_event` only in `ip`, `ua` and `a
 | P3.15 | The acceptance survives erasure with its identity fields; the record PDF does not | Art. 6(1)(b)/(f) with the 17(3)(e) exemption; a record that cannot name the counterparty is not evidence, and the rendering adds nothing the row lacks |
 | P3.16 | Templates and versions retire; the FKs restrict | Under the cascading convention, deleting a template would be a silent bulk unlock |
 | P3.17 | The erasure disclosure is system chrome, outside the template body | Anything inside the operator's Markdown is absent from every deployment but ours |
+| P3.18 | **A rule's tier set bounds its auto-approval: the grant gets `ruleTiers ∩ requestTiers`** | Computing a permitted set and then ignoring it means a rule permitting nothing still hands out a blanket |
+| P3.19 | Templates carry a translated name; groups still have no public surface | A signatory facing two required agreements must tell them apart, and the name they read is the instrument's, not the bundle's |
+| P3.20 | Source Sans 3, four faces, `NDA_PDF_FONT_PATH` overriding | OFL, covers every locale this product serves, and the subset admits nested emphasis |
 
 ---
 
@@ -752,6 +794,8 @@ been driven by a browser — and 3c adds a second upload route, which would othe
 | No end-to-end test covers the admin file upload | 3b |
 | The return-visit fast path has no entry point (spec §9.9) | 3b |
 | `toWinAnsi()` mangles non-WinAnsi names in watermarks | 3b (§6.4) |
+| `saveTranslationAction` (singular) unused for three phases | 3b (§19) |
+| Duplicate-slug creation 500s; the group routes catch `23503` but not `23505` | 3b (§19) |
 
 Deliberately **not** folded in, because they touch unrelated code and folding them is how a phase
 quietly doubles: the e2e suite starting two application servers against one database; requester
@@ -814,3 +858,43 @@ support (§13); and the preview was scheduled a phase after the thing it protect
 The phase was also re-cut from two parts to three, moving the scope refactor out of the phase that
 produces legally operative records — the same argument that justified the original split, applied
 more honestly.
+
+---
+
+## 19. What Phase 3a's carry-over changed
+
+Phase 3a landed on `main` at `b719a06`. Its carry-over
+(`docs/superpowers/phase-3b-carryover.md`) raised five things this spec had not settled. Four are
+amendments above; the fifth is a question this section closes.
+
+**`RuleDecision.tiers` was computed and never read** (P3.18). `verify.ts` used only
+`decision.action` and `decision.ruleId` and took the grant's tiers from the *request's* set, so a
+rule's tier set bounded nothing — a requester who ticked the request-tier blanket got it even from a
+rule whose set was empty. This is pre-existing, `decision.maxTier` having been equally unread, and
+it stayed harmless only while `honouredTiers` stripped `nda` on both paths. It goes live the moment
+`PHASE_TIERS` widens, which is this phase. The grant now takes the intersection.
+
+**No migration is needed for pre-existing `nda` entries**, and the carry-over's warning that one
+might be — it called this the sharpest edge in the handoff — is answered here rather than deferred.
+Grants and requests already store `honouredTiers`-filtered sets, so `access_rule_tier` is the only
+place `nda` can sit when this phase begins. Under P3.18 such a rule can only ever contribute to an
+auto-approved *blanket*, and §10.1 forbids that outright: an `nda`-tier document always carries at
+least the default template, so its proposal always carries a requirement. The guard this phase
+builds anyway is the control, and nothing widens silently on deploy.
+
+**Templates needed a name** (P3.19, §5.6). §8 gave `nda_template` a slug and nothing else, while
+three surfaces have to name the instrument and one of them is the click-through itself.
+
+**The font needed choosing** (P3.20, §6.4). §6.4 stated the properties at length and named no face.
+
+**Two carry-over items fold in** (§15). `saveTranslationAction` is deleted — unused for three
+phases, routed around twice, and this is the phase that touches translations. Duplicate-slug
+creation gets a shared unique-violation to field-error path across every slugged content type;
+that one is scoped by an asymmetry 3a introduced rather than by tidiness, since the group routes
+now catch `23503` and not `23505`, and `nda_template` adds a sixth slugged type to a codebase where
+typing an existing slug returns a 500.
+
+**Phase 3b remains one plan and one branch**, at roughly twenty tasks. 3a's carry-over asks that any
+decomposition be justified by the diff it produces rather than by a rollback nobody performs, and
+the seams available here — instrument, record, gate — each ship something only the next one makes
+reachable, which is the arrangement Phase 2's rule against shipping unreachable code refuses.
