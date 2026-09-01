@@ -201,3 +201,94 @@ export function saveTranslationAction(opts: SaveTranslationOptions) {
 		return { saved: true };
 	};
 }
+
+interface SaveTranslationsOptions {
+	type: string;
+	subjectType?: string;
+	/** Trimmed and required. Order defines which is reported first on failure. */
+	required: readonly string[];
+	/** Trimmed, and empty means `null` rather than a validation failure. */
+	optional?: readonly string[];
+	set: (
+		db: Db,
+		id: string,
+		locale: string,
+		values: Record<string, string | null>
+	) => Promise<unknown>;
+}
+
+/**
+ * Reads `field.<locale>` out of a multi-locale form, for every enabled locale.
+ *
+ * A locale with none of its required fields filled in is **skipped**, not
+ * refused: "not translated" is a normal state the tab strip already marks, and
+ * refusing the save would make translating one page a single transaction across
+ * every language. A locale filled in halfway is refused, naming both the field
+ * and the locale, because that one is a mistake rather than a state.
+ *
+ * Pure, and separate from the action, so it is testable without a database.
+ */
+export function readTranslations(
+	form: FormData,
+	locales: readonly string[],
+	opts: { required: readonly string[]; optional?: readonly string[] }
+): { values: Map<string, Record<string, string | null>> } | { missing: AdminActionFailure } {
+	const values = new Map<string, Record<string, string | null>>();
+
+	for (const locale of locales) {
+		const read = (field: string): string => String(form.get(`${field}.${locale}`) ?? '').trim();
+
+		if (opts.required.every((field) => read(field).length === 0)) continue;
+
+		const entry: Record<string, string | null> = {};
+
+		for (const field of opts.required) {
+			const value = read(field);
+			if (!value) return { missing: { field, locale } };
+			entry[field] = value;
+		}
+
+		for (const field of opts.optional ?? []) entry[field] = read(field) || null;
+
+		values.set(locale, entry);
+	}
+
+	return { values };
+}
+
+/**
+ * The plural counterpart to `saveMetaAction`, for editors whose form submits
+ * every locale at once — which is every content type added since Phase 1.
+ *
+ * `saveTranslationAction` (singular) writes one locale per POST and is what the
+ * six Phase 1 editors used; §20 records why the two shapes coexisted and why
+ * this one wins. One audit event per save, carrying the locales written, which
+ * is the shape the group and agreement editors already record.
+ */
+export function saveTranslationsAction(opts: SaveTranslationsOptions) {
+	return async (event: AdminEvent) => {
+		const form = await event.request.formData();
+		const read = readTranslations(form, getConfig().locales, opts);
+
+		if ('missing' in read) return fail<AdminActionFailure>(400, read.missing);
+
+		const db = getDb();
+		const written: string[] = [];
+
+		for (const [locale, values] of read.values) {
+			await opts.set(db, event.params.id, locale, values);
+			written.push(locale);
+		}
+
+		await recordEvent(db, {
+			action: translationAction(opts.type),
+			actor: { type: 'staff', id: event.locals.staff!.id },
+			subjectType: opts.subjectType ?? opts.type,
+			subjectId: event.params.id,
+			ip: clientIp(event) ?? undefined,
+			meta: { locales: written }
+		});
+
+		return { saved: true };
+	};
+}
