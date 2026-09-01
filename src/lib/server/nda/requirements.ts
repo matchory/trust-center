@@ -104,11 +104,11 @@ export async function proposeRequirements(
  * The documents a predicate selects, each folded together with the agreements
  * its groups carry — the shape `proposeFrom` reads.
  *
- * Shared because "which agreements does a document's groups carry" is asked
- * from two directions: of a scope an approver is about to confirm, and of the
- * documents a grant already confers (§7.3's delivery re-check). The rule was
- * already named once in `proposeFrom`; this is the read that feeds it, named
- * once for the same reason.
+ * §7.3's delivery re-check asks the same question of a grant's documents, but
+ * answers it from the join `conferredSelect` already runs rather than from
+ * here — it has the rows in hand and a second read would be the round trip
+ * that check exists to avoid. The *rule* is still named once, in `proposeFrom`,
+ * which both paths call.
  *
  * The left joins return a row per (document, group) pair, and the rows fold
  * back into one `ScopedDocument` each.
@@ -132,37 +132,6 @@ async function scopedDocuments(db: Db, where: SQL): Promise<ScopedDocument[]> {
 	}
 
 	return [...documents.values()];
-}
-
-/**
- * What each of these documents requires *right now*, asked per document rather
- * than as a union — §7.3's delivery check answers one document at a time, and a
- * union would take one gated document and close the rest.
- *
- * A document at the `nda` tier with no default agreement configured cannot be
- * resolved at all, and lands in `unresolvable` rather than throwing: §4.4 fails
- * closed, and at delivery that means undeliverable rather than ungated.
- */
-export async function requirementsByDocument(
-	db: Db,
-	documentIds: readonly string[],
-	options: { defaultTemplateId: string | null }
-): Promise<{ required: Map<string, string[]>; unresolvable: Set<string> }> {
-	const required = new Map<string, string[]>();
-	const unresolvable = new Set<string>();
-
-	if (documentIds.length === 0) return { required, unresolvable };
-
-	for (const scoped of await scopedDocuments(db, inArray(document.id, [...documentIds]))) {
-		try {
-			required.set(scoped.id, proposeFrom([scoped], options));
-		} catch (cause) {
-			if (!(cause instanceof DefaultTemplateMissing)) throw cause;
-			unresolvable.add(scoped.id);
-		}
-	}
-
-	return { required, unresolvable };
 }
 
 /**

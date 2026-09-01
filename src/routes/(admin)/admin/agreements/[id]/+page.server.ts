@@ -31,9 +31,11 @@ export const actions: Actions = {
 	}),
 
 	// Not `saveTranslationsAction`: this predates it and reads through
-	// `saveTranslationsFromForm`, which *skips* a locale whose name is blank
-	// where the helper *refuses* one that is half filled. Moving to the helper
-	// would tighten that, so it is a behaviour change rather than a cleanup.
+	// `saveTranslationsFromForm`, which two other admin surfaces still use. With
+	// a single required field the two are equivalent — the helper only refuses a
+	// locale that is *partly* filled, which one field cannot be — so the split is
+	// historical rather than semantic, and moving these two would leave both
+	// mechanisms standing anyway.
 	saveTranslations: async (event) => {
 		const db = getDb();
 		const form = await event.request.formData();

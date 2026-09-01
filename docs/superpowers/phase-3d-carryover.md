@@ -132,13 +132,6 @@ rather than a promise.
 
 ## Still open
 
-- **`requirementsByDocument` is now dead code, kept on a justification that is
-  false.** Task 21 moved its only caller onto `proposeFrom`, and the plan said to
-  keep it exported because "it is the read `proposeRequirements` is built on".
-  It is not: `proposeRequirements` is built on `scopedDocuments`, and
-  `requirementsByDocument` is a separate wrapper with no caller left in `src` or
-  `tests`. It was kept because the plan said to keep it. **Delete it or give it a
-  caller; do not leave it exported on a reason that does not hold.**
 - **P3.21 is unproven for enumerators that arrive as list markup**, per the
   first question above. A Word numbered list reaches `mammoth` as `numPr`, not as
   the text `1.`, so it becomes a real `list` node and takes the downgrade pass
@@ -194,6 +187,31 @@ all four are now closed:
   flood case now clears everything except the email bucket before *each*
   submission, leaving the email limiter as the only one that can trip — which
   also makes the refusal on the sixth unambiguous.
+
+## Cleaned up after the phase closed
+
+A quality pass over the branch diff found four things and fixed three:
+
+- **`requirementsByDocument` was dead**, and was deleted. Task 21 moved its only
+  caller onto `proposeFrom`; the plan had said to keep it exported because "it is
+  the read `proposeRequirements` is built on", which is false —
+  `proposeRequirements` is built on `scopedDocuments`. Deleting it also removed a
+  duplicated fail-closed resolve loop, without minting a single-use helper to
+  share between one live caller and one dead one.
+- **`foldConferred` hand-rolled `groupByKey`**, in a file that already imports it,
+  and whose module comment names inline rewrites as the exact anti-pattern it
+  exists to prevent. It now uses the helper.
+- **`saveTranslationsAction` wrote its locales one round trip at a time.** They
+  are independent upserts on different rows, so they now go together.
+
+One finding was **not** taken: migrating the agreements and groups editors onto
+`saveTranslationsAction`. The reasoning offered was that their hand-rolled
+actions are equivalent to the helper — which is true, and the comments there
+were corrected to say so, because they had claimed a behavioural difference that
+a single required field makes impossible. But `saveTranslationsFromForm` has two
+*other* callers (`admin/controls/groups`, `admin/documents/categories`), so
+migrating these two would leave both mechanisms standing and merely move the
+boundary. The consolidation is worth doing across all four or not at all.
 
 ## Known items carried forward
 

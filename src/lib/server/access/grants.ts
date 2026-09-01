@@ -179,38 +179,27 @@ function conferredSelect(db: Db, where: SQL | undefined) {
 		.where(where);
 }
 
-function foldConferred(
-	rows: readonly {
-		grantId: string;
-		requesterId: string;
-		documentId: string;
-		expiresAt: Date | null;
-		tier: string;
-		groupTemplateId: string | null;
-	}[]
-): ConferredRow[] {
-	const folded = new Map<string, ConferredRow>();
+/** One row of `conferredSelect`, before a document's group memberships fold together. */
+interface ConferredSelectRow extends Omit<ConferredRow, 'groupTemplateIds'> {
+	groupTemplateId: string | null;
+}
 
-	for (const row of rows) {
-		const key = `${row.grantId}:${row.documentId}`;
-		const seen = folded.get(key);
+function foldConferred(rows: readonly ConferredSelectRow[]): ConferredRow[] {
+	const byPair = groupByKey(rows, (row) => `${row.grantId}:${row.documentId}`);
 
-		if (seen) {
-			seen.groupTemplateIds.push(row.groupTemplateId);
-			continue;
-		}
+	return [...byPair.values()].map((bucket) => {
+		// `groupByKey` never yields an empty bucket.
+		const row = bucket[0]!;
 
-		folded.set(key, {
+		return {
 			grantId: row.grantId,
 			requesterId: row.requesterId,
 			documentId: row.documentId,
 			expiresAt: row.expiresAt,
 			tier: row.tier,
-			groupTemplateIds: [row.groupTemplateId]
-		});
-	}
-
-	return [...folded.values()];
+			groupTemplateIds: bucket.map((entry) => entry.groupTemplateId)
+		};
+	});
 }
 
 /**

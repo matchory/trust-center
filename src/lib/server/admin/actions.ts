@@ -214,12 +214,16 @@ export function saveTranslationsAction(opts: SaveTranslationsOptions) {
 		if ('missing' in read) return fail<AdminActionFailure>(400, read.missing);
 
 		const db = getDb();
-		const written: string[] = [];
 
-		for (const [locale, values] of read.values) {
-			await opts.set(db, event.params.id, locale, values);
-			written.push(locale);
-		}
+		// One upsert per locale, on a different row each — independent, so they go
+		// together rather than one round trip at a time.
+		await Promise.all(
+			[...read.values].map(([locale, values]) => opts.set(db, event.params.id, locale, values))
+		);
+
+		// Insertion order, which is `getConfig().locales` order — the same list the
+		// sequential write recorded.
+		const written = [...read.values.keys()];
 
 		await recordEvent(db, {
 			action: translationAction(opts.type),
