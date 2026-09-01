@@ -179,12 +179,23 @@ test('the submission limiter refuses a flood to one address', async ({ page }) =
 	// address limiter keeps its coverage in tests/integration/ratelimit.test.ts.
 	const email = `e2e-flood-${Date.now()}@acme.example`;
 
-	for (let i = 0; i < 5; i++) {
+	// Cleared before *every* submission here, not once in `beforeEach`. The
+	// address bucket is shared with every spec running in parallel, so a single
+	// clear leaves two ways to fail: a concurrent submission eats the allowance
+	// and one of the five confirmations never appears, or the address limiter
+	// rather than the email one produces the refusal at the end. Clearing each
+	// time leaves the email bucket as the only limiter that can trip.
+	const submit = async () => {
+		await db.delete(rateLimit).where(not(like(rateLimit.key, 'request:email:%')));
 		await fillAndSubmit(page, email);
+	};
+
+	for (let i = 0; i < 5; i++) {
+		await submit();
 		await expect(page.getByTestId('request-submitted')).toBeVisible();
 	}
 
-	await fillAndSubmit(page, email);
+	await submit();
 
 	await expect(page.getByTestId('request-submitted')).toHaveCount(0);
 	await expect(page.getByText(/Zu viele Anfragen|Too many requests/)).toBeVisible();
