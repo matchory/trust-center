@@ -43,5 +43,9 @@
 </div>
 
 {#each locales as locale (locale)}
-	{#if locale === active}{@render children(locale)}{/if}
+	<!-- Every pane stays mounted, and only visibility changes. Rendering just
+	     the active one was right while each locale had its own form; with one
+	     form spanning every locale, an unmounted pane posts no fields at all and
+	     saving would blank the locales nobody had opened. -->
+	<div hidden={locale !== active}>{@render children(locale)}</div>
 {/each}
