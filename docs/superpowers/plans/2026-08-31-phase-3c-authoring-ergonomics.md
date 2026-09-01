@@ -1616,11 +1616,24 @@ Create `src/lib/components/admin/MarkdownEditor.svelte`:
 	// svelte-ignore state_referenced_locally
 	let markdown = $state(value);
 	let host: HTMLDivElement | undefined = $state();
+	let field: HTMLTextAreaElement | undefined = $state();
 	let editor: Editor | null = null;
+	/** Serialises the live ProseMirror document; null until the editor mounts. */
+	let readMarkdown: (() => string) | null = null;
+	/**
+	 * Whether something other than the editor wrote the field last. An `input`
+	 * event on a hidden textarea cannot come from a person — Svelte's binding
+	 * writes the property without dispatching one — so the only source is script:
+	 * a paste of raw Markdown, or a client with the editor disabled. Whoever
+	 * wrote last owns the value, because the field is what the form posts and
+	 * §5.1 puts the control at the server, not at the editor's schema.
+	 */
+	let writtenFromOutside = false;
 
 	/** Called from the page when an import returns a new body for this locale. */
 	export function setMarkdown(next: string): void {
 		markdown = next;
+		writtenFromOutside = false;
 		// Replacing the document from outside means tearing the editor down and
 		// building it again: ProseMirror owns its DOM and there is no supported
 		// way to swap a document under it without losing the selection anyway.
@@ -1639,17 +1652,21 @@ Create `src/lib/components/admin/MarkdownEditor.svelte`:
 		// Dynamic, so `@milkdown/*` lands in an admin chunk and no public route
 		// ever loads it (§10.4). Static imports here would put it in the shared
 		// entry and break that guarantee silently.
-		const [{ Editor, rootCtx, defaultValueCtx }, commonmark, { listener, listenerCtx }, { nord }] =
-			await Promise.all([
-				import('@milkdown/core'),
-				import('@milkdown/preset-commonmark'),
-				import('@milkdown/plugin-listener'),
-				import('@milkdown/theme-nord'),
-				// `nord` only sets view options; its stylesheet is a separate entry,
-				// and without it Tailwind's reset leaves a heading looking like body
-				// text in the one place an author is judging structure.
-				import('@milkdown/theme-nord/style.css')
-			]);
+		const [
+			{ Editor, rootCtx, defaultValueCtx, editorViewCtx, serializerCtx },
+			commonmark,
+			{ listener, listenerCtx },
+			{ nord }
+		] = await Promise.all([
+			import('@milkdown/core'),
+			import('@milkdown/preset-commonmark'),
+			import('@milkdown/plugin-listener'),
+			import('@milkdown/theme-nord'),
+			// `nord` only sets view options; its stylesheet is a separate entry,
+			// and without it Tailwind's reset leaves a heading looking like body
+			// text in the one place an author is judging structure.
+			import('@milkdown/theme-nord/style.css')
+		]);
 
 		const root = host;
 
@@ -1660,11 +1677,15 @@ Create `src/lib/components/admin/MarkdownEditor.svelte`:
 				ctx.set(defaultValueCtx, markdown);
 				ctx.get(listenerCtx).markdownUpdated((_, next) => {
 					markdown = next;
+					writtenFromOutside = false;
 				});
 			})
 			.use(listener)
 			.use(subsetOnly(commonmark))
 			.create();
+
+		readMarkdown = () =>
+			editor?.action((ctx) => ctx.get(serializerCtx)(ctx.get(editorViewCtx).state.doc)) ?? markdown;
 	}
 
 	type Preset = typeof import('@milkdown/preset-commonmark');
@@ -1710,9 +1731,35 @@ Create `src/lib/components/admin/MarkdownEditor.svelte`:
 		return plugins.filter((plugin) => !excluded.has(plugin)) as Plugins;
 	}
 
+	/**
+	 * `markdownUpdated` is debounced — measured empty a whole animation frame
+	 * after a keystroke — so a save clicked straight after typing posts the
+	 * document as it was before, and the save reports success over a body nobody
+	 * wrote. §16 named this as the hazard of putting ProseMirror over a form
+	 * field: it does not fail, it loses the last edit quietly.
+	 *
+	 * Serialising at submit time closes it. The listener is on `document` in the
+	 * capture phase because `use:enhance` registers its own submit handler on the
+	 * form while this component is still waiting for its dynamic imports — a
+	 * listener added to the form later would run after enhance had already read
+	 * the field.
+	 */
+	function syncBeforeSubmit(event: Event): void {
+		if (!field || event.target !== field.form || !readMarkdown) return;
+		if (writtenFromOutside) return;
+
+		markdown = readMarkdown();
+		field.value = markdown;
+	}
+
 	onMount(() => {
 		void mount();
-		return () => void editor?.destroy();
+		document.addEventListener('submit', syncBeforeSubmit, true);
+
+		return () => {
+			document.removeEventListener('submit', syncBeforeSubmit, true);
+			void editor?.destroy();
+		};
 	});
 </script>
 
@@ -1728,7 +1775,13 @@ Create `src/lib/components/admin/MarkdownEditor.svelte`:
 	<div bind:this={host} data-testid="{testId}-editor" class="rounded border px-2 py-1"></div>
 	<!-- Hidden, not absent: this is the field the form posts, and the editor is
 	     a view over it. -->
-	<textarea data-testid={testId} {name} hidden bind:value={markdown}></textarea>
+	<textarea
+		bind:this={field}
+		data-testid={testId}
+		{name}
+		hidden
+		bind:value={markdown}
+		oninput={() => (writtenFromOutside = true)}></textarea>
 {/if}
 ```
 
@@ -1930,7 +1983,12 @@ test('reports a node the server refuses, which the editor cannot show', async ({
 });
 ```
 
-`acceptedVersion(page)` does not exist yet. A version becomes immutable only once somebody has accepted it, and `tests/e2e/nda-journey.spec.ts` already drives a full acceptance — put this third case **in that file**, reusing its journey, rather than rebuilding an acceptance here. It returns the version editor URL for the template the journey accepted.
+`acceptedVersion(page)` does not exist and does not need to. A version becomes immutable only once somebody has accepted it, and `tests/e2e/nda-journey.spec.ts` already drives a full acceptance — put that case **in that file**, reusing `seedRequestForAgreement` plus the journey's own approve-and-accept steps, and look the template and version up by slug in the database rather than clicking through the admin pages to find their ids.
+
+Two things about the POST itself:
+
+- `page.request.post` sends no `Origin`, and SvelteKit's CSRF check refuses a form POST without one. Pass `headers: { origin: new URL(page.url()).origin }`.
+- The response is **HTTP 200 carrying an ActionResult envelope**, not a 409: `{"type":"failure","status":409,"data":"…"}`. Assert the envelope's `status` and that its `data` names `immutable`, so the case cannot pass on any other 4xx.
 
 - [ ] **Step 2: Run them**
 
@@ -1939,7 +1997,11 @@ pnpm test:e2e tests/e2e/admin-agreements.spec.ts --project=app
 pnpm test:e2e tests/e2e/nda-journey.spec.ts --project=app
 ```
 
-Expected: PASS. If the first case fails with an empty body, the editor's content is not reaching the hidden textarea before submit — that is the §16 hazard, not a test bug. Fix it in `MarkdownEditor.svelte` by writing `markdown` on every `markdownUpdated`, and re-run; do not add a wait to the test.
+Expected: PASS. The first case **does** fail on the draft component, with an empty body, and that is the §16 hazard rather than a test bug — do not add a wait to the test.
+
+Writing `markdown` on every `markdownUpdated` is not the fix, because `markdownUpdated` is itself debounced: measured against milkdown 7.22, the hidden field is still empty a full animation frame after a keystroke, so a save clicked straight after typing posts the document as it was before and reports success over a body nobody wrote. The fix is to serialise the live document at submit time, from a `submit` listener on `document` in the **capture** phase — `use:enhance` registers its own handler on the form while the component is still awaiting its dynamic imports, so a listener added to the form later runs after enhance has already read the field.
+
+That sync then has to yield to an external write, or it clobbers `fillBody` and the third case below: an `input` event on a hidden textarea cannot come from a person, since Svelte's binding writes the property without dispatching one, so the only source is script — a paste of raw Markdown, or a client with the editor disabled. Whoever wrote last owns the value.
 
 If the second case passes for the wrong reason — the editor stripped the table rather than the server refusing it — assert the server's message text as well, so the case cannot pass without the refusal.
 
@@ -1952,6 +2014,8 @@ pnpm test:e2e tests/e2e/admin-agreements.spec.ts --project=app -t 'saves what wa
 ```
 
 If a violation appears, do **not** widen the CSP in `vite.config.ts`. Find the inline style or script the editor is injecting and configure it away; the no-third-party-origin posture is asserted permanently in `tests/e2e/security.spec.ts` and is a product claim (§3.5).
+
+Measured: the editor introduces none. Two `style-src-attr` violations do fire, and both are already there on `/de/admin`, `/de/admin/agreements` and `/de/admin/documents` with no editor on the page — a `style="display: contents"` wrapper in the layout and SvelteKit's own visually-hidden announcer element. They are outside this phase; record them in the carry-over rather than widening anything.
 
 - [ ] **Step 4: Commit and gate**
 
