@@ -2470,6 +2470,15 @@ The input becomes `scope.{locale}`. The e2e change is at `admin-content.spec.ts:
 
 Against `src/routes/(admin)/admin/documents/[id]/`. This page also carries the file upload and the status form; leave both untouched — only the translation block moves:
 
+**This one does not take the shape above.** The upload and per-file delete forms
+live *inside* the `LocaleTabs` snippet, so wrapping the tab strip in the
+translation form nests a `<form>` in a `<form>`. The parser drops the inner one
+and uploading silently stops working, while `pnpm check` stays green. Instead
+leave `LocaleTabs` unwrapped, turn the translation `<form>` into a `<div>`, give
+each field `form="document-translations"`, and put the form element — carrying
+only the save button — after the tab strip. `new FormData(form)` collects
+controls associated by id, so the POST shape is the same as the other five.
+
 ```ts
 	saveTranslations: saveTranslationsAction({
 		type: 'document',

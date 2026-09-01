@@ -194,7 +194,7 @@
 					<input type="date" name="validUntil" class="rounded border px-2 py-1" />
 				</FormField>
 
-				{#if form?.field === 'file'}
+				{#if form?.field === 'file' && form?.locale === locale}
 					<p class="text-sm text-red-700 sm:col-span-4">{form.message}</p>
 				{/if}
 

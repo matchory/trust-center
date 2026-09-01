@@ -126,8 +126,11 @@ export const actions: Actions = {
 			// to serve never reaches storage in the first place.
 			await assertPdfPages(upload.bytes, getConfig().maxPdfPages);
 		} catch (cause) {
+			// Carries the locale so the notice renders in the pane the operator
+			// uploaded from. Every pane is mounted now, so an unscoped notice
+			// appears once per locale.
 			if (cause instanceof UploadRejected)
-				return fail<AdminActionFailure>(400, { field: 'file', message: cause.message });
+				return fail<AdminActionFailure>(400, { field: 'file', locale, message: cause.message });
 			throw cause;
 		}
 
