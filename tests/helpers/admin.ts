@@ -130,8 +130,8 @@ export async function seedRequestForAgreement(
 	// makes it renderable, and an unrenderable agreement cannot be required.
 	await submitAndWait(page, 'agreement-new-version', '?/createVersion');
 	await page.getByTestId('version-1').click();
-	await page.getByTestId('body-de').fill('# Vertrag\n\nGeheimhaltung.');
-	await page.getByTestId('body-en').fill('# Agreement\n\nConfidentiality.');
+	await fillBody(page, 'de', '# Vertrag\n\nGeheimhaltung.');
+	await fillBody(page, 'en', '# Agreement\n\nConfidentiality.');
 	await submitAndWait(page, 'version-save', '?/saveBody');
 	await submitAndWait(page, 'version-publish', '?/publish');
 	await gotoAdmin(page, agreementUrl);
@@ -223,6 +223,23 @@ export async function seedRequestForAgreement(
 	}
 
 	return { requestId: submitted.id, documentId, documentSlug, agreementSlug, email };
+}
+
+/**
+ * Writes a body straight into the locale's hidden field.
+ *
+ * Since Phase 3c the visible surface is Milkdown, and `fill` refuses a hidden
+ * element — so a case whose subject is the server (validation, publication,
+ * persistence) writes the field the form actually posts, which is also what a
+ * paste of raw Markdown or a client with the editor disabled produces. The
+ * editor's own keystroke path is proven separately, in the case that types.
+ */
+export async function fillBody(page: Page, locale: string, markdown: string) {
+	await page.getByTestId(`body-${locale}`).evaluate((node, value) => {
+		const field = node as HTMLTextAreaElement;
+		field.value = value;
+		field.dispatchEvent(new Event('input', { bubbles: true }));
+	}, markdown);
 }
 
 /**

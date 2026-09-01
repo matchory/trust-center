@@ -2,6 +2,7 @@
 	import { enhance } from '$app/forms';
 	import AgreementBody from '$lib/components/AgreementBody.svelte';
 	import FormField from '$lib/components/admin/FormField.svelte';
+	import MarkdownEditor from '$lib/components/admin/MarkdownEditor.svelte';
 	import { localizePath } from '$lib/i18n/locale';
 	import { m } from '$lib/paraglide/messages.js';
 	import type { PageProps } from './$types';
@@ -10,28 +11,15 @@
 
 	let immutable = $derived(data.version.firstAcceptedAt !== null);
 
-	// What each locale's editor holds. Seeded here rather than in the effect
-	// below so the server renders the stored body: effects do not run during
-	// SSR, and an editor that only fills in after hydration would make the page
-	// depend on JavaScript to show what it is editing. Capturing the initial
-	// value is the intent — the effect owns every later change.
-	// svelte-ignore state_referenced_locally
-	let bodies = $state<Record<string, string>>(
-		Object.fromEntries(data.locales.map((locale) => [locale, data.bodies[locale]?.bodyMd ?? '']))
-	);
-
-	// Replaced wholesale when the load changes, and when an import returns. The
-	// textarea is bound to this rather than reading `data` directly, because an
-	// import result has to reach it without a save having happened.
-	$effect(() => {
-		for (const locale of data.locales) {
-			bodies[locale] = data.bodies[locale]?.bodyMd ?? '';
-		}
-	});
+	// One handle per locale so an import result can be pushed into the right
+	// editor. `bind:this` on a keyed each is how a parent reaches a child
+	// instance in runes mode; the record is state so the binding survives a
+	// form action's data invalidation.
+	let editors: Record<string, { setMarkdown: (markdown: string) => void }> = $state({});
 
 	$effect(() => {
 		const imported = form && 'imported' in form ? form.imported : null;
-		if (imported) bodies[imported.locale] = imported.markdown;
+		if (imported) editors[imported.locale]?.setMarkdown(imported.markdown);
 	});
 </script>
 
@@ -90,13 +78,13 @@
 			</div>
 
 			<FormField label={`${m.admin_agreement_body()} (${locale})`}>
-				<textarea
-					data-testid="body-{locale}"
+				<MarkdownEditor
+					bind:this={editors[locale]}
 					name="body.{locale}"
+					testId="body-{locale}"
+					value={data.bodies[locale]?.bodyMd ?? ''}
 					readonly={immutable}
-					rows="8"
-					bind:value={bodies[locale]}
-					class="w-full rounded border px-2 py-1 font-mono"></textarea>
+				/>
 			</FormField>
 
 			{#if form && 'imported' in form && form.imported?.locale === locale && form.imported.dropped.length > 0}

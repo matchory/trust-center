@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { draftVersion, gotoAdmin, signInAsAdmin, submitAndWait } from '../helpers/admin';
+import { draftVersion, fillBody, gotoAdmin, signInAsAdmin, submitAndWait } from '../helpers/admin';
 import { docxWith } from '../helpers/docx';
 import { awaitHydration } from '../helpers/hydration';
 
@@ -40,12 +40,12 @@ test('a body is previewed before it can be published, and a bad body is refused'
 	const url = (await draftVersion(page)).replace(/\/versions\/[0-9a-f-]{36}$/, '');
 
 	// Refused at the form, not at render — the same discipline as RULE_PATTERN.
-	await page.getByTestId('body-de').fill('<script>alert(1)</script>');
+	await fillBody(page, 'de', '<script>alert(1)</script>');
 	await submitAndWait(page, 'version-save', '?/saveBody');
 	await expect(page.getByTestId('body-not-in-subset')).toBeVisible();
 
-	await page.getByTestId('body-de').fill('# Vertrag\n\nText mit **fett**.');
-	await page.getByTestId('body-en').fill('# Agreement\n\nText with **bold**.');
+	await fillBody(page, 'de', '# Vertrag\n\nText mit **fett**.');
+	await fillBody(page, 'en', '# Agreement\n\nText with **bold**.');
 	await submitAndWait(page, 'version-save', '?/saveBody');
 
 	// The preview is the same renderer the requester gets.
@@ -59,7 +59,7 @@ test('a body is previewed before it can be published, and a bad body is refused'
 test('publishing is refused while a locale has no body', async ({ page }) => {
 	await draftVersion(page);
 
-	await page.getByTestId('body-de').fill('# Nur Deutsch');
+	await fillBody(page, 'de', '# Nur Deutsch');
 	await submitAndWait(page, 'version-save', '?/saveBody');
 	await submitAndWait(page, 'version-publish', '?/publish');
 
@@ -72,8 +72,8 @@ test('a version cannot be published twice', async ({ page }) => {
 	// `effectiveVersion`'s desc(effectiveFrom) precedence. The route refuses it.
 	await draftVersion(page);
 
-	await page.getByTestId('body-de').fill('# Vertrag');
-	await page.getByTestId('body-en').fill('# Agreement');
+	await fillBody(page, 'de', '# Vertrag');
+	await fillBody(page, 'en', '# Agreement');
 	await submitAndWait(page, 'version-save', '?/saveBody');
 	await submitAndWait(page, 'version-publish', '?/publish');
 
@@ -98,8 +98,8 @@ test('an invalid body in one locale does not persist a valid body written to ano
 	// every locale exactly as it was.
 	await draftVersion(page);
 
-	await page.getByTestId('body-de').fill('# Vertrag');
-	await page.getByTestId('body-en').fill('<script>alert(1)</script>');
+	await fillBody(page, 'de', '# Vertrag');
+	await fillBody(page, 'en', '<script>alert(1)</script>');
 	await submitAndWait(page, 'version-save', '?/saveBody');
 	await expect(page.getByTestId('body-not-in-subset')).toBeVisible();
 
