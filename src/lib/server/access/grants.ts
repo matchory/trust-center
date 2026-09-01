@@ -359,6 +359,33 @@ export async function countGrantDocuments(
 	grantId: string,
 	options: DeliveryOptions
 ): Promise<number> {
+	// One row, always. Until 3b this was a plain `count(*)`; 3b had to ship the
+	// rows themselves so `narrowByAgreements` could filter them, which for a
+	// tier-wide grant means the whole catalogue over the wire to produce an
+	// integer — once per due grant, in a six-hourly job.
+	//
+	// The two flags are what make the aggregate safe again: when nothing the
+	// grant confers is at the `nda` tier and no group it touches carries an
+	// agreement, narrowing provably cannot remove a row, so there is nothing to
+	// narrow and the count is the answer.
+	const [summary] = await db
+		.select({
+			total: sql<number>`count(DISTINCT ${document.id})::int`,
+			gated: sql<
+				boolean | null
+			>`bool_or(${document.tier} = 'nda' OR ${accessGroup.ndaTemplateId} IS NOT NULL)`
+		})
+		.from(accessGrant)
+		.innerJoin(document, grantConfersDocument())
+		.leftJoin(documentGroup, eq(documentGroup.documentId, document.id))
+		.leftJoin(accessGroup, eq(accessGroup.id, documentGroup.groupId))
+		.where(eq(accessGrant.id, grantId));
+
+	// `bool_or` over no rows is null, and so is a grant conferring nothing —
+	// both mean "nothing to narrow", and `total` is 0 there anyway.
+	if (!summary) return 0;
+	if (!summary.gated) return summary.total;
+
 	const rows = foldConferred(await conferredSelect(db, eq(accessGrant.id, grantId)));
 
 	return (await narrowByAgreements(db, rows, options)).length;

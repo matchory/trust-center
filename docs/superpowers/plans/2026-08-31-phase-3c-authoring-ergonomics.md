@@ -2768,7 +2768,7 @@ Task 21 made the "is anything gated here" question answerable in SQL, so the agg
 - Modify: `src/lib/server/access/grants.ts`
 - Test: `tests/integration/expiry.test.ts`, `tests/integration/nda-grants.test.ts` (must pass unchanged)
 
-- [ ] **Step 1: Ask the cheap question first**
+- [x] **Step 1: Ask the cheap question first**
 
 Replace the body of `countGrantDocuments`:
 
@@ -2806,7 +2806,7 @@ export async function countGrantDocuments(
 }
 ```
 
-- [ ] **Step 2: Assert both paths, not just the one the fixtures happen to take**
+- [x] **Step 2: Assert both paths, not just the one the fixtures happen to take**
 
 §14 asks for the case where narrowing cannot remove anything and the aggregate is allowed back. Add to `tests/integration/nda-grants.test.ts`, following the file's existing seeding and its clean-children-before-parents teardown:
 
@@ -2830,7 +2830,7 @@ it('counts a grant behind an unaccepted agreement as delivering nothing', async 
 
 Write the two seed helpers against the file's existing fixture style; if it already has equivalents, use those and only add the assertions.
 
-- [ ] **Step 3: Verify**
+- [x] **Step 3: Verify**
 
 ```sh
 pnpm test:integration tests/integration/expiry.test.ts
@@ -2840,7 +2840,7 @@ pnpm test:integration
 
 Expected: PASS. If a count comes back wrong by exactly the number of group memberships, `count(DISTINCT …)` was dropped — the left joins multiply rows and a plain `count(*)` would over-count.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```sh
 pnpm format
