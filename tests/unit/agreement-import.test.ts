@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import remarkParse from 'remark-parse';
 import { unified } from 'unified';
-import type { Root } from 'mdast';
+import type { Paragraph, Root } from 'mdast';
 import { downgradeToSubset } from '../../src/lib/markdown/downgrade';
 import { SUBSET_NODE_TYPES } from '../../src/lib/markdown/subset';
 
@@ -94,7 +94,7 @@ describe('downgradeToSubset', () => {
 			]
 		};
 
-		const { root, dropped } = downgradeToSubset(tableNode as any);
+		const { root, dropped } = downgradeToSubset(tableNode as unknown as Root);
 
 		expect(dropped).toEqual(['table', 'tableCell', 'tableRow']);
 		expect(root.children.map((node) => node.type)).toEqual(['paragraph']);
@@ -140,7 +140,7 @@ describe('downgradeToSubset', () => {
 			]
 		};
 
-		const { root, dropped } = downgradeToSubset(tableNode as any);
+		const { root, dropped } = downgradeToSubset(tableNode as unknown as Root);
 
 		expect(dropped).toContain('image');
 		expect(dropped).toContain('link');
@@ -178,11 +178,32 @@ describe('downgradeToSubset', () => {
 			]
 		};
 
-		const { root, dropped } = downgradeToSubset(tableNode as any);
+		const { root, dropped } = downgradeToSubset(tableNode as unknown as Root);
 
 		expect(dropped).toContain('image');
 		expect(dropped).toContain('table');
 		expect(JSON.stringify(root)).toContain('Text');
 		expect(JSON.stringify(root)).not.toContain('https://x.test');
+	});
+
+	it('preserves phrasing structure when downgrading inline code', () => {
+		// Inline code has to become a `text`, not the `paragraph` block code
+		// becomes: a block inside phrasing content is invalid mdast, and the
+		// renderer reads it as an empty paragraph rather than failing loudly.
+		const { root } = downgradeToSubset(parse('See `literal` here.'));
+
+		expect(root.children).toHaveLength(1);
+		expect(root.children[0]!.type).toBe('paragraph');
+
+		const para = root.children[0] as Paragraph;
+		const blockNodeTypes = ['paragraph', 'heading', 'blockquote', 'list', 'thematicBreak'];
+		for (const child of para.children) {
+			expect(blockNodeTypes).not.toContain(child.type);
+		}
+
+		// Verify the text content is preserved
+		expect(JSON.stringify(root)).toContain('See');
+		expect(JSON.stringify(root)).toContain('literal');
+		expect(JSON.stringify(root)).toContain('here');
 	});
 });
