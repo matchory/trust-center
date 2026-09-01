@@ -4,10 +4,12 @@ import { unified } from 'unified';
 import type { Paragraph, Root } from 'mdast';
 import { downgradeToSubset } from '../../src/lib/markdown/downgrade';
 import { parseAgreementBody, SUBSET_NODE_TYPES } from '../../src/lib/markdown/subset';
+import { IMPORT_TYPES, importAgreementBody } from '../../src/lib/server/nda/import';
 import { docxToMarkdown } from '../../src/lib/server/nda/import/docx';
 import { docxWith } from '../helpers/docx';
 import { PdfHasNoText, pdfToMarkdown } from '../../src/lib/server/nda/import/pdf';
 import { blankPdf, drawnText, textPdf } from '../helpers/pdf';
+import { UploadRejected } from '../../src/lib/server/upload';
 
 const parse = (markdown: string): Root => unified().use(remarkParse).parse(markdown) as Root;
 
@@ -315,5 +317,36 @@ describe('docxToMarkdown', () => {
 		);
 
 		expect(() => parseAgreementBody(markdown)).not.toThrow();
+	});
+});
+
+describe('importAgreementBody', () => {
+	it('reads a pdf', async () => {
+		const bytes = await textPdf([{ text: 'Ein Absatz.', size: 11 }]);
+
+		const imported = await importAgreementBody({
+			filename: 'a.pdf',
+			contentType: 'application/pdf',
+			bytes
+		});
+
+		expect(imported.markdown).toContain('Ein Absatz.');
+		expect(imported.dropped).toEqual([]);
+	});
+
+	it('reads a docx', async () => {
+		const imported = await importAgreementBody({
+			filename: 'a.docx',
+			contentType: IMPORT_TYPES[1]!,
+			bytes: docxWith([{ text: 'Ein Absatz.' }])
+		});
+
+		expect(imported.markdown).toContain('Ein Absatz.');
+	});
+
+	it('refuses a type it cannot read', async () => {
+		await expect(
+			importAgreementBody({ filename: 'a.txt', contentType: 'text/plain', bytes: new Uint8Array() })
+		).rejects.toBeInstanceOf(UploadRejected);
 	});
 });
