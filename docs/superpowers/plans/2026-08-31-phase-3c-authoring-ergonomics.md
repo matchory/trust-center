@@ -36,7 +36,7 @@ Every task's requirements implicitly include this section.
 | `src/lib/server/nda/import/index.ts` | One entry point dispatching on content type; the only thing routes import. |
 | `src/lib/components/admin/MarkdownEditor.svelte` | Milkdown wrapper writing through to a hidden textarea, so the POST shape is unchanged. |
 | `tests/unit/agreement-import.test.ts` | The downgrade pass, the PDF grouper, `PdfHasNoText`, and the P3.21 enumerator case. |
-| `tests/helpers/fixtures.ts` | Builders for a text-bearing PDF and a minimal DOCX, so import tests do not carry binary fixtures in the repo. |
+| `tests/helpers/docx.ts` | Builds a minimal but valid DOCX as a stored ZIP, so import tests do not carry a binary fixture in the repo. |
 
 **Modified**
 
@@ -50,6 +50,7 @@ Every task's requirements implicitly include this section.
 | `src/lib/server/access/grants.ts` | Folds tier and group agreements into the conferred select; `countGrantDocuments` aggregates again when nothing is gated. |
 | `src/lib/server/nda/templates.ts` | `effectiveVersion` tests locale completeness on `(versionId, locale)` and fetches bodies only for the winner. |
 | `tests/e2e/request.spec.ts`, `tests/e2e/access-journey.spec.ts`, `tests/helpers/admin.ts` | Stop clearing the one rate-limit bucket a test depends on. |
+| `tests/helpers/pdf.ts` | Gains `textPdf` beside the existing `blankPdf` and `drawnText`; `blankPdf` is the scan fixture, so no `emptyPdf` is written. |
 
 ## Theme order and gates
 
@@ -367,25 +368,28 @@ git commit -m "feat(markdown): map a converted body onto the subset, naming what
 
 The import tests need real files. Committing binaries would make them unreadable and unmaintainable, so both are built in code: the PDF with `pdf-lib`, which the repo already uses for fixtures, and the DOCX as a stored (uncompressed) ZIP, which is fifty lines and needs no new dependency — Node 22 ships `zlib.crc32`, and the repo already requires Node 22+.
 
+Two corrections to what this task first said, both from reading `tests/helpers/` before writing anything:
+
+- **There is no `emptyPdf` to write.** `tests/helpers/pdf.ts` already exports `blankPdf(pages = 1)` — a loadable PDF with pages and no text, which is exactly what a scan looks like to an extractor. A second name for the same fixture is a second thing to keep true.
+- **The builders go beside their subjects, not into a `fixtures.ts`.** `tests/helpers/pdf.ts` is already where PDF fixtures live (`blankPdf`, `drawnText`), so `textPdf` joins them; the DOCX builder is the genuinely new thing and gets `tests/helpers/docx.ts`. A file named for the word "fixtures" says nothing about what is in it, and this repo sorts helpers by subject.
+
 **Files:**
-- Create: `tests/helpers/fixtures.ts`
+- Create: `tests/helpers/docx.ts`
+- Modify: `tests/helpers/pdf.ts` — adds `textPdf` beside `blankPdf`
 - Test: `tests/unit/agreement-import.test.ts` (extended in Task 4)
 
 **Interfaces:**
 - Consumes: `PDFDocument`, `StandardFonts` from `pdf-lib`; `crc32` from `node:zlib`.
 - Produces:
-  - `textPdf(lines: readonly { text: string; size: number }[]): Promise<Uint8Array>`
-  - `emptyPdf(): Promise<Uint8Array>` — a real PDF with pages and no text
-  - `docxWith(paragraphs: readonly { text: string; heading?: boolean }[]): Uint8Array`
+  - `textPdf(lines: readonly { text: string; size: number }[]): Promise<Uint8Array>` in `tests/helpers/pdf.ts`
+  - `docxWith(paragraphs: readonly { text: string; heading?: boolean }[]): Uint8Array` in `tests/helpers/docx.ts`
+  - `blankPdf(pages = 1)`, which already exists, is what the "no extractable text" cases in Tasks 4, 7 and 8 use.
 
-- [ ] **Step 1: Write the fixture builders**
+- [ ] **Step 1: Add the text-bearing PDF beside `blankPdf`**
 
-Create `tests/helpers/fixtures.ts`:
+In `tests/helpers/pdf.ts`, add `StandardFonts` to the existing `pdf-lib` import and append:
 
 ```ts
-import { crc32 } from 'node:zlib';
-import { PDFDocument, StandardFonts } from 'pdf-lib';
-
 /**
  * A PDF whose pages actually carry text, laid out top-down so the extractor
  * sees the vertical gaps it groups on. `size` is what makes a line a heading:
@@ -406,13 +410,14 @@ export async function textPdf(
 
 	return pdf.save();
 }
+```
 
-/** A loadable PDF with no text at all — what a scan looks like to an extractor. */
-export async function emptyPdf(): Promise<Uint8Array> {
-	const pdf = await PDFDocument.create();
-	pdf.addPage([595, 842]);
-	return pdf.save();
-}
+- [ ] **Step 2: Write the DOCX builder**
+
+Create `tests/helpers/docx.ts`:
+
+```ts
+import { crc32 } from 'node:zlib';
 
 const DOCUMENT_XML_HEADER =
 	'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
@@ -514,24 +519,18 @@ function zipStored(entries: readonly ZipEntry[]): Uint8Array {
 }
 ```
 
-- [ ] **Step 2: Prove the DOCX is valid before anything depends on it**
+- [ ] **Step 3: Prove the DOCX is valid before anything depends on it**
 
-A hand-written ZIP that is subtly wrong would surface later as a confusing `mammoth` failure inside another task. Install `mammoth` now and check the fixture directly:
+A hand-written ZIP that is subtly wrong would surface later as a confusing `mammoth` failure inside another task. Install `mammoth` now and check the fixture through Vitest — add this to `tests/unit/agreement-import.test.ts`:
 
 ```sh
 pnpm add mammoth
-node --input-type=module -e "
-import mammoth from 'mammoth';
-const { docxWith } = await import('./tests/helpers/fixtures.ts').catch(() => ({}));
-" 2>/dev/null || true
 ```
-
-If that import cannot resolve TypeScript from plain node, prove it through Vitest instead — add a temporary test to `tests/unit/agreement-import.test.ts`:
 
 ```ts
 it('builds a docx mammoth can read', async () => {
 	const mammoth = await import('mammoth');
-	const { docxWith } = await import('../helpers/fixtures');
+	const { docxWith } = await import('../helpers/docx');
 
 	const result = await mammoth.convertToHtml({ buffer: Buffer.from(docxWith([{ text: 'Hallo' }])) });
 
@@ -545,11 +544,32 @@ pnpm test:unit tests/unit/agreement-import.test.ts -t 'docx mammoth can read'
 
 Expected: PASS. Keep this test — it is the only thing standing between a malformed fixture and an afternoon spent debugging the wrong file.
 
-- [ ] **Step 3: Commit**
+- [ ] **Step 4: Prove `textPdf` and `blankPdf` differ in the way the extractor cares about**
+
+`textPdf` is untested until Task 4 uses it, and a fixture that draws nothing would make Task 4's failures unreadable. Add one case using `drawnText`, which `tests/helpers/pdf.ts` already exports:
+
+```ts
+it('builds a pdf that carries text, and a blank one that does not', async () => {
+	const { blankPdf, drawnText, textPdf } = await import('../helpers/pdf');
+
+	expect(await drawnText(await textPdf([{ text: 'Vertraulich', size: 20 }]))).toContain(
+		'Vertraulich'
+	);
+	expect(await drawnText(await blankPdf())).toBe('');
+});
+```
+
+```sh
+pnpm test:unit tests/unit/agreement-import.test.ts
+```
+
+Expected: PASS.
+
+- [ ] **Step 5: Commit**
 
 ```sh
 pnpm format
-git add package.json pnpm-lock.yaml tests/helpers/fixtures.ts tests/unit/agreement-import.test.ts
+git add package.json pnpm-lock.yaml tests/helpers/docx.ts tests/helpers/pdf.ts tests/unit/agreement-import.test.ts
 git commit -m "test: build a text-bearing pdf and a real docx in code"
 ```
 
@@ -586,7 +606,7 @@ Append to `tests/unit/agreement-import.test.ts`:
 
 ```ts
 import { PdfHasNoText, pdfToMarkdown } from '../../src/lib/server/nda/import/pdf';
-import { emptyPdf, textPdf } from '../helpers/fixtures';
+import { blankPdf, textPdf } from '../helpers/pdf';
 
 describe('pdfToMarkdown', () => {
 	it('promotes a larger line to a heading and keeps body text as paragraphs', async () => {
@@ -632,7 +652,7 @@ describe('pdfToMarkdown', () => {
 	});
 
 	it('refuses a PDF with no extractable text', async () => {
-		await expect(pdfToMarkdown(await emptyPdf())).rejects.toBeInstanceOf(PdfHasNoText);
+		await expect(pdfToMarkdown(await blankPdf())).rejects.toBeInstanceOf(PdfHasNoText);
 	});
 });
 ```
@@ -872,7 +892,7 @@ Append to `tests/unit/agreement-import.test.ts`:
 
 ```ts
 import { docxToMarkdown } from '../../src/lib/server/nda/import/docx';
-import { docxWith } from '../helpers/fixtures';
+import { docxWith } from '../helpers/docx';
 
 describe('docxToMarkdown', () => {
 	it('carries a heading and a paragraph into the subset', async () => {
@@ -1120,7 +1140,7 @@ Create `tests/integration/nda-import.test.ts`. Model the setup on the existing `
 import { describe, expect, it } from 'vitest';
 import { importAgreementBody } from '../../src/lib/server/nda/import';
 import { PdfHasNoText } from '../../src/lib/server/nda/import/pdf';
-import { emptyPdf, textPdf } from '../helpers/fixtures';
+import { blankPdf, textPdf } from '../helpers/pdf';
 
 describe('agreement import', () => {
 	it('names a scan rather than importing an empty body', async () => {
@@ -1128,7 +1148,7 @@ describe('agreement import', () => {
 			importAgreementBody({
 				filename: 'scan.pdf',
 				contentType: 'application/pdf',
-				bytes: await emptyPdf()
+				bytes: await blankPdf()
 			})
 		).rejects.toBeInstanceOf(PdfHasNoText);
 	});
@@ -1337,7 +1357,7 @@ test('imports a docx into a draft body without saving it', async ({ page }) => {
 });
 ```
 
-Import `docxWith` from `../helpers/fixtures` and `awaitHydration` from `../helpers/hydration`, matching how the file already imports its helpers.
+Import `docxWith` from `../helpers/docx` and `awaitHydration` from `../helpers/hydration`, matching how the file already imports its helpers.
 
 - [ ] **Step 4: Run it to verify it fails**
 
@@ -1473,7 +1493,7 @@ test('the import route refuses a scan', async ({ page }) => {
 	await page.getByTestId('import-file-de').setInputFiles({
 		name: 'scan.pdf',
 		mimeType: 'application/pdf',
-		buffer: Buffer.from(await emptyPdf())
+		buffer: Buffer.from(await blankPdf())
 	});
 
 	await submitAndWait(page, 'import-submit-de', '?/import');
