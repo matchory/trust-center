@@ -95,7 +95,7 @@ test('an answer stays off the FAQ until it is made public', async ({ page }) => 
 
 	await page.getByTestId('translation-question-de').fill('Wo werden die Daten gehostet?');
 	await page.getByTestId('translation-answer-de').fill('In Deutschland, bei Hetzner.');
-	await submitAndWait(page, 'translation-save-de', '?/saveTranslation');
+	await submitAndWait(page, 'translation-save', '?/saveTranslations');
 
 	// Answers start internal, so a translated answer is still not on the portal.
 	await page.goto('/de/faq');
