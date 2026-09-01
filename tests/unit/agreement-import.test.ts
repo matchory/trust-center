@@ -4,6 +4,8 @@ import { unified } from 'unified';
 import type { Paragraph, Root } from 'mdast';
 import { downgradeToSubset } from '../../src/lib/markdown/downgrade';
 import { SUBSET_NODE_TYPES } from '../../src/lib/markdown/subset';
+import { docxWith } from '../helpers/docx';
+import { blankPdf, drawnText, textPdf } from '../helpers/pdf';
 
 const parse = (markdown: string): Root => unified().use(remarkParse).parse(markdown) as Root;
 
@@ -205,5 +207,30 @@ describe('downgradeToSubset', () => {
 		expect(JSON.stringify(root)).toContain('See');
 		expect(JSON.stringify(root)).toContain('literal');
 		expect(JSON.stringify(root)).toContain('here');
+	});
+});
+
+/**
+ * The import fixtures are built in code rather than committed as binaries, so
+ * they are themselves capable of being wrong. These two cases exist so that a
+ * malformed fixture fails here, by name, instead of surfacing three tasks later
+ * as a confusing `mammoth` error or an extractor that finds no text.
+ */
+describe('import fixtures', () => {
+	it('builds a docx mammoth can read', async () => {
+		const mammoth = await import('mammoth');
+
+		const result = await mammoth.convertToHtml({
+			buffer: Buffer.from(docxWith([{ text: 'Hallo' }]))
+		});
+
+		expect(result.value).toContain('Hallo');
+	});
+
+	it('builds a pdf that carries text, and a blank one that does not', async () => {
+		expect(await drawnText(await textPdf([{ text: 'Vertraulich', size: 20 }]))).toContain(
+			'Vertraulich'
+		);
+		expect(await drawnText(await blankPdf())).toBe('');
 	});
 });
