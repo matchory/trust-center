@@ -96,14 +96,17 @@ rather than a promise.
   with the form by `form="document-translations"` id instead, and the form
   element carries only the save button. `new FormData(form)` collects controls
   associated by id, so the POST shape is identical to the other five.
-- **`saveTranslationsFromForm` and `saveTranslationsAction` are not the same
-  rule, and the agreements and groups editors keep the former deliberately.**
-  The first *skips* a locale whose name is blank; the second *refuses* a locale
-  that is filled in halfway. Moving those two editors onto the helper would
-  tighten what they accept, so it is a behaviour change rather than a cleanup,
-  and it was left alone. The comments at both call sites now say this; they
-  previously justified the choice against the singular helper, which no longer
-  exists.
+- **`saveTranslationsFromForm` and `saveTranslationsAction` express the same rule
+  wherever there is one required field, and the split between them is
+  historical.** The first *skips* a locale whose name is blank; the second
+  *refuses* a locale filled in halfway — but "halfway" cannot occur with a single
+  required field, which is what agreements and groups both have, so the two are
+  equivalent at those call sites. A first pass through this phase recorded the
+  difference as a real behavioural distinction; it is not, and the comments at
+  both call sites were corrected. They keep the older helper because two other
+  admin surfaces (`admin/controls/groups`, `admin/documents/categories`) still
+  use it, so moving these two would leave both mechanisms standing. **Consolidate
+  all four onto `saveTranslationsAction`, or none.**
 
 ## Defects found and fixed in 3c, recorded because the reasoning matters
 
