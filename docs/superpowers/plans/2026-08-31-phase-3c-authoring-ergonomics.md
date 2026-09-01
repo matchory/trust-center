@@ -66,6 +66,8 @@ Then the four themes of §3, in order, with a gate after each: **import** (Tasks
 
 The fix is in the fixture, not the limiter. Keys are `<scope>:<hash>`, so the address buckets are exactly the keys matching `%:ip:%` and the email buckets are `request:email:%`. Specs keep clearing every address bucket, and the one bucket the flood case owns is never touched — which requires the flood case to flood **one email** rather than one address. The address limiter keeps its own coverage in `tests/integration/ratelimit.test.ts`; what the e2e case is really for is that the form renders the throttled state.
 
+That is necessary and, as Gate 2 showed, not sufficient. Clearing the address buckets once in `beforeEach` still leaves the flood case racing every other worker: specs run in parallel, they submit from the same client address, and a concurrent submission can eat the five-per-hour allowance before the loop reaches its fifth — which fails as a confirmation that never appears, not as a limiter that refused. The flood case has to clear the address buckets **before every one of its submissions**, the sixth included; then the email bucket is the only limiter that can trip, and the refusal it asserts cannot have come from anywhere else.
+
 **Files:**
 - Modify: `tests/e2e/request.spec.ts:38`, `tests/e2e/request.spec.ts:170-179`
 - Modify: `tests/e2e/access-journey.spec.ts:99`
