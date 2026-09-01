@@ -2860,7 +2860,7 @@ git commit -m "perf(access): count a grant's documents without fetching them"
 - Modify: `src/lib/server/nda/templates.ts`
 - Test: `tests/integration/nda-templates.test.ts`, `tests/integration/nda-acceptance.test.ts` (must pass unchanged)
 
-- [ ] **Step 1: Split the completeness test from the render fetch**
+- [x] **Step 1: Split the completeness test from the render fetch**
 
 In `effectiveVersion`, replace the body query and the loop:
 
@@ -2899,7 +2899,7 @@ In `effectiveVersion`, replace the body query and the loop:
 	return { versionId: winner.id, version: winner.version, bodies };
 ```
 
-- [ ] **Step 2: Verify**
+- [x] **Step 2: Verify**
 
 ```sh
 pnpm test:integration tests/integration/nda-templates.test.ts
@@ -2909,7 +2909,7 @@ pnpm test:integration
 
 Expected: PASS, unchanged. The case that matters is a version refusing to become effective with a locale missing (§5.2) — it must still refuse.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```sh
 pnpm format
@@ -2921,7 +2921,7 @@ git commit -m "perf(nda): test locale completeness without reading the bodies"
 
 ### Task 24: Gate 4 — the read-path theme is complete
 
-- [ ] **Step 1: Full suite**
+- [x] **Step 1: Full suite**
 
 ```sh
 pnpm lint && pnpm check && pnpm test:unit && pnpm test:integration && pnpm test:e2e
@@ -2929,7 +2929,7 @@ pnpm lint && pnpm check && pnpm test:unit && pnpm test:integration && pnpm test:
 
 Expected: all green, 0 errors, 0 warnings.
 
-- [ ] **Step 2: Confirm the build still needs no environment**
+- [x] **Step 2: Confirm the build still needs no environment**
 
 ```sh
 env -u DATABASE_URL -u OIDC_CLIENT_SECRET -u SMTP_URL pnpm build
@@ -2937,7 +2937,7 @@ env -u DATABASE_URL -u OIDC_CLIENT_SECRET -u SMTP_URL pnpm build
 
 Expected: succeeds. This is the check that catches an extraction library imported at module scope from something a route pulls in eagerly.
 
-- [ ] **Step 3: Confirm nothing new reached the public bundle**
+- [x] **Step 3: Confirm nothing new reached the public bundle**
 
 ```sh
 node -e "
