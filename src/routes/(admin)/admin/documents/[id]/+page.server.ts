@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { DOCUMENT_STATUSES, DOCUMENT_TIERS } from '$lib/content-types';
 import { localizePath } from '$lib/i18n/locale';
 import { documentGroupIds, listGroups, setDocumentGroups } from '$lib/server/access/groups';
-import { saveMetaAction, saveTranslationAction } from '$lib/server/admin/actions';
+import { saveMetaAction, saveTranslationsAction } from '$lib/server/admin/actions';
 import type { AdminActionFailure } from '$lib/server/admin/actions';
 import { recordEvent } from '$lib/server/audit';
 import { getConfig } from '$lib/server/config';
@@ -74,7 +74,7 @@ export const actions: Actions = {
 		fallbackField: 'slug'
 	}),
 
-	saveTranslation: saveTranslationAction({
+	saveTranslations: saveTranslationsAction({
 		type: 'document',
 		required: ['title'],
 		optional: ['summary'],

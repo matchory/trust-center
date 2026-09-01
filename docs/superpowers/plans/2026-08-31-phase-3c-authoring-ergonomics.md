@@ -2466,7 +2466,7 @@ Against `src/routes/(admin)/admin/certifications/[id]/`:
 
 The input becomes `scope.{locale}`. The e2e change is at `admin-content.spec.ts:48`. Commit as `refactor(admin): submit every certification locale in one form`.
 
-- [ ] **Steps 21–24 (Task 19): the documents editor**
+- [x] **Steps 21–24 (Task 19): the documents editor**
 
 Against `src/routes/(admin)/admin/documents/[id]/`. This page also carries the file upload and the status form; leave both untouched — only the translation block moves:
 

@@ -23,7 +23,7 @@ test('an admin can create a category, a document, and publish it', async ({ page
 	await expect(page).toHaveURL(/\/admin\/documents\/[0-9a-f-]{36}$/);
 
 	await page.getByTestId('translation-title-de').fill('ISO 27001 Zertifikat');
-	await page.getByTestId('translation-save-de').click();
+	await page.getByTestId('translation-save').click();
 	await expect(page.getByTestId('translation-title-de')).toHaveValue('ISO 27001 Zertifikat');
 
 	await page.getByTestId('document-publish').click();
