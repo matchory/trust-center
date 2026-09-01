@@ -224,3 +224,37 @@ export async function seedRequestForAgreement(
 
 	return { requestId: submitted.id, documentId, documentSlug, agreementSlug, email };
 }
+
+/**
+ * Signs in, creates an agreement, adds a version, and returns the version
+ * editor's URL.
+ *
+ * Extracted rather than copied: it is a nine-step setup that four cases in
+ * `admin-agreements.spec.ts` and two in `admin-upload.spec.ts` need, and a
+ * second copy is how two specs come to disagree about what a draft version is.
+ * Here rather than in a spec for the same reason as `signInAs`: Playwright
+ * refuses to let one test file import another.
+ */
+export async function draftVersion(page: Page): Promise<string> {
+	await signInAsAdmin(page);
+
+	await gotoAdmin(page, '/admin/agreements/new');
+	await page.getByTestId('agreement-slug').fill(`draft-${Date.now()}-${randomUUID().slice(0, 8)}`);
+	await submitAndWait(page, 'agreement-create', '/admin/agreements/new');
+
+	// `submitAndWait` only waits for the POST response, not the client-side
+	// redirect `use:enhance` follows after it — reading `page.url()` right after
+	// would race that navigation and capture the "new" page's URL.
+	await expect(page).toHaveURL(/\/admin\/agreements\/[0-9a-f-]{36}$/);
+
+	await submitAndWait(page, 'agreement-new-version', '?/createVersion');
+	await page.getByTestId('version-1').click();
+
+	// The click is a client-side navigation, and `networkidle` can be satisfied
+	// before the router has swapped the URL — reading `page.url()` then returns
+	// the agreement page and every caller loads the wrong page.
+	await expect(page).toHaveURL(/\/versions\/[0-9a-f-]{36}$/);
+	await awaitHydration(page);
+
+	return page.url();
+}

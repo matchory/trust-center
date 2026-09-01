@@ -3,7 +3,7 @@ import { expect, test } from '@playwright/test';
 import { eq } from 'drizzle-orm';
 import { createDb, type Db } from '../../src/lib/server/db';
 import { documentCategory, documentFile } from '../../src/lib/server/db/schema';
-import { gotoAdmin, signInAsAdmin, submitAndWait } from '../helpers/admin';
+import { draftVersion, gotoAdmin, signInAsAdmin, submitAndWait } from '../helpers/admin';
 import { blankPdf } from '../helpers/pdf';
 
 const databaseUrl = process.env.DATABASE_URL;
@@ -138,4 +138,33 @@ test('a slug somebody already used is refused rather than 500ing', async ({ page
 			.from(documentCategory)
 			.where(eq(documentCategory.slug, `dupe-cat-${stamp}`))
 	).toHaveLength(1);
+});
+
+test('the import route refuses a pdf over the page cap', async ({ page }) => {
+	// §14 folded the upload cases into 3b because 3c adds a second route that
+	// reads an operator-supplied PDF; without these two it would inherit the
+	// gap the documents route no longer has.
+	await gotoAdmin(page, await draftVersion(page));
+
+	await page.getByTestId('import-file-de').setInputFiles({
+		name: 'huge.pdf',
+		mimeType: 'application/pdf',
+		buffer: Buffer.from(await blankPdf(MAX_PAGES + 1))
+	});
+
+	await submitAndWait(page, 'import-submit-de', '?/import');
+	await expect(page.getByTestId('import-error')).toBeVisible();
+});
+
+test('the import route refuses a scan', async ({ page }) => {
+	await gotoAdmin(page, await draftVersion(page));
+
+	await page.getByTestId('import-file-de').setInputFiles({
+		name: 'scan.pdf',
+		mimeType: 'application/pdf',
+		buffer: Buffer.from(await blankPdf())
+	});
+
+	await submitAndWait(page, 'import-submit-de', '?/import');
+	await expect(page.getByTestId('import-error')).toBeVisible();
 });

@@ -1,5 +1,7 @@
 import { expect, test } from '@playwright/test';
-import { gotoAdmin, signInAsAdmin, submitAndWait } from '../helpers/admin';
+import { draftVersion, gotoAdmin, signInAsAdmin, submitAndWait } from '../helpers/admin';
+import { docxWith } from '../helpers/docx';
+import { awaitHydration } from '../helpers/hydration';
 
 test('an operator creates an agreement and names it in both locales', async ({ page }) => {
 	await signInAsAdmin(page);
@@ -35,20 +37,7 @@ test('a new agreement has no effective version', async ({ page }) => {
 test('a body is previewed before it can be published, and a bad body is refused', async ({
 	page
 }) => {
-	await signInAsAdmin(page);
-
-	const slug = `preview-${Date.now()}`;
-	await gotoAdmin(page, '/admin/agreements/new');
-	await page.getByTestId('agreement-slug').fill(slug);
-	await submitAndWait(page, 'agreement-create', '/admin/agreements/new');
-
-	// `submitAndWait` only waits for the POST response, not the client-side
-	// redirect `use:enhance` follows after it — reading `page.url()` right
-	// after would race that navigation and capture the "new" page's URL.
-	await expect(page).toHaveURL(/\/admin\/agreements\/[0-9a-f-]{36}$/);
-	const url = page.url();
-	await submitAndWait(page, 'agreement-new-version', '?/createVersion');
-	await page.getByTestId('version-1').click();
+	const url = (await draftVersion(page)).replace(/\/versions\/[0-9a-f-]{36}$/, '');
 
 	// Refused at the form, not at render — the same discipline as RULE_PATTERN.
 	await page.getByTestId('body-de').fill('<script>alert(1)</script>');
@@ -68,14 +57,7 @@ test('a body is previewed before it can be published, and a bad body is refused'
 });
 
 test('publishing is refused while a locale has no body', async ({ page }) => {
-	await signInAsAdmin(page);
-
-	const slug = `partial-${Date.now()}`;
-	await gotoAdmin(page, '/admin/agreements/new');
-	await page.getByTestId('agreement-slug').fill(slug);
-	await submitAndWait(page, 'agreement-create', '/admin/agreements/new');
-	await submitAndWait(page, 'agreement-new-version', '?/createVersion');
-	await page.getByTestId('version-1').click();
+	await draftVersion(page);
 
 	await page.getByTestId('body-de').fill('# Nur Deutsch');
 	await submitAndWait(page, 'version-save', '?/saveBody');
@@ -88,14 +70,7 @@ test('a version cannot be published twice', async ({ page }) => {
 	// `publishVersion` has no guard of its own against a second call — it would
 	// only bump `effective_from` to a later timestamp and could reorder
 	// `effectiveVersion`'s desc(effectiveFrom) precedence. The route refuses it.
-	await signInAsAdmin(page);
-
-	const slug = `republish-${Date.now()}`;
-	await gotoAdmin(page, '/admin/agreements/new');
-	await page.getByTestId('agreement-slug').fill(slug);
-	await submitAndWait(page, 'agreement-create', '/admin/agreements/new');
-	await submitAndWait(page, 'agreement-new-version', '?/createVersion');
-	await page.getByTestId('version-1').click();
+	await draftVersion(page);
 
 	await page.getByTestId('body-de').fill('# Vertrag');
 	await page.getByTestId('body-en').fill('# Agreement');
@@ -121,14 +96,7 @@ test('an invalid body in one locale does not persist a valid body written to ano
 	// persisted mutation with no audit event for it. Every submitted body is
 	// validated before any of them is written, so a bad locale must leave
 	// every locale exactly as it was.
-	await signInAsAdmin(page);
-
-	const slug = `partial-invalid-${Date.now()}`;
-	await gotoAdmin(page, '/admin/agreements/new');
-	await page.getByTestId('agreement-slug').fill(slug);
-	await submitAndWait(page, 'agreement-create', '/admin/agreements/new');
-	await submitAndWait(page, 'agreement-new-version', '?/createVersion');
-	await page.getByTestId('version-1').click();
+	await draftVersion(page);
 
 	await page.getByTestId('body-de').fill('# Vertrag');
 	await page.getByTestId('body-en').fill('<script>alert(1)</script>');
@@ -140,4 +108,28 @@ test('an invalid body in one locale does not persist a valid body written to ano
 	await expect(page.getByTestId('body-de')).toHaveValue('');
 	await expect(page.getByTestId('body-en')).toHaveValue('');
 	await expect(page.getByTestId('agreement-body')).toHaveCount(0);
+});
+
+test('imports a docx into a draft body without saving it', async ({ page }) => {
+	await gotoAdmin(page, await draftVersion(page));
+
+	await page.getByTestId('import-file-de').setInputFiles({
+		name: 'nda.docx',
+		mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+		buffer: Buffer.from(
+			docxWith([
+				{ text: 'Vertraulichkeitsvereinbarung', heading: true },
+				{ text: '1. Definitionen.' }
+			])
+		)
+	});
+
+	await submitAndWait(page, 'import-submit-de', '?/import');
+
+	await expect(page.getByTestId('body-de')).toHaveValue(/Vertraulichkeitsvereinbarung/);
+
+	// Import writes nothing (P3.22): a reload must show the body as it was.
+	await page.reload();
+	await awaitHydration(page);
+	await expect(page.getByTestId('body-de')).not.toHaveValue(/Vertraulichkeitsvereinbarung/);
 });
