@@ -593,8 +593,11 @@ The last part needs no special code and that is the point worth understanding be
 
 `pdfjs-dist` ships several builds and only the legacy one runs under Node without a browser worker. Establish which specifier resolves before writing code against it:
 
+`remark-stringify` is installed here rather than in Task 5 because the extractor
+below serialises through it — it is what enforces P3.21.
+
 ```sh
-pnpm add pdfjs-dist
+pnpm add pdfjs-dist remark-stringify
 node --input-type=module -e "const m = await import('pdfjs-dist/legacy/build/pdf.mjs'); console.log(typeof m.getDocument);"
 ```
 
@@ -768,25 +771,28 @@ interface PositionedItem {
 }
 
 async function extractLines(bytes: Uint8Array): Promise<Line[]> {
-	// `isEvalSupported: false` because this runs on the server against an
-	// operator-supplied file; `useSystemFonts: false` because glyph positions
-	// are all we read and font loading is cost without a reader.
-	const pdf = await getDocument({
-		data: bytes,
-		isEvalSupported: false,
-		useSystemFonts: false
-	}).promise;
+	// `useSystemFonts: false` because glyph positions are all we read and font
+	// loading is cost without a reader. There is deliberately no
+	// `isEvalSupported: false` beside it, which this file would otherwise want
+	// against an operator-supplied document: pdfjs-dist 6 removed the option
+	// along with the eval path it guarded, and passing it now fails typecheck.
+	//
+	// The loading task, not the document proxy, is what owns teardown: as of
+	// pdfjs-dist 6 the proxy has only `cleanup()`, and calling `destroy()` on it
+	// throws. Holding the task is what lets the worker be torn down at all.
+	const task = getDocument({ data: bytes, useSystemFonts: false });
 
 	const lines: Line[] = [];
 
 	try {
+		const pdf = await task.promise;
 		for (let number = 1; number <= pdf.numPages; number++) {
 			const page = await pdf.getPage(number);
 			const content = await page.getTextContent();
 			lines.push(...groupIntoLines(content.items as PositionedItem[]));
 		}
 	} finally {
-		await pdf.destroy();
+		await task.destroy();
 	}
 
 	return lines;
@@ -838,7 +844,12 @@ function bodySize(lines: readonly Line[]): number {
 	let best = 0;
 	let seen = -1;
 	for (const [size, count] of counts) {
-		if (count > seen) {
+		// A tie goes to the smaller size, because a title never outnumbers the
+		// body it titles. Without that rule a document short enough for its
+		// heading to tie with its body — an excerpt, a one-clause amendment —
+		// takes the heading as the body and then nothing clears the heading
+		// ratio, so the import comes back as one flat run of paragraphs.
+		if (count > seen || (count === seen && size < best)) {
 			best = size;
 			seen = count;
 		}
@@ -854,7 +865,7 @@ function bodySize(lines: readonly Line[]): number {
 pnpm test:unit tests/unit/agreement-import.test.ts
 ```
 
-Expected: PASS. If the heading case fails because `item.height` comes back as `0` for the installed `pdfjs-dist`, read the size off the transform matrix instead — `Math.hypot(transform[2], transform[3])` — and keep the rest unchanged. Adjust the constants only if a fixture case fails, never to make a real document look nicer; §16 records that tuning against documents we do not have is the known unknown here.
+Expected: PASS. `item.height` was measured to carry the drawn point size exactly under `pdfjs-dist` 6.3.289 (20 and 11 for the fixture above), so no transform-matrix fallback is needed; should a later version return `0`, read the size off the matrix instead — `Math.hypot(transform[2], transform[3])` — and keep the rest unchanged. Adjust the constants only if a fixture case fails, never to make a real document look nicer; §16 records that tuning against documents we do not have is the known unknown here.
 
 - [ ] **Step 6: Commit**
 
@@ -881,10 +892,10 @@ git commit -m "feat(nda): reconstruct paragraphs and headings from a pdf"
 - [ ] **Step 1: Install the conversion chain**
 
 ```sh
-pnpm add rehype-parse rehype-remark remark-stringify
+pnpm add rehype-parse rehype-remark
 ```
 
-`mammoth` was installed in Task 3.
+`mammoth` was installed in Task 3, `remark-stringify` in Task 4.
 
 - [ ] **Step 2: Write the failing tests**
 
