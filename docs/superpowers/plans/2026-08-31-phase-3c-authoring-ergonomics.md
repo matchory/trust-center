@@ -1813,20 +1813,36 @@ Replace the `<textarea>` inside the `FormField` with:
 
 Leave the preview block exactly as it is.
 
-- [ ] **Step 2: Verify the page still compiles and the old assertions still hold**
+- [ ] **Step 2: Give the specs a way to write a body**
+
+Nine call sites across `admin-agreements.spec.ts` and `tests/helpers/admin.ts` do `page.getByTestId('body-de').fill(...)`, and `fill` refuses a hidden element — every one of them breaks the moment the textarea is hidden. Add a helper beside `draftVersion` and route them through it:
+
+```ts
+export async function fillBody(page: Page, locale: string, markdown: string) {
+	await page.getByTestId(`body-${locale}`).evaluate((node, value) => {
+		const field = node as HTMLTextAreaElement;
+		field.value = value;
+		field.dispatchEvent(new Event('input', { bubbles: true }));
+	}, markdown);
+}
+```
+
+Writing the posted field directly is right for these cases: their subject is the server — validation, publication, persistence — and it is also what a paste of raw Markdown or a client with the editor disabled produces. What it does *not* cover is the editor's own keystroke path, which is exactly what Task 11's first case exists to prove, so the two are complementary rather than the helper being a way around the editor.
+
+- [ ] **Step 3: Verify the page still compiles and the old assertions still hold**
 
 ```sh
 pnpm check
 pnpm test:e2e tests/e2e/admin-agreements.spec.ts --project=app
 ```
 
-Expected: 0 errors, 0 warnings; the spec passes. Task 8's import case asserts `body-de`'s **value**, which now lives on the hidden textarea — `toHaveValue` still works on a hidden input. If Playwright refuses to read a hidden element, change those two assertions to `toHaveJSProperty('value', ...)` rather than un-hiding the field.
+Expected: 0 errors, 0 warnings; the spec passes. Task 8's import case asserts `body-de`'s **value**, which now lives on the hidden textarea — `toHaveValue` reads a hidden field without complaint, and it passing is what shows the import reached the editor and the editor reached the field.
 
-- [ ] **Step 3: Commit**
+- [ ] **Step 4: Commit**
 
 ```sh
 pnpm format
-git add "src/routes/(admin)/admin/agreements/[id]/versions/[versionId]/+page.svelte"
+git add "src/routes/(admin)/admin/agreements/[id]/versions/[versionId]/+page.svelte" tests/helpers/admin.ts tests/e2e/admin-agreements.spec.ts
 git commit -m "feat(admin): author an agreement body in a wysiwyg editor"
 ```
 
