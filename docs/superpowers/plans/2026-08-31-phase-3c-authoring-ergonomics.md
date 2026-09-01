@@ -2968,7 +2968,7 @@ Expected: either no matches, or matches only in lazily-loaded chunks — never i
 - Create: `docs/superpowers/phase-3d-carryover.md`
 - Modify: `README.md` if any operator-visible behaviour changed (it should not have)
 
-- [ ] **Step 1: Write the carry-over**
+- [x] **Step 1: Write the carry-over**
 
 Follow `docs/superpowers/phase-3c-carryover.md`'s shape exactly: the questions the plan asked and what the answers turned out to be, decisions this phase settled that the plan did not, defects found and fixed with the reasoning that matters, what is still open, and the numbers at the close.
 
@@ -2978,7 +2978,7 @@ Answer at least these three, because they are what this plan bet on:
 2. **What did the PDF grouper's constants have to become?** §16 predicted the thresholds would be wrong on the first real document. Record what they started as, what they ended as, and against what.
 3. **Did the Milkdown schema get restricted, or did the escape hatch get used?** If the full commonmark preset shipped, say so plainly and record it as an open item — §5.1 already says the server refusal is the control, so this is a documented gap rather than a defect.
 
-- [ ] **Step 2: Record the numbers**
+- [x] **Step 2: Record the numbers**
 
 ```sh
 pnpm check && pnpm lint && pnpm test:unit && pnpm test:integration && pnpm test:e2e
@@ -2986,7 +2986,7 @@ pnpm check && pnpm lint && pnpm test:unit && pnpm test:integration && pnpm test:
 
 Put the counts in the carry-over's closing table, in the same shape 3b used. Note that this phase adds **no migrations** — if the count is not zero, something went wrong against a Global Constraint.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```sh
 pnpm format
