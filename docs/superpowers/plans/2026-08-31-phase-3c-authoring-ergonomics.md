@@ -1316,15 +1316,24 @@ Keep both files in the same key order; `pnpm check` compiles the catalogs first 
 
 - [ ] **Step 2: Extract the setup the new cases need**
 
-`tests/e2e/admin-agreements.spec.ts` has no helper for reaching a draft version — the five existing cases each inline it. Three more cases are about to need it, so extract it first, from the case at line 35 (`a body is previewed before it can be published`), without changing what that case asserts:
+`tests/e2e/admin-agreements.spec.ts` has no helper for reaching a draft version — the five existing cases each inline it. Three more cases are about to need it, so extract it first, from the case at line 35 (`a body is previewed before it can be published`), without changing what that case asserts.
+
+It goes in `tests/helpers/admin.ts`, not in the spec: Step 6 needs it from a second spec file and Playwright refuses to let one test file import another. It signs in itself, so a caller is one line.
 
 ```ts
-/** Creates an agreement, adds a version, and returns the version editor's URL. */
-async function draftVersion(page: import('@playwright/test').Page): Promise<string> {
+/** Signs in, creates an agreement, adds a version, returns the editor's URL. */
+export async function draftVersion(page: Page): Promise<string> {
 	// Lift the body of the existing setup here verbatim, then have the cases
 	// that inlined it call this instead. Extracting rather than duplicating,
 	// because a second copy of a nine-step setup is how two specs come to
 	// disagree about what a draft version is.
+
+	// Clicking `version-1` is a client-side navigation, and `networkidle` can
+	// be satisfied before the router has swapped the URL. Wait for the version
+	// URL before reading `page.url()`, or the helper returns the agreement page
+	// and every caller loads the wrong one — the existing cases never noticed,
+	// because they use the page they are on rather than the URL.
+	await expect(page).toHaveURL(/\/versions\/[0-9a-f-]{36}$/);
 }
 ```
 
@@ -1383,9 +1392,18 @@ Expected: FAIL — no element with test id `import-file-de`.
 In the `.svelte`, extend the script:
 
 ```ts
-	let bodies = $state({ ...Object.fromEntries(data.locales.map((l) => [l, ''])) });
+	// What each locale's editor holds. Seeded here rather than in the effect
+	// below so the server renders the stored body: effects do not run during
+	// SSR, and an editor that only fills in after hydration would make the page
+	// depend on JavaScript to show what it is editing. Capturing the initial
+	// value is the intent — the effect owns every later change — so the warning
+	// about it is silenced deliberately, and `pnpm check` ends at 0 warnings.
+	// svelte-ignore state_referenced_locally
+	let bodies = $state<Record<string, string>>(
+		Object.fromEntries(data.locales.map((locale) => [locale, data.bodies[locale]?.bodyMd ?? '']))
+	);
 
-	// Seeded from the load, and replaced wholesale when an import returns. The
+	// Replaced wholesale when the load changes, and when an import returns. The
 	// textarea is bound to this rather than reading `data` directly, because an
 	// import result has to reach it without a save having happened.
 	$effect(() => {
@@ -1408,7 +1426,7 @@ Inside the `{#each data.locales as locale}` block, above the existing `FormField
 				<input
 					id="import-{locale}"
 					data-testid="import-file-{locale}"
-					form="import-{locale}"
+					form="import-form-{locale}"
 					type="file"
 					name="file"
 					accept=".pdf,.docx"
@@ -1416,18 +1434,18 @@ Inside the `{#each data.locales as locale}` block, above the existing `FormField
 				/>
 				<button
 					data-testid="import-submit-{locale}"
-					form="import-{locale}"
+					form="import-form-{locale}"
 					class="rounded border px-3 py-1.5"
 					disabled={immutable}>{m.admin_agreement_import_submit()}</button
 				>
 			</div>
 ```
 
-And after the `saveBody` form, one bare form per locale for those controls to post to:
+And after the `saveBody` form, one bare form per locale for those controls to post to. Its id is **not** the file input's: `form=` resolves against every element id, so a form sharing `import-{locale}` with the input associates the button with the input instead — the button then does nothing at all when clicked, silently.
 
 ```svelte
 {#each data.locales as locale (locale)}
-	<form id="import-{locale}" method="POST" action="?/import" enctype="multipart/form-data" use:enhance>
+	<form id="import-form-{locale}" method="POST" action="?/import" enctype="multipart/form-data" use:enhance>
 		<input type="hidden" name="locale" value={locale} />
 	</form>
 {/each}
