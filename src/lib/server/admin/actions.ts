@@ -142,66 +142,6 @@ export function saveMetaAction<S extends z.ZodType>(opts: SaveMetaOptions<S>) {
 	};
 }
 
-interface SaveTranslationOptions {
-	type: string;
-	subjectType?: string;
-	/** Trimmed and required. Order defines which is reported first on failure. */
-	required: readonly string[];
-	/**
-	 * Trimmed, and empty means `null` rather than a validation failure — a
-	 * document's summary and a control's description are genuinely optional, and
-	 * requiring every field would have forced those two pages to fork.
-	 */
-	optional?: readonly string[];
-	set: (
-		db: Db,
-		id: string,
-		locale: string,
-		values: Record<string, string | null>
-	) => Promise<unknown>;
-}
-
-/**
- * The locale is validated against the *enabled* set, not the compiled set: a
- * compiled-but-disabled locale is not a locale on this deployment (spec §7).
- */
-export function saveTranslationAction(opts: SaveTranslationOptions) {
-	return async (event: AdminEvent) => {
-		const form = await event.request.formData();
-		const locale = String(form.get('locale') ?? '');
-
-		if (!getConfig().locales.includes(locale)) {
-			return fail<AdminActionFailure>(400, { field: 'locale' });
-		}
-
-		const values: Record<string, string | null> = {};
-
-		for (const field of opts.required) {
-			const value = String(form.get(field) ?? '').trim();
-			if (!value) return fail<AdminActionFailure>(400, { field, locale });
-			values[field] = value;
-		}
-
-		for (const field of opts.optional ?? []) {
-			values[field] = String(form.get(field) ?? '').trim() || null;
-		}
-
-		const db = getDb();
-		await opts.set(db, event.params.id, locale, values);
-
-		await recordEvent(db, {
-			action: translationAction(opts.type),
-			actor: { type: 'staff', id: event.locals.staff!.id },
-			subjectType: opts.subjectType ?? opts.type,
-			subjectId: event.params.id,
-			ip: clientIp(event) ?? undefined,
-			meta: { locale }
-		});
-
-		return { saved: true };
-	};
-}
-
 interface SaveTranslationsOptions {
 	type: string;
 	subjectType?: string;
@@ -260,10 +200,11 @@ export function readTranslations(
  * The plural counterpart to `saveMetaAction`, for editors whose form submits
  * every locale at once — which is every content type added since Phase 1.
  *
- * `saveTranslationAction` (singular) writes one locale per POST and is what the
- * six Phase 1 editors used; §20 records why the two shapes coexisted and why
- * this one wins. One audit event per save, carrying the locales written, which
- * is the shape the group and agreement editors already record.
+ * A singular counterpart writing one locale per POST used to sit beside this
+ * one, and the six Phase 1 editors used it; §20 records why the two shapes
+ * coexisted and why this one won. One audit event per save, carrying the
+ * locales written, which is the shape the group and agreement editors already
+ * record.
  */
 export function saveTranslationsAction(opts: SaveTranslationsOptions) {
 	return async (event: AdminEvent) => {

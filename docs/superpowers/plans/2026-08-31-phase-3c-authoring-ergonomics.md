@@ -2514,7 +2514,7 @@ Now, and not before: §19 recorded this helper as unused and folded its deletion
 **Files:**
 - Modify: `src/lib/server/admin/actions.ts`
 
-- [ ] **Step 1: Confirm there is no caller left**
+- [x] **Step 1: Confirm there is no caller left**
 
 ```sh
 grep -rn "saveTranslationAction\|?/saveTranslation\b" src tests
@@ -2522,11 +2522,11 @@ grep -rn "saveTranslationAction\|?/saveTranslation\b" src tests
 
 Expected: only the definition in `src/lib/server/admin/actions.ts`. If anything else appears, that call site was missed — migrate it before deleting, exactly as Tasks 14–19 did. Do not delete around a live caller.
 
-- [ ] **Step 2: Delete the helper and its options interface**
+- [x] **Step 2: Delete the helper and its options interface**
 
 Remove `SaveTranslationOptions` and `saveTranslationAction` from `src/lib/server/admin/actions.ts`. Leave `translationAction` — it names the audit action and both helpers used it.
 
-- [ ] **Step 3: Verify**
+- [x] **Step 3: Verify**
 
 ```sh
 pnpm lint && pnpm check && pnpm test:unit && pnpm test:integration && pnpm test:e2e
@@ -2534,7 +2534,7 @@ pnpm lint && pnpm check && pnpm test:unit && pnpm test:integration && pnpm test:
 
 Expected: all green, 0 errors, 0 warnings. **Gate 3** — the consolidation theme is complete.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```sh
 pnpm format

@@ -40,9 +40,10 @@ export const actions: Actions = {
 		fallbackField: 'slug'
 	}),
 
-	// Not `saveTranslationAction`: that helper writes one locale per POST, and
-	// this form submits every locale at once the way the categories page does.
-	// Forcing one POST per locale here would be the helper dictating the form.
+	// Not `saveTranslationsAction`: this predates it and reads through
+	// `saveTranslationsFromForm`, which *skips* a locale whose name is blank
+	// where the helper *refuses* one that is half filled. Moving to the helper
+	// would tighten that, so it is a behaviour change rather than a cleanup.
 	saveTranslations: async (event) => {
 		const form = await event.request.formData();
 		const db = getDb();

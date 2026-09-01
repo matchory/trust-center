@@ -30,10 +30,10 @@ export const actions: Actions = {
 		fallbackField: 'slug'
 	}),
 
-	// Not `saveTranslationAction`: that helper writes one locale per POST and
-	// this form submits every locale at once, the same way every other content
-	// type's does. The singular helper stays — six other admin forms do post to
-	// it one locale at a time, which 3b's plan had assumed nothing did.
+	// Not `saveTranslationsAction`: this predates it and reads through
+	// `saveTranslationsFromForm`, which *skips* a locale whose name is blank
+	// where the helper *refuses* one that is half filled. Moving to the helper
+	// would tighten that, so it is a behaviour change rather than a cleanup.
 	saveTranslations: async (event) => {
 		const db = getDb();
 		const form = await event.request.formData();
