@@ -4,6 +4,7 @@ import { unified } from 'unified';
 import type { Paragraph, Root } from 'mdast';
 import { downgradeToSubset } from '../../src/lib/markdown/downgrade';
 import { parseAgreementBody, SUBSET_NODE_TYPES } from '../../src/lib/markdown/subset';
+import { docxToMarkdown } from '../../src/lib/server/nda/import/docx';
 import { docxWith } from '../helpers/docx';
 import { PdfHasNoText, pdfToMarkdown } from '../../src/lib/server/nda/import/pdf';
 import { blankPdf, drawnText, textPdf } from '../helpers/pdf';
@@ -281,5 +282,38 @@ describe('pdfToMarkdown', () => {
 
 	it('refuses a PDF with no extractable text', async () => {
 		await expect(pdfToMarkdown(await blankPdf())).rejects.toBeInstanceOf(PdfHasNoText);
+	});
+});
+
+describe('docxToMarkdown', () => {
+	it('carries a heading and a paragraph into the subset', async () => {
+		const { markdown, dropped } = await docxToMarkdown(
+			docxWith([
+				{ text: 'Vertraulichkeitsvereinbarung', heading: true },
+				{ text: 'Die Parteien vereinbaren Folgendes.' }
+			])
+		);
+
+		expect(markdown).toContain('Vertraulichkeitsvereinbarung');
+		expect(markdown).toContain('Die Parteien vereinbaren Folgendes.');
+		expect(dropped).toEqual([]);
+		expect(() => parseAgreementBody(markdown)).not.toThrow();
+	});
+
+	it('keeps an enumerated clause as text', async () => {
+		const { markdown } = await docxToMarkdown(
+			docxWith([{ text: '1. Definitionen im Sinne dieser Vereinbarung.' }])
+		);
+
+		const root = parseAgreementBody(markdown);
+		expect(root.children.some((node) => node.type === 'list')).toBe(false);
+	});
+
+	it('produces a body the subset validator accepts, whatever came in', async () => {
+		const { markdown } = await docxToMarkdown(
+			docxWith([{ text: 'Ein Absatz.' }, { text: 'Noch einer.' }])
+		);
+
+		expect(() => parseAgreementBody(markdown)).not.toThrow();
 	});
 });
