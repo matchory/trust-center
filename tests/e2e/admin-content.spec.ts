@@ -71,7 +71,7 @@ test('an admin can publish a subprocessor and see it on the portal', async ({ pa
 
 	await page.getByTestId('translation-purpose-de').fill('Hosting der Anwendung');
 	await page.getByTestId('translation-datacategories-de').fill('Sämtliche Kundendaten');
-	await submitAndWait(page, 'translation-save-de', '?/saveTranslation');
+	await submitAndWait(page, 'translation-save', '?/saveTranslations');
 
 	await page.getByTestId('subprocessor-published').check();
 	await submitAndWait(page, 'subprocessor-save-meta', '?/saveMeta');

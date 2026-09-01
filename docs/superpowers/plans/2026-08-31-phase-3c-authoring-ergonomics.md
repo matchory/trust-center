@@ -2398,7 +2398,7 @@ git add "src/routes/(admin)/admin/faq/[id]" tests/e2e/admin-content.spec.ts
 git commit -m "refactor(admin): submit every faq locale in one form"
 ```
 
-- [ ] **Steps 5–8 (Task 15): the subprocessor editor**
+- [x] **Steps 5–8 (Task 15): the subprocessor editor**
 
 Same four steps against `src/routes/(admin)/admin/subprocessors/[id]/`. The action becomes:
 
