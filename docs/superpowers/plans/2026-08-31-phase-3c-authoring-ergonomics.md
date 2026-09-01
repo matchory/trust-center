@@ -2558,9 +2558,11 @@ The rule stays `proposeFrom`, the same one the approver's proposal uses. That is
 
 **Interfaces:**
 - Consumes: `proposeFrom`, `DefaultTemplateMissing` from `src/lib/server/nda/requirements.ts`; `documentGroup`, `accessGroup` from the schema.
-- Produces: `ConferredRow` gains `tier: string` and `groupTemplateIds: (string | null)[]`. `requirementsByDocument` loses its only caller but stays exported — it is the read `proposeRequirements` is built on.
+- Produces: `ConferredRow` gains `tier: string` and `groupTemplateIds: (string | null)[]`. `requirementsByDocument` loses its only caller but stays exported.
 
-- [ ] **Step 1: Record the query count before changing anything**
+  Correction: the stated reason for keeping it — "it is the read `proposeRequirements` is built on" — is wrong. `proposeRequirements` is built on `scopedDocuments`; `requirementsByDocument` is a separate wrapper and after this task it has no caller in `src` or `tests`. It is kept because the plan says to keep it, not because anything uses it. Deciding its fate belongs in the carry-over, not here.
+
+- [x] **Step 1: Record the query count before changing anything**
 
 ```sh
 pnpm test:integration tests/integration/nda-delivery.test.ts
@@ -2569,7 +2571,7 @@ pnpm test:integration tests/integration/grants-scope.test.ts
 
 Both must be green before you start; this task is judged on them still being green afterwards.
 
-- [ ] **Step 2: Widen the conferred select**
+- [x] **Step 2: Widen the conferred select**
 
 In `src/lib/server/access/grants.ts`, add the imports:
 
@@ -2669,7 +2671,7 @@ Point `grantedDocuments` at it:
 	);
 ```
 
-- [ ] **Step 3: Answer the probe from the rows**
+- [x] **Step 3: Answer the probe from the rows**
 
 Replace the head of `narrowByAgreements`, up to and including the `unresolvable.size === 0` early return, with:
 
@@ -2736,7 +2738,7 @@ Everything below that — the waived set, the `holds` cache, the delivery loop �
 
 If `ScopedDocument` is not exported from `requirements.ts`, export it; the object literal above must be the same type `proposeFrom` takes, not a structurally similar one.
 
-- [ ] **Step 4: Verify the invariant survived**
+- [x] **Step 4: Verify the invariant survived**
 
 ```sh
 pnpm test:integration tests/integration/nda-delivery.test.ts
@@ -2746,7 +2748,7 @@ pnpm test:integration
 
 Expected: PASS, unchanged. These tests are the control on this task: if the narrowing-only case fails, the fold lost a group membership and a document that should be gated is being delivered — stop and fix, do not adjust the test.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```sh
 pnpm format

@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, gt, inArray, isNull, or, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, gt, inArray, isNull, or, sql, type SQL } from 'drizzle-orm';
 import { z } from 'zod';
 import {
 	accessGrant,
@@ -6,6 +6,7 @@ import {
 	accessGrantGroup,
 	accessGrantNda,
 	accessGrantTier,
+	accessGroup,
 	document,
 	documentGroup,
 	requester,
@@ -13,7 +14,7 @@ import {
 } from '../db/schema';
 import { groupByKey } from '../collections';
 import { validAcceptance } from '../nda/acceptance';
-import { requirementsByDocument } from '../nda/requirements';
+import { DefaultTemplateMissing, proposeFrom } from '../nda/requirements';
 import { acceptanceScope, defaultTemplateId } from '../nda/settings';
 import { PHASE_TIERS, setGrantGroups, setGrantTiers } from './scope';
 import type { ScopeTier } from '../../access-types';
@@ -145,6 +146,71 @@ interface ConferredRow {
 	requesterId: string;
 	documentId: string;
 	expiresAt: Date | null;
+	tier: string;
+	/** One entry per group the document belongs to; `null` where that group carries no agreement. */
+	groupTemplateIds: (string | null)[];
+}
+
+/**
+ * The select both callers run. The two left joins are what make the delivery
+ * re-check free in the common case: `narrowByAgreements` used to ask
+ * `requirementsByDocument` before it could know the answer was "nothing is
+ * gated", so every gated download and every portal list paid a round trip to
+ * learn the state a deployment is in until an operator configures an agreement.
+ *
+ * The joins multiply a document by its group memberships, which is why the rows
+ * fold back into one entry per (grant, document) — the same shape
+ * `scopedDocuments` folds into, for the same reason.
+ */
+function conferredSelect(db: Db, where: SQL | undefined) {
+	return db
+		.select({
+			grantId: accessGrant.id,
+			requesterId: accessGrant.requesterId,
+			documentId: document.id,
+			expiresAt: accessGrant.expiresAt,
+			tier: document.tier,
+			groupTemplateId: accessGroup.ndaTemplateId
+		})
+		.from(accessGrant)
+		.innerJoin(document, grantConfersDocument())
+		.leftJoin(documentGroup, eq(documentGroup.documentId, document.id))
+		.leftJoin(accessGroup, eq(accessGroup.id, documentGroup.groupId))
+		.where(where);
+}
+
+function foldConferred(
+	rows: readonly {
+		grantId: string;
+		requesterId: string;
+		documentId: string;
+		expiresAt: Date | null;
+		tier: string;
+		groupTemplateId: string | null;
+	}[]
+): ConferredRow[] {
+	const folded = new Map<string, ConferredRow>();
+
+	for (const row of rows) {
+		const key = `${row.grantId}:${row.documentId}`;
+		const seen = folded.get(key);
+
+		if (seen) {
+			seen.groupTemplateIds.push(row.groupTemplateId);
+			continue;
+		}
+
+		folded.set(key, {
+			grantId: row.grantId,
+			requesterId: row.requesterId,
+			documentId: row.documentId,
+			expiresAt: row.expiresAt,
+			tier: row.tier,
+			groupTemplateIds: [row.groupTemplateId]
+		});
+	}
+
+	return [...folded.values()];
 }
 
 /**
@@ -177,6 +243,15 @@ async function narrowByAgreements(
 ): Promise<ConferredRow[]> {
 	if (rows.length === 0) return [];
 
+	// Free: the join already told us. Nothing at the `nda` tier and no group
+	// carrying an agreement means nothing here is gated, which is every
+	// deployment until an operator configures one. This used to cost five
+	// queries to discover.
+	const gated = rows.some(
+		(row) => row.tier === 'nda' || row.groupTemplateIds.some((id) => id !== null)
+	);
+	if (!gated) return [...rows];
+
 	// These four are independent of each other, and this is the gated download
 	// path — they go together rather than one round trip at a time.
 	const [defaultTemplate, waivers, scope, people] = await Promise.all([
@@ -200,16 +275,30 @@ async function narrowByAgreements(
 			.where(inArray(requester.id, [...new Set(rows.map((row) => row.requesterId))]))
 	]);
 
-	const { required, unresolvable } = await requirementsByDocument(
-		db,
-		[...new Set(rows.map((row) => row.documentId))],
-		{ defaultTemplateId: defaultTemplate }
-	);
+	// `proposeFrom` rather than `requirementsByDocument`: the read that helper
+	// performs is now the join above, and the rule itself is the one the
+	// approver's proposal used. Restating it here would be the second
+	// implementation `domainIsRuleMatched`'s comment warns about.
+	const required = new Map<string, string[]>();
+	const unresolvable = new Set<string>();
 
-	// Nothing carries an agreement — the state every deployment is in until an
-	// operator sets one up, and every row passes untouched.
-	if (unresolvable.size === 0 && [...required.values()].every((list) => list.length === 0)) {
-		return [...rows];
+	for (const row of rows) {
+		if (required.has(row.documentId) || unresolvable.has(row.documentId)) continue;
+
+		try {
+			required.set(
+				row.documentId,
+				proposeFrom(
+					[{ id: row.documentId, tier: row.tier, groupTemplateIds: row.groupTemplateIds }],
+					{ defaultTemplateId: defaultTemplate }
+				)
+			);
+		} catch (cause) {
+			// §4.4 fails closed: an `nda`-tier document with no default agreement
+			// is undeliverable, not ungated.
+			if (!(cause instanceof DefaultTemplateMissing)) throw cause;
+			unresolvable.add(row.documentId);
+		}
 	}
 
 	// One flat set rather than a map of sets: the question asked below is always
@@ -270,16 +359,7 @@ export async function countGrantDocuments(
 	grantId: string,
 	options: DeliveryOptions
 ): Promise<number> {
-	const rows = await db
-		.select({
-			grantId: accessGrant.id,
-			requesterId: accessGrant.requesterId,
-			documentId: document.id,
-			expiresAt: accessGrant.expiresAt
-		})
-		.from(accessGrant)
-		.innerJoin(document, grantConfersDocument())
-		.where(eq(accessGrant.id, grantId));
+	const rows = foldConferred(await conferredSelect(db, eq(accessGrant.id, grantId)));
 
 	return (await narrowByAgreements(db, rows, options)).length;
 }
@@ -299,21 +379,15 @@ export async function grantedDocuments(
 	requesterId: string,
 	options: DeliveryOptions & { documentId?: string }
 ): Promise<{ documentId: string; expiresAt: Date }[]> {
-	const conferred = await db
-		.select({
-			grantId: accessGrant.id,
-			requesterId: accessGrant.requesterId,
-			documentId: document.id,
-			expiresAt: accessGrant.expiresAt
-		})
-		.from(accessGrant)
-		.innerJoin(document, grantConfersDocument())
-		.where(
+	const conferred = foldConferred(
+		await conferredSelect(
+			db,
 			and(
 				eq(accessGrant.requesterId, requesterId),
 				options.documentId ? eq(document.id, options.documentId) : undefined
 			)
-		);
+		)
+	);
 
 	const rows = await narrowByAgreements(db, conferred, options);
 
