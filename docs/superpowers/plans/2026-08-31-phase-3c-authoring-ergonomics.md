@@ -77,7 +77,7 @@ That is necessary and, as Gate 2 showed, not sufficient. Clearing the address bu
 - Consumes: `rateLimit` from `src/lib/server/db/schema`, `not` and `like` from `drizzle-orm`.
 - Produces: nothing other tasks depend on.
 
-- [ ] **Step 1: Confirm the failure is the one described**
+- [x] **Step 1: Confirm the failure is the one described**
 
 Run the flood case alone, then the whole file, three times each:
 
@@ -88,7 +88,7 @@ pnpm test:e2e --project=app --repeat-each=3
 
 Expected: the first passes every time; the second fails the flood case at least once. If the full run passes three times, do not skip the task — the hazard is real and documented in the 3c carry-over; note in the commit that the failure did not reproduce today.
 
-- [ ] **Step 2: Narrow the three wholesale deletes**
+- [x] **Step 2: Narrow the three wholesale deletes**
 
 In each of the three files, replace `await db.delete(rateLimit);` with a delete that spares the email buckets:
 
@@ -102,7 +102,7 @@ await db.delete(rateLimit).where(not(like(rateLimit.key, 'request:email:%')));
 
 Add `import { like, not } from 'drizzle-orm';` to each file, merging with the existing `drizzle-orm` import where there is one.
 
-- [ ] **Step 3: Point the flood case at the email limiter**
+- [x] **Step 3: Point the flood case at the email limiter**
 
 In `tests/e2e/request.spec.ts`, replace the flood case body so all six submissions carry the same address:
 
@@ -125,7 +125,7 @@ test('the submission limiter refuses a flood to one address', async ({ page }) =
 
 Read the existing case first and keep its assertion helper and testid exactly as they are — only the emails and the comment change. If the existing case asserts something other than `request-throttled`, keep that assertion.
 
-- [ ] **Step 4: Verify, repeatedly**
+- [x] **Step 4: Verify, repeatedly**
 
 ```sh
 pnpm test:e2e --project=app --repeat-each=3
@@ -133,7 +133,7 @@ pnpm test:e2e --project=app --repeat-each=3
 
 Expected: PASS on all three runs. This is the only step that proves the fix; a single green run does not.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```sh
 pnpm format
@@ -157,7 +157,7 @@ Pure mdast in, mdast out — no database, no browser, no `mammoth`. It lives bes
 - Consumes: `SUBSET_NODE_TYPES` from `src/lib/markdown/subset.ts`; `Root`, `RootContent` from `mdast`.
 - Produces: `downgradeToSubset(root: Root): { root: Root; dropped: string[] }` — `dropped` is the sorted, de-duplicated list of node types that were removed or rewritten.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Create `tests/unit/agreement-import.test.ts`:
 
@@ -235,7 +235,7 @@ describe('downgradeToSubset', () => {
 });
 ```
 
-- [ ] **Step 2: Run them to verify they fail**
+- [x] **Step 2: Run them to verify they fail**
 
 ```sh
 pnpm test:unit tests/unit/agreement-import.test.ts
@@ -243,7 +243,7 @@ pnpm test:unit tests/unit/agreement-import.test.ts
 
 Expected: FAIL — `Failed to resolve import "../../src/lib/markdown/downgrade"`.
 
-- [ ] **Step 3: Write the downgrade pass**
+- [x] **Step 3: Write the downgrade pass**
 
 Create `src/lib/markdown/downgrade.ts`:
 
@@ -348,7 +348,7 @@ function textOf(node: RootContent, dropped: Set<string>): string {
 }
 ```
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
 ```sh
 pnpm test:unit tests/unit/agreement-import.test.ts
@@ -356,7 +356,7 @@ pnpm test:unit tests/unit/agreement-import.test.ts
 
 Expected: PASS, 7 tests.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```sh
 pnpm format
@@ -387,7 +387,7 @@ Two corrections to what this task first said, both from reading `tests/helpers/`
   - `docxWith(paragraphs: readonly { text: string; heading?: boolean }[]): Uint8Array` in `tests/helpers/docx.ts`
   - `blankPdf(pages = 1)`, which already exists, is what the "no extractable text" cases in Tasks 4, 7 and 8 use.
 
-- [ ] **Step 1: Add the text-bearing PDF beside `blankPdf`**
+- [x] **Step 1: Add the text-bearing PDF beside `blankPdf`**
 
 In `tests/helpers/pdf.ts`, add `StandardFonts` to the existing `pdf-lib` import and append:
 
@@ -414,7 +414,7 @@ export async function textPdf(
 }
 ```
 
-- [ ] **Step 2: Write the DOCX builder**
+- [x] **Step 2: Write the DOCX builder**
 
 Create `tests/helpers/docx.ts`:
 
@@ -521,7 +521,7 @@ function zipStored(entries: readonly ZipEntry[]): Uint8Array {
 }
 ```
 
-- [ ] **Step 3: Prove the DOCX is valid before anything depends on it**
+- [x] **Step 3: Prove the DOCX is valid before anything depends on it**
 
 A hand-written ZIP that is subtly wrong would surface later as a confusing `mammoth` failure inside another task. Install `mammoth` now and check the fixture through Vitest — add this to `tests/unit/agreement-import.test.ts`:
 
@@ -546,7 +546,7 @@ pnpm test:unit tests/unit/agreement-import.test.ts -t 'docx mammoth can read'
 
 Expected: PASS. Keep this test — it is the only thing standing between a malformed fixture and an afternoon spent debugging the wrong file.
 
-- [ ] **Step 4: Prove `textPdf` and `blankPdf` differ in the way the extractor cares about**
+- [x] **Step 4: Prove `textPdf` and `blankPdf` differ in the way the extractor cares about**
 
 `textPdf` is untested until Task 4 uses it, and a fixture that draws nothing would make Task 4's failures unreadable. Add one case using `drawnText`, which `tests/helpers/pdf.ts` already exports:
 
@@ -567,7 +567,7 @@ pnpm test:unit tests/unit/agreement-import.test.ts
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```sh
 pnpm format
@@ -591,7 +591,7 @@ The last part needs no special code and that is the point worth understanding be
 - Consumes: `getDocument` from `pdfjs-dist`; `remark-stringify`, `unified`; `Root`, `RootContent` from `mdast`.
 - Produces: `pdfToMarkdown(bytes: Uint8Array): Promise<string>` and `export class PdfHasNoText extends Error {}`.
 
-- [ ] **Step 1: Install pdfjs and find the import path that works under Node**
+- [x] **Step 1: Install pdfjs and find the import path that works under Node**
 
 `pdfjs-dist` ships several builds and only the legacy one runs under Node without a browser worker. Establish which specifier resolves before writing code against it:
 
@@ -605,7 +605,7 @@ node --input-type=module -e "const m = await import('pdfjs-dist/legacy/build/pdf
 
 Expected: `function`. If it throws, try in order `pdfjs-dist/legacy/build/pdf.js`, then `pdfjs-dist`, and use whichever prints `function`. Record the working specifier in the module comment — the next reader will not want to repeat this.
 
-- [ ] **Step 2: Write the failing tests**
+- [x] **Step 2: Write the failing tests**
 
 Append to `tests/unit/agreement-import.test.ts`:
 
@@ -668,7 +668,7 @@ Add `parseAgreementBody` back to the `subset` import at the top of the file:
 import { parseAgreementBody, SUBSET_NODE_TYPES } from '../../src/lib/markdown/subset';
 ```
 
-- [ ] **Step 3: Run them to verify they fail**
+- [x] **Step 3: Run them to verify they fail**
 
 ```sh
 pnpm test:unit tests/unit/agreement-import.test.ts
@@ -676,7 +676,7 @@ pnpm test:unit tests/unit/agreement-import.test.ts
 
 Expected: FAIL — cannot resolve `../../src/lib/server/nda/import/pdf`.
 
-- [ ] **Step 4: Write the extractor**
+- [x] **Step 4: Write the extractor**
 
 Create `src/lib/server/nda/import/pdf.ts`:
 
@@ -861,7 +861,7 @@ function bodySize(lines: readonly Line[]): number {
 }
 ```
 
-- [ ] **Step 5: Run the tests to verify they pass**
+- [x] **Step 5: Run the tests to verify they pass**
 
 ```sh
 pnpm test:unit tests/unit/agreement-import.test.ts
@@ -869,7 +869,7 @@ pnpm test:unit tests/unit/agreement-import.test.ts
 
 Expected: PASS. `item.height` was measured to carry the drawn point size exactly under `pdfjs-dist` 6.3.289 (20 and 11 for the fixture above), so no transform-matrix fallback is needed; should a later version return `0`, read the size off the matrix instead — `Math.hypot(transform[2], transform[3])` — and keep the rest unchanged. Adjust the constants only if a fixture case fails, never to make a real document look nicer; §16 records that tuning against documents we do not have is the known unknown here.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```sh
 pnpm format
@@ -891,7 +891,7 @@ git commit -m "feat(nda): reconstruct paragraphs and headings from a pdf"
 - Consumes: `mammoth`; `rehype-parse`, `rehype-remark`, `remark-stringify`, `unified`; `downgradeToSubset` from `src/lib/markdown/downgrade.ts`.
 - Produces: `docxToMarkdown(bytes: Uint8Array): Promise<{ markdown: string; dropped: string[] }>`
 
-- [ ] **Step 1: Install the conversion chain**
+- [x] **Step 1: Install the conversion chain**
 
 ```sh
 pnpm add rehype-parse rehype-remark
@@ -899,7 +899,7 @@ pnpm add rehype-parse rehype-remark
 
 `mammoth` was installed in Task 3, `remark-stringify` in Task 4.
 
-- [ ] **Step 2: Write the failing tests**
+- [x] **Step 2: Write the failing tests**
 
 Append to `tests/unit/agreement-import.test.ts`:
 
@@ -941,7 +941,7 @@ describe('docxToMarkdown', () => {
 });
 ```
 
-- [ ] **Step 3: Run them to verify they fail**
+- [x] **Step 3: Run them to verify they fail**
 
 ```sh
 pnpm test:unit tests/unit/agreement-import.test.ts -t docxToMarkdown
@@ -949,7 +949,7 @@ pnpm test:unit tests/unit/agreement-import.test.ts -t docxToMarkdown
 
 Expected: FAIL — cannot resolve `../../src/lib/server/nda/import/docx`.
 
-- [ ] **Step 4: Write the converter**
+- [x] **Step 4: Write the converter**
 
 Create `src/lib/server/nda/import/docx.ts`:
 
@@ -991,7 +991,7 @@ export async function docxToMarkdown(
 }
 ```
 
-- [ ] **Step 5: Run the tests to verify they pass**
+- [x] **Step 5: Run the tests to verify they pass**
 
 ```sh
 pnpm test:unit tests/unit/agreement-import.test.ts
@@ -999,7 +999,7 @@ pnpm test:unit tests/unit/agreement-import.test.ts
 
 Expected: PASS, every case in the file.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```sh
 pnpm format
@@ -1024,7 +1024,7 @@ Routes should not know which library reads which format. One function, dispatchi
   - `importAgreementBody(file: UploadedFile): Promise<ImportedBody>`
   - `const IMPORT_TYPES: readonly string[]` — the allowed upload types, for the route's `readUpload` limits.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Append to `tests/unit/agreement-import.test.ts`:
 
@@ -1064,7 +1064,7 @@ describe('importAgreementBody', () => {
 });
 ```
 
-- [ ] **Step 2: Run them to verify they fail**
+- [x] **Step 2: Run them to verify they fail**
 
 ```sh
 pnpm test:unit tests/unit/agreement-import.test.ts -t importAgreementBody
@@ -1072,7 +1072,7 @@ pnpm test:unit tests/unit/agreement-import.test.ts -t importAgreementBody
 
 Expected: FAIL — cannot resolve `../../src/lib/server/nda/import`.
 
-- [ ] **Step 3: Write the entry point**
+- [x] **Step 3: Write the entry point**
 
 Create `src/lib/server/nda/import/index.ts`:
 
@@ -1115,7 +1115,7 @@ export async function importAgreementBody(file: UploadedFile): Promise<ImportedB
 }
 ```
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
 ```sh
 pnpm test:unit tests/unit/agreement-import.test.ts
@@ -1123,7 +1123,7 @@ pnpm test:unit tests/unit/agreement-import.test.ts
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```sh
 pnpm format
@@ -1145,7 +1145,7 @@ Import returns a draft to the page and writes nothing (P3.22). It refuses a vers
 - Consumes: `importAgreementBody`, `IMPORT_TYPES`, `ImportedBody`; `readUpload`, `UploadRejected`, `assertPdfPages`; `PdfHasNoText`.
 - Produces: an action returning `{ imported: { locale: string; markdown: string; dropped: string[] } }` on success, or `fail(400 | 409, { field: 'import', message })` where `message` is one of `'immutable'`, `'no-text'`, or the `UploadRejected` text.
 
-- [ ] **Step 1: Write the failing integration test**
+- [x] **Step 1: Write the failing integration test**
 
 Create `tests/integration/nda-import.test.ts`. Model the setup on the existing `tests/integration/nda-*.test.ts` files — read one first for how they build a db, seed a template and clean up, and follow it exactly, including cleaning children before parents (`nda_acceptance.version_id` and `access_group.nda_template_id` are both `ON DELETE RESTRICT`; the 3c carry-over records three files bitten by this).
 
@@ -1183,7 +1183,7 @@ describe('agreement import', () => {
 
 The immutability refusal is asserted through the browser in Task 8, where the action is actually reachable; asserting it here would mean calling a SvelteKit action out of its route, which no other test in this suite does.
 
-- [ ] **Step 2: Run it to verify it fails**
+- [x] **Step 2: Run it to verify it fails**
 
 ```sh
 pnpm test:integration tests/integration/nda-import.test.ts
@@ -1191,7 +1191,7 @@ pnpm test:integration tests/integration/nda-import.test.ts
 
 Expected: FAIL — cannot resolve the import module (it exists after Task 6, so if this passes immediately, that is fine: the point of the file is that it keeps passing).
 
-- [ ] **Step 3: Add the action**
+- [x] **Step 3: Add the action**
 
 In `src/routes/(admin)/admin/agreements/[id]/versions/[versionId]/+page.server.ts`, extend the imports:
 
@@ -1258,7 +1258,7 @@ Then add the action after `saveBody` and before `publish`:
 	},
 ```
 
-- [ ] **Step 4: Verify**
+- [x] **Step 4: Verify**
 
 ```sh
 pnpm test:integration tests/integration/nda-import.test.ts
@@ -1267,7 +1267,7 @@ pnpm check
 
 Expected: tests PASS; `pnpm check` reports 0 errors and 0 warnings. If `check` complains that the action's return type widens the page's `form` union, that is expected and correct — Task 8 consumes it.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```sh
 pnpm format
@@ -1292,7 +1292,7 @@ This task targets the **textarea**, which is still what the page renders. Task 1
 - Consumes: the `?/import` action's `{ imported: { locale, markdown, dropped } }` from Task 7.
 - Produces: `data-testid` values later tasks drive — `import-file-{locale}`, `import-submit-{locale}`, `import-dropped-{locale}`, `import-error`.
 
-- [ ] **Step 1: Add the message keys**
+- [x] **Step 1: Add the message keys**
 
 To `messages/en.json`:
 
@@ -1316,7 +1316,7 @@ To `messages/de.json`:
 
 Keep both files in the same key order; `pnpm check` compiles the catalogs first and will fail on a malformed one.
 
-- [ ] **Step 2: Extract the setup the new cases need**
+- [x] **Step 2: Extract the setup the new cases need**
 
 `tests/e2e/admin-agreements.spec.ts` has no helper for reaching a draft version — the five existing cases each inline it. Three more cases are about to need it, so extract it first, from the case at line 35 (`a body is previewed before it can be published`), without changing what that case asserts.
 
@@ -1347,7 +1347,7 @@ pnpm test:e2e tests/e2e/admin-agreements.spec.ts --project=app
 
 Expected: PASS, unchanged — this step refactors the spec and asserts nothing new.
 
-- [ ] **Step 3: Write the failing e2e case**
+- [x] **Step 3: Write the failing e2e case**
 
 Append to `tests/e2e/admin-agreements.spec.ts`:
 
@@ -1381,7 +1381,7 @@ test('imports a docx into a draft body without saving it', async ({ page }) => {
 
 Import `docxWith` from `../helpers/docx` and `awaitHydration` from `../helpers/hydration`, matching how the file already imports its helpers.
 
-- [ ] **Step 4: Run it to verify it fails**
+- [x] **Step 4: Run it to verify it fails**
 
 ```sh
 pnpm test:e2e tests/e2e/admin-agreements.spec.ts --project=app -t 'imports a docx'
@@ -1389,7 +1389,7 @@ pnpm test:e2e tests/e2e/admin-agreements.spec.ts --project=app -t 'imports a doc
 
 Expected: FAIL — no element with test id `import-file-de`.
 
-- [ ] **Step 5: Render the import control**
+- [x] **Step 5: Render the import control**
 
 In the `.svelte`, extend the script:
 
@@ -1496,7 +1496,7 @@ And the dropped-node notice, inside the per-locale block:
 			{/if}
 ```
 
-- [ ] **Step 6: Extend the upload spec to the second upload route**
+- [x] **Step 6: Extend the upload spec to the second upload route**
 
 §14 folded an end-to-end test of the admin file upload into 3b precisely because 3c adds a second upload route that would otherwise inherit the gap. Add to `tests/e2e/admin-upload.spec.ts`, whose `MAX_PAGES` and `MAX_BYTES` already match the lowered caps in `playwright.config.ts`'s webServer env:
 
@@ -1534,7 +1534,7 @@ test('the import route refuses a scan', async ({ page }) => {
 
 If sharing `draftVersion` across two spec files is awkward, move it into `tests/helpers/admin.ts` alongside the other cross-spec helpers rather than copying it.
 
-- [ ] **Step 7: Verify**
+- [x] **Step 7: Verify**
 
 ```sh
 pnpm test:e2e tests/e2e/admin-agreements.spec.ts --project=app
@@ -1544,7 +1544,7 @@ pnpm check
 
 Expected: PASS; 0 errors, 0 warnings.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```sh
 pnpm format
@@ -1552,7 +1552,7 @@ git add "src/routes/(admin)/admin/agreements/[id]/versions/[versionId]/+page.sve
 git commit -m "feat(admin): import a contract into a draft agreement body"
 ```
 
-- [ ] **Step 9: Gate 1 — the import theme is complete**
+- [x] **Step 9: Gate 1 — the import theme is complete**
 
 ```sh
 pnpm lint && pnpm check && pnpm test:unit && pnpm test:integration && pnpm test:e2e
@@ -1576,7 +1576,7 @@ One editor per locale, writing through to a hidden textarea so `?/saveBody`'s PO
 - Consumes: `@milkdown/core`, `@milkdown/preset-commonmark`, `@milkdown/theme-nord`, `@milkdown/plugin-listener`.
 - Produces: a component taking `{ name: string; value?: string; readonly?: boolean; testId?: string }` and exposing `setMarkdown(markdown: string): void` through `bind:this`.
 
-- [ ] **Step 1: Install and look at what the preset actually exports**
+- [x] **Step 1: Install and look at what the preset actually exports**
 
 ```sh
 pnpm add @milkdown/core @milkdown/preset-commonmark @milkdown/theme-nord @milkdown/plugin-listener
@@ -1585,13 +1585,13 @@ node --input-type=module -e "const m = await import('@milkdown/preset-commonmark
 
 Expected: a list including `blockquoteSchema`, `imageSchema`, `codeBlockSchema`, `inlineCodeSchema`, `linkSchema`. Write down what it prints — Step 3 filters against these exact names.
 
-- [ ] **Step 2: Decide the schema question, once, with a time bound**
+- [x] **Step 2: Decide the schema question, once, with a time bound**
 
 §5.1 wants the editor's ProseMirror schema restricted to `SUBSET_NODE_TYPES`, and says plainly that a client-side schema is a convenience and never the control.
 
 Filter the commonmark preset by removing the schema plugins for the nodes outside the subset. **If that cannot be made to work in the installed version within this task, ship the full commonmark preset**, add `admin_agreement_body_not_in_subset` coverage to the e2e in Task 11 so the server refusal is visibly the control, and open a carry-over item. Do not spend a second task on it: the server refusal plus the preview is what §5.1 says the control actually is.
 
-- [ ] **Step 3: Write the component**
+- [x] **Step 3: Write the component**
 
 Create `src/lib/components/admin/MarkdownEditor.svelte`:
 
@@ -1795,7 +1795,7 @@ Three things the draft above got wrong, all found by compiling it:
 - Excluding only the six `*Schema` exports is not enough. Every node also ships input rules and commands (`wrapInBlockquoteInputRule`, `insertImageInputRule`, `createCodeBlockInputRule`, `toggleLinkCommand`, and so on) which are created eagerly and look their node type up in the schema; keeping one whose schema is gone throws at `create()`, and a throw there is a blank editor with no message. Matching the preset's export names against a node-name token takes all of them.
 - The `never` casts are not needed and hide the one place a cast is honest: `commonmark` is declared as a union array including `sanitizeLinkHref`, a plain `(href) => string`, so the preset's own type is not assignable to the `use` it exists to be passed to. Everything else types cleanly, `host` wants `$state()` for `bind:this`, and `$state(value)` wants the same `svelte-ignore` Task 8 uses.
 
-- [ ] **Step 4: Verify it compiles and nothing public grew**
+- [x] **Step 4: Verify it compiles and nothing public grew**
 
 ```sh
 pnpm check
@@ -1810,7 +1810,7 @@ console.log(hit.length === 0 ? 'ok: milkdown is not in an entry chunk' : 'LEAK: 
 
 Expected: 0 errors, 0 warnings; the build succeeds; the check prints `ok`. If it prints `LEAK`, the import is not dynamic enough — find the static import and remove it before continuing. If the entry directory has a different name in the installed SvelteKit, adjust the path; the assertion is what matters.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```sh
 pnpm format
@@ -1831,7 +1831,7 @@ Milkdown replaces the textarea. The server-rendered `AgreementBody` preview stay
 - Consumes: `MarkdownEditor` from Task 9 and its `setMarkdown` method; the `?/import` result from Task 7.
 - Produces: no new test ids — `body-{locale}` moves onto the hidden textarea so existing assertions keep working.
 
-- [ ] **Step 1: Swap the textarea for the editor**
+- [x] **Step 1: Swap the textarea for the editor**
 
 In the `.svelte` script, add the import and a place to hold the instances:
 
@@ -1868,7 +1868,7 @@ Replace the `<textarea>` inside the `FormField` with:
 
 Leave the preview block exactly as it is.
 
-- [ ] **Step 2: Give the specs a way to write a body**
+- [x] **Step 2: Give the specs a way to write a body**
 
 Nine call sites across `admin-agreements.spec.ts` and `tests/helpers/admin.ts` do `page.getByTestId('body-de').fill(...)`, and `fill` refuses a hidden element — every one of them breaks the moment the textarea is hidden. Add a helper beside `draftVersion` and route them through it:
 
@@ -1884,7 +1884,7 @@ export async function fillBody(page: Page, locale: string, markdown: string) {
 
 Writing the posted field directly is right for these cases: their subject is the server — validation, publication, persistence — and it is also what a paste of raw Markdown or a client with the editor disabled produces. What it does *not* cover is the editor's own keystroke path, which is exactly what Task 11's first case exists to prove, so the two are complementary rather than the helper being a way around the editor.
 
-- [ ] **Step 3: Verify the page still compiles and the old assertions still hold**
+- [x] **Step 3: Verify the page still compiles and the old assertions still hold**
 
 ```sh
 pnpm check
@@ -1893,7 +1893,7 @@ pnpm test:e2e tests/e2e/admin-agreements.spec.ts --project=app
 
 Expected: 0 errors, 0 warnings; the spec passes. Task 8's import case asserts `body-de`'s **value**, which now lives on the hidden textarea — `toHaveValue` reads a hidden field without complaint, and it passing is what shows the import reached the editor and the editor reached the field.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```sh
 pnpm format
@@ -1910,7 +1910,7 @@ The failure §16 names is silent: a lost keystroke produces a passing test over 
 **Files:**
 - Test: `tests/e2e/admin-agreements.spec.ts`
 
-- [ ] **Step 1: Write the failing e2e case**
+- [x] **Step 1: Write the failing e2e case**
 
 ```ts
 test('saves what was typed in the editor, and previews it from the server', async ({ page }) => {
@@ -1992,7 +1992,7 @@ Two things about the POST itself:
 - `page.request.post` sends no `Origin`, and SvelteKit's CSRF check refuses a form POST without one. Pass `headers: { origin: new URL(page.url()).origin }`.
 - The response is **HTTP 200 carrying an ActionResult envelope**, not a 409: `{"type":"failure","status":409,"data":"…"}`. Assert the envelope's `status` and that its `data` names `immutable`, so the case cannot pass on any other 4xx.
 
-- [ ] **Step 2: Run them**
+- [x] **Step 2: Run them**
 
 ```sh
 pnpm test:e2e tests/e2e/admin-agreements.spec.ts --project=app
@@ -2007,7 +2007,7 @@ That sync then has to yield to an external write, or it clobbers `fillBody` and 
 
 If the second case passes for the wrong reason — the editor stripped the table rather than the server refusing it — assert the server's message text as well, so the case cannot pass without the refusal.
 
-- [ ] **Step 3: Check the console is clean under CSP**
+- [x] **Step 3: Check the console is clean under CSP**
 
 The portal's CSP runs in `auto` mode with no third-party origins, and a ProseMirror integration is the first thing in this codebase to build DOM at runtime. Add a console listener to the first case temporarily and confirm no `Content Security Policy` violation is logged:
 
@@ -2019,7 +2019,7 @@ If a violation appears, do **not** widen the CSP in `vite.config.ts`. Find the i
 
 Measured: the editor introduces none. Two `style-src-attr` violations do fire, and both are already there on `/de/admin`, `/de/admin/agreements` and `/de/admin/documents` with no editor on the page — a `style="display: contents"` wrapper in the layout and SvelteKit's own visually-hidden announcer element. They are outside this phase; record them in the carry-over rather than widening anything.
 
-- [ ] **Step 4: Commit and gate**
+- [x] **Step 4: Commit and gate**
 
 ```sh
 pnpm format
@@ -2045,7 +2045,7 @@ This is the first task of the consolidation theme because every task after it de
 - Consumes: nothing new.
 - Produces: unchanged props; the only change is that all panes exist in the DOM and inactive ones carry the `hidden` attribute.
 
-- [ ] **Step 1: Keep the panes, hide the inactive ones**
+- [x] **Step 1: Keep the panes, hide the inactive ones**
 
 Replace the final block of `src/lib/components/admin/LocaleTabs.svelte`:
 
@@ -2059,7 +2059,7 @@ Replace the final block of `src/lib/components/admin/LocaleTabs.svelte`:
 {/each}
 ```
 
-- [ ] **Step 2: Verify nothing that used tabs regressed**
+- [x] **Step 2: Verify nothing that used tabs regressed**
 
 ```sh
 pnpm check
@@ -2068,7 +2068,7 @@ pnpm test:e2e tests/e2e/admin-content.spec.ts --project=app
 
 Expected: 0 errors, 0 warnings; the spec passes unchanged — at this point every editor still posts one locale at a time, so this change is invisible to them. If a case now finds two elements with the same test id, that is the point of the change: the spec must scope its lookup to the visible pane, and Tasks 14–19 rewrite those cases anyway.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```sh
 pnpm format
@@ -2094,7 +2094,7 @@ This adds the plural helper in the shape `saveMetaAction` established, with the 
   - `readTranslations(form: FormData, locales: readonly string[], opts: { required: readonly string[]; optional?: readonly string[] }): { values: Map<string, Record<string, string | null>> } | { missing: { field: string; locale: string } }`
   - `saveTranslationsAction(opts: SaveTranslationsOptions)` where `SaveTranslationsOptions` is `{ type: string; subjectType?: string; required: readonly string[]; optional?: readonly string[]; set: (db: Db, id: string, locale: string, values: Record<string, string | null>) => Promise<unknown> }`
 
-- [ ] **Step 1: Write the failing unit tests**
+- [x] **Step 1: Write the failing unit tests**
 
 Append to `tests/unit/admin-actions.test.ts`:
 
@@ -2155,7 +2155,7 @@ describe('readTranslations', () => {
 });
 ```
 
-- [ ] **Step 2: Run them to verify they fail**
+- [x] **Step 2: Run them to verify they fail**
 
 ```sh
 pnpm test:unit tests/unit/admin-actions.test.ts -t readTranslations
@@ -2163,7 +2163,7 @@ pnpm test:unit tests/unit/admin-actions.test.ts -t readTranslations
 
 Expected: FAIL — `readTranslations` is not exported.
 
-- [ ] **Step 3: Write the reader and the action**
+- [x] **Step 3: Write the reader and the action**
 
 Append to `src/lib/server/admin/actions.ts`:
 
@@ -2263,7 +2263,7 @@ export function saveTranslationsAction(opts: SaveTranslationsOptions) {
 }
 ```
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
 ```sh
 pnpm test:unit tests/unit/admin-actions.test.ts
@@ -2272,7 +2272,7 @@ pnpm check
 
 Expected: PASS; 0 errors, 0 warnings.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```sh
 pnpm format
@@ -2296,14 +2296,19 @@ In the e2e: replace `submitAndWait(page, 'translation-save-de', '?/saveTranslati
 
 | Task | Editor | `type` | required | optional | e2e |
 | --- | --- | --- | --- | --- | --- |
-| 14 | `admin/faq/[id]` | `answer` | `question`, `answer` | — | `admin-content.spec.ts:24` |
-| 15 | `admin/subprocessors/[id]` | `subprocessor` | `purpose`, `dataCategories` | — | `admin-content.spec.ts:48` |
-| 16 | `admin/updates/[id]` | `update` (subject `update_post`) | `title`, `body` | — | `admin-content.spec.ts:74` |
-| 17 | `admin/controls/[id]` | `control` | `title` | `description` | `admin-content.spec.ts:98` |
-| 18 | `admin/certifications/[id]` | `certification` | `scope` | — | `admin-content.spec.ts:125` |
+| 14 | `admin/faq/[id]` | `answer` | `question`, `answer` | — | `admin-content.spec.ts:98` |
+| 15 | `admin/subprocessors/[id]` | `subprocessor` | `purpose`, `dataCategories` | — | `admin-content.spec.ts:74` |
+| 16 | `admin/updates/[id]` | `update` (subject `update_post`) | `title`, `body` | — | `admin-content.spec.ts:125` |
+| 17 | `admin/controls/[id]` | `control` | `title` | `description` | `admin-content.spec.ts:24` |
+| 18 | `admin/certifications/[id]` | `certification` | `scope` | — | `admin-content.spec.ts:48` |
 | 19 | `admin/documents/[id]` | `document` | `title` | `summary` | `admin-documents.spec.ts:26` |
 
-- [ ] **Step 1 (Task 14): Change the FAQ editor's action**
+The line numbers above are corrected: the original table numbered the cases in
+task order, but `admin-content.spec.ts` orders them control, certification,
+subprocessor, answer, update. Match the case by its `test(...)` name, not by the
+line — Tasks 14–19 each shift the ones below them.
+
+- [x] **Step 1 (Task 14): Change the FAQ editor's action**
 
 In `src/routes/(admin)/admin/faq/[id]/+page.server.ts`:
 
@@ -2323,7 +2328,7 @@ import { saveMetaAction, saveTranslationsAction } from '$lib/server/admin/action
 	}),
 ```
 
-- [ ] **Step 2 (Task 14): Change the FAQ editor's form**
+- [x] **Step 2 (Task 14): Change the FAQ editor's form**
 
 In `src/routes/(admin)/admin/faq/[id]/+page.svelte`, replace the whole `<LocaleTabs>` block with:
 
@@ -2371,7 +2376,7 @@ In `src/routes/(admin)/admin/faq/[id]/+page.svelte`, replace the whole `<LocaleT
 </form>
 ```
 
-- [ ] **Step 3 (Task 14): Update the e2e case and run it**
+- [x] **Step 3 (Task 14): Update the e2e case and run it**
 
 In `tests/e2e/admin-content.spec.ts:24`, change the FAQ case's submit to:
 
@@ -2385,7 +2390,7 @@ pnpm test:e2e tests/e2e/admin-content.spec.ts --project=app
 
 Expected: the FAQ case passes; the other four still pass, unchanged.
 
-- [ ] **Step 4 (Task 14): Commit**
+- [x] **Step 4 (Task 14): Commit**
 
 ```sh
 pnpm format
@@ -2409,7 +2414,7 @@ Same four steps against `src/routes/(admin)/admin/subprocessors/[id]/`. The acti
 	}),
 ```
 
-The two inputs become `name="purpose.{locale}"` and `name="dataCategories.{locale}"`, keeping their existing test ids and labels. The e2e change is at `admin-content.spec.ts:48`. Commit as `refactor(admin): submit every subprocessor locale in one form`.
+The two inputs become `name="purpose.{locale}"` and `name="dataCategories.{locale}"`, keeping their existing test ids and labels. The e2e change is at `admin-content.spec.ts:74`. Commit as `refactor(admin): submit every subprocessor locale in one form`.
 
 - [ ] **Steps 9–12 (Task 16): the updates editor**
 
@@ -2425,7 +2430,7 @@ Against `src/routes/(admin)/admin/updates/[id]/`. Note `subjectType` — droppin
 	}),
 ```
 
-Inputs become `title.{locale}` and `body.{locale}`. The e2e change is at `admin-content.spec.ts:74`. Commit as `refactor(admin): submit every update locale in one form`.
+Inputs become `title.{locale}` and `body.{locale}`. The e2e change is at `admin-content.spec.ts:125`. Commit as `refactor(admin): submit every update locale in one form`.
 
 - [ ] **Steps 13–16 (Task 17): the controls editor**
 
@@ -2444,7 +2449,7 @@ Against `src/routes/(admin)/admin/controls/[id]/`. This one has an optional fiel
 	}),
 ```
 
-Inputs become `title.{locale}` and `description.{locale}`. The e2e change is at `admin-content.spec.ts:98`. Commit as `refactor(admin): submit every control locale in one form`.
+Inputs become `title.{locale}` and `description.{locale}`. The e2e change is at `admin-content.spec.ts:24`. Commit as `refactor(admin): submit every control locale in one form`.
 
 - [ ] **Steps 17–20 (Task 18): the certifications editor**
 
@@ -2459,7 +2464,7 @@ Against `src/routes/(admin)/admin/certifications/[id]/`:
 	}),
 ```
 
-The input becomes `scope.{locale}`. The e2e change is at `admin-content.spec.ts:125`. Commit as `refactor(admin): submit every certification locale in one form`.
+The input becomes `scope.{locale}`. The e2e change is at `admin-content.spec.ts:48`. Commit as `refactor(admin): submit every certification locale in one form`.
 
 - [ ] **Steps 21–24 (Task 19): the documents editor**
 
