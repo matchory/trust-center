@@ -56,8 +56,10 @@
 		"nodemailer": "^9.0.6",
 		"openid-client": "^6.8.7",
 		"pdf-lib": "^1.17.1",
+		"pdfjs-dist": "^6.3.289",
 		"postgres": "^3.4.9",
 		"remark-parse": "^11.0.0",
+		"remark-stringify": "^11.0.0",
 		"unified": "^11.0.5",
 		"zod": "^4.4.3"
 	}

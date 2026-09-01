@@ -3,8 +3,9 @@ import remarkParse from 'remark-parse';
 import { unified } from 'unified';
 import type { Paragraph, Root } from 'mdast';
 import { downgradeToSubset } from '../../src/lib/markdown/downgrade';
-import { SUBSET_NODE_TYPES } from '../../src/lib/markdown/subset';
+import { parseAgreementBody, SUBSET_NODE_TYPES } from '../../src/lib/markdown/subset';
 import { docxWith } from '../helpers/docx';
+import { PdfHasNoText, pdfToMarkdown } from '../../src/lib/server/nda/import/pdf';
 import { blankPdf, drawnText, textPdf } from '../helpers/pdf';
 
 const parse = (markdown: string): Root => unified().use(remarkParse).parse(markdown) as Root;
@@ -232,5 +233,53 @@ describe('import fixtures', () => {
 			'Vertraulich'
 		);
 		expect(await drawnText(await blankPdf())).toBe('');
+	});
+});
+
+describe('pdfToMarkdown', () => {
+	it('promotes a larger line to a heading and keeps body text as paragraphs', async () => {
+		const markdown = await pdfToMarkdown(
+			await textPdf([
+				{ text: 'Vertraulichkeitsvereinbarung', size: 20 },
+				{ text: 'Die Parteien vereinbaren Folgendes.', size: 11 }
+			])
+		);
+
+		expect(markdown).toContain('# Vertraulichkeitsvereinbarung');
+		expect(markdown).toContain('Die Parteien vereinbaren Folgendes.');
+	});
+
+	it('keeps an enumerated clause as text, not as a list', async () => {
+		const markdown = await pdfToMarkdown(
+			await textPdf([
+				{ text: 'Vertraulichkeitsvereinbarung', size: 20 },
+				{ text: '1. Definitionen im Sinne dieser Vereinbarung.', size: 11 },
+				{ text: '2. Geheimhaltung der offengelegten Informationen.', size: 11 }
+			])
+		);
+
+		// The escape is what makes this true, and it is why the serializer does
+		// the enforcing (P3.21): our renderer numbers list items itself, so a
+		// clause imported as a list item can render under a different number
+		// than the contract it came from.
+		expect(markdown).toContain('1\\. Definitionen');
+
+		const root = parseAgreementBody(markdown);
+		expect(root.children.some((node) => node.type === 'list')).toBe(false);
+	});
+
+	it('produces a body the subset validator accepts', async () => {
+		const markdown = await pdfToMarkdown(
+			await textPdf([
+				{ text: 'Titel', size: 20 },
+				{ text: 'Ein Absatz mit Text.', size: 11 }
+			])
+		);
+
+		expect(() => parseAgreementBody(markdown)).not.toThrow();
+	});
+
+	it('refuses a PDF with no extractable text', async () => {
+		await expect(pdfToMarkdown(await blankPdf())).rejects.toBeInstanceOf(PdfHasNoText);
 	});
 });
