@@ -2451,7 +2451,7 @@ Against `src/routes/(admin)/admin/controls/[id]/`. This one has an optional fiel
 
 Inputs become `title.{locale}` and `description.{locale}`. The e2e change is at `admin-content.spec.ts:24`. Commit as `refactor(admin): submit every control locale in one form`.
 
-- [ ] **Steps 17–20 (Task 18): the certifications editor**
+- [x] **Steps 17–20 (Task 18): the certifications editor**
 
 Against `src/routes/(admin)/admin/certifications/[id]/`:
 

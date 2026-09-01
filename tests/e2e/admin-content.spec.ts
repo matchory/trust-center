@@ -45,7 +45,7 @@ test('an admin can publish a certification and see its badge on the landing page
 	await expect(page).toHaveURL(/\/admin\/certifications\/[0-9a-f-]{36}$/);
 
 	await page.getByTestId('translation-scope-de').fill('Betrieb der Plattform');
-	await submitAndWait(page, 'translation-save-de', '?/saveTranslation');
+	await submitAndWait(page, 'translation-save', '?/saveTranslations');
 
 	await page.getByTestId('certification-published').check();
 	await submitAndWait(page, 'certification-save-meta', '?/saveMeta');
