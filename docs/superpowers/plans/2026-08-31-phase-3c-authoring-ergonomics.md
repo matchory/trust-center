@@ -1596,6 +1596,9 @@ Create `src/lib/components/admin/MarkdownEditor.svelte`:
 ```svelte
 <script lang="ts">
 	import { onMount } from 'svelte';
+	// Type-only, so nothing from `@milkdown/*` reaches the bundle from here —
+	// the value imports below are dynamic on purpose (§10.4).
+	import type { Editor } from '@milkdown/core';
 
 	let {
 		name,
@@ -1608,9 +1611,12 @@ Create `src/lib/components/admin/MarkdownEditor.svelte`:
 	// `?/saveBody` never learns that the editor exists — the POST shape is the
 	// one Phase 3b established, and a body typed into a browser with JavaScript
 	// disabled still submits.
+	// The prop seeds the editor once; every later change comes through
+	// `setMarkdown`, which the page calls when an import returns.
+	// svelte-ignore state_referenced_locally
 	let markdown = $state(value);
-	let host: HTMLDivElement;
-	let editor: { action: (fn: unknown) => void; destroy: () => Promise<unknown> } | null = null;
+	let host: HTMLDivElement | undefined = $state();
+	let editor: Editor | null = null;
 
 	/** Called from the page when an import returns a new body for this locale. */
 	export function setMarkdown(next: string): void {
@@ -1628,57 +1634,80 @@ Create `src/lib/components/admin/MarkdownEditor.svelte`:
 	}
 
 	async function mount(): Promise<void> {
-		if (readonly) return;
+		if (readonly || !host) return;
 
 		// Dynamic, so `@milkdown/*` lands in an admin chunk and no public route
 		// ever loads it (§10.4). Static imports here would put it in the shared
 		// entry and break that guarantee silently.
-		const [{ Editor, rootCtx, defaultValueCtx }, commonmark, { listener, listenerCtx }] =
+		const [{ Editor, rootCtx, defaultValueCtx }, commonmark, { listener, listenerCtx }, { nord }] =
 			await Promise.all([
 				import('@milkdown/core'),
 				import('@milkdown/preset-commonmark'),
-				import('@milkdown/plugin-listener')
+				import('@milkdown/plugin-listener'),
+				import('@milkdown/theme-nord'),
+				// `nord` only sets view options; its stylesheet is a separate entry,
+				// and without it Tailwind's reset leaves a heading looking like body
+				// text in the one place an author is judging structure.
+				import('@milkdown/theme-nord/style.css')
 			]);
 
-		editor = (await Editor.make()
-			.config((ctx: never) => {
-				const context = ctx as unknown as {
-					set: (key: unknown, value: unknown) => void;
-					get: (key: unknown) => { markdownUpdated: (fn: unknown) => void };
-				};
-				context.set(rootCtx, host);
-				context.set(defaultValueCtx, markdown);
-				context.get(listenerCtx).markdownUpdated((_: unknown, next: string) => {
+		const root = host;
+
+		editor = await Editor.make()
+			.config(nord)
+			.config((ctx) => {
+				ctx.set(rootCtx, root);
+				ctx.set(defaultValueCtx, markdown);
+				ctx.get(listenerCtx).markdownUpdated((_, next) => {
 					markdown = next;
 				});
 			})
 			.use(listener)
 			.use(subsetOnly(commonmark))
-			.create()) as never;
+			.create();
 	}
+
+	type Preset = typeof import('@milkdown/preset-commonmark');
+	/**
+	 * What `Editor.use` accepts, read off the method because `@milkdown/ctx` —
+	 * where `MilkdownPlugin` lives — is not a direct dependency of this project.
+	 */
+	type Plugins = Parameters<Editor['use']>[0];
+
+	/**
+	 * The nodes §5.1 leaves out of the subset. Matched against the preset's own
+	 * export names rather than listed plugin by plugin, because every node ships
+	 * a schema, attributes, a keymap, input rules and commands — and dropping a
+	 * schema while keeping the input rule that looks its type up throws at
+	 * creation, which is a blank editor rather than a message.
+	 */
+	const EXCLUDED_NODES = ['blockquote', 'image', 'codeblock', 'inlinecode', 'link', 'html'];
 
 	/**
 	 * §5.1: the editor must not offer what the server is going to refuse — an
 	 * offer accepted and then rejected is a worse failure than one never made.
-	 * No GFM preset is loaded at all, which is what keeps tables out; these are
-	 * the commonmark nodes the subset also excludes (P3.24).
+	 * This is a convenience and never the control; `parseAgreementBody` is, and
+	 * the preview beside the editor is what an author actually checks. No GFM
+	 * preset is loaded at all, which is what keeps tables out (P3.24).
 	 */
-	function subsetOnly(preset: Record<string, unknown>): unknown[] {
-		const excluded = new Set(
-			[
-				'blockquoteSchema',
-				'imageSchema',
-				'codeBlockSchema',
-				'inlineCodeSchema',
-				'linkSchema',
-				'htmlSchema'
-			]
-				.map((key) => preset[key])
-				.filter(Boolean)
+	function subsetOnly(preset: Preset): Plugins {
+		// Built in one pass rather than filled with `add`, because eslint reads a
+		// mutated `Set` as reactive state and asks for `SvelteSet`; this one is a
+		// local lookup table that never outlives the call.
+		const excluded = new Set<unknown>(
+			Object.entries(preset as Record<string, unknown>)
+				.filter(([key]) => EXCLUDED_NODES.some((node) => key.toLowerCase().includes(node)))
+				.flatMap(([, plugin]) =>
+					Array.isArray(plugin) ? (plugin.flat(Infinity) as unknown[]) : [plugin]
+				)
 		);
 
-		const plugins = preset.commonmark as unknown[];
-		return plugins.filter((plugin) => !excluded.has(plugin));
+		// Cast rather than typed: `commonmark` is declared as a union array that
+		// includes `sanitizeLinkHref`, a plain `(href) => string`, so the preset's
+		// own type is not assignable to the `use` it exists to be passed to —
+		// filter or no filter.
+		const plugins = preset.commonmark as unknown as unknown[];
+		return plugins.filter((plugin) => !excluded.has(plugin)) as Plugins;
 	}
 
 	onMount(() => {
@@ -1704,6 +1733,12 @@ Create `src/lib/components/admin/MarkdownEditor.svelte`:
 ```
 
 If Step 1 printed different export names, use those. If Step 2 concluded the filter is impractical, replace `subsetOnly(commonmark)` with `commonmark.commonmark as never` and note it in the commit message.
+
+Three things the draft above got wrong, all found by compiling it:
+
+- `nord` is a config function, not a plugin — `.config(nord)`, never `.use(nord)` — and its stylesheet is a separate entry the theme does not pull in itself. Without that stylesheet Tailwind's reset leaves a heading looking like body text inside the editor, which is the one place an author is judging structure.
+- Excluding only the six `*Schema` exports is not enough. Every node also ships input rules and commands (`wrapInBlockquoteInputRule`, `insertImageInputRule`, `createCodeBlockInputRule`, `toggleLinkCommand`, and so on) which are created eagerly and look their node type up in the schema; keeping one whose schema is gone throws at `create()`, and a throw there is a blank editor with no message. Matching the preset's export names against a node-name token takes all of them.
+- The `never` casts are not needed and hide the one place a cast is honest: `commonmark` is declared as a union array including `sanitizeLinkHref`, a plain `(href) => string`, so the preset's own type is not assignable to the `use` it exists to be passed to. Everything else types cleanly, `host` wants `$state()` for `bind:this`, and `$state(value)` wants the same `svelte-ignore` Task 8 uses.
 
 - [ ] **Step 4: Verify it compiles and nothing public grew**
 
