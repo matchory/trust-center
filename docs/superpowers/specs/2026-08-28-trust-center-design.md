@@ -23,6 +23,12 @@ shipped in Phase 2. The full reasoning, and every decision this summary compress
 `2026-08-30-phase-3-nda-workflow-design.md`, which governs Phase 3 where the two differ. No other
 section changed.
 
+**Amended 2026-09-02 (Phase 4 planning):** Section 8's `subscription` sketch becomes two tables and
+gains a notification cursor, Section 11 records that Phase 4's update composer shipped in Phase 1 and
+that its outbound webhooks moved to the integrations decomposition. The full reasoning is in
+`2026-09-02-phase-4-notifications-design.md`, which governs Phase 4 where the two differ. No other
+section changed.
+
 ---
 
 ## 1. Summary
@@ -390,7 +396,9 @@ the prospect has *already made* at submission time.
 ```
 audit_event         at, actor_type, actor_id, action, subject_type, subject_id,
                     ip, ua, request_id, meta jsonb
-subscription        email, locale, topics[], confirmed_at, unsubscribe_token
+subscription        email, locale, confirm_token_hash, confirm_expires_at, confirmed_at,
+                    manage_token_hash, last_notified_at
+subscription_topic  subscription_id, topic          -- one of update_post.kind
 outbound_email      to, template, sent_at, status, provider_id
 setting             key unique, value jsonb
                     branding (logo, colours, custom domain), locale set,
@@ -523,6 +531,14 @@ publishing; digest emails; outbound webhooks for Slack and Teams.
 Advance notice of subprocessor changes is frequently a contractual obligation in DACH data
 processing agreements and feeds NIS2 supply-chain expectations, so this phase carries regulatory
 weight rather than being a convenience.
+
+**Amended 2026-09-02.** Two of those four bullets are settled elsewhere. The **update composer with
+scheduled publishing shipped in Phase 1** — `update_post.published_at` and `listPublicUpdates`
+already implement it — so what remains of it here is that a scheduled post produces no event to
+notify on. **Outbound webhooks are withdrawn** to subsystem A of
+`2026-08-31-integrations-decomposition.md`, which supersedes them with one event surface rather than
+two connectors. What Phase 4 builds is subscriptions, the notification job, and the subprocessor
+notice-coverage warning; see `2026-09-02-phase-4-notifications-design.md`.
 
 ### Phase 5 — Analytics and content operations · M
 
