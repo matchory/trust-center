@@ -20,11 +20,24 @@
 	// svelte-ignore state_referenced_locally
 	let markdown = $state(value);
 	let host: HTMLDivElement | undefined = $state();
+	let field: HTMLTextAreaElement | undefined = $state();
 	let editor: Editor | null = null;
+	/** Serialises the live ProseMirror document; null until the editor mounts. */
+	let readMarkdown: (() => string) | null = null;
+	/**
+	 * Whether something other than the editor wrote the field last. An `input`
+	 * event on a hidden textarea cannot come from a person — Svelte's binding
+	 * writes the property without dispatching one — so the only source is script:
+	 * a paste of raw Markdown, or a client with the editor disabled. Whoever
+	 * wrote last owns the value, because the field is what the form posts and
+	 * §5.1 puts the control at the server, not at the editor's schema.
+	 */
+	let writtenFromOutside = false;
 
 	/** Called from the page when an import returns a new body for this locale. */
 	export function setMarkdown(next: string): void {
 		markdown = next;
+		writtenFromOutside = false;
 		// Replacing the document from outside means tearing the editor down and
 		// building it again: ProseMirror owns its DOM and there is no supported
 		// way to swap a document under it without losing the selection anyway.
@@ -43,17 +56,21 @@
 		// Dynamic, so `@milkdown/*` lands in an admin chunk and no public route
 		// ever loads it (§10.4). Static imports here would put it in the shared
 		// entry and break that guarantee silently.
-		const [{ Editor, rootCtx, defaultValueCtx }, commonmark, { listener, listenerCtx }, { nord }] =
-			await Promise.all([
-				import('@milkdown/core'),
-				import('@milkdown/preset-commonmark'),
-				import('@milkdown/plugin-listener'),
-				import('@milkdown/theme-nord'),
-				// `nord` only sets view options; its stylesheet is a separate entry,
-				// and without it Tailwind's reset leaves a heading looking like body
-				// text in the one place an author is judging structure.
-				import('@milkdown/theme-nord/style.css')
-			]);
+		const [
+			{ Editor, rootCtx, defaultValueCtx, editorViewCtx, serializerCtx },
+			commonmark,
+			{ listener, listenerCtx },
+			{ nord }
+		] = await Promise.all([
+			import('@milkdown/core'),
+			import('@milkdown/preset-commonmark'),
+			import('@milkdown/plugin-listener'),
+			import('@milkdown/theme-nord'),
+			// `nord` only sets view options; its stylesheet is a separate entry,
+			// and without it Tailwind's reset leaves a heading looking like body
+			// text in the one place an author is judging structure.
+			import('@milkdown/theme-nord/style.css')
+		]);
 
 		const root = host;
 
@@ -64,11 +81,15 @@
 				ctx.set(defaultValueCtx, markdown);
 				ctx.get(listenerCtx).markdownUpdated((_, next) => {
 					markdown = next;
+					writtenFromOutside = false;
 				});
 			})
 			.use(listener)
 			.use(subsetOnly(commonmark))
 			.create();
+
+		readMarkdown = () =>
+			editor?.action((ctx) => ctx.get(serializerCtx)(ctx.get(editorViewCtx).state.doc)) ?? markdown;
 	}
 
 	type Preset = typeof import('@milkdown/preset-commonmark');
@@ -114,9 +135,35 @@
 		return plugins.filter((plugin) => !excluded.has(plugin)) as Plugins;
 	}
 
+	/**
+	 * `markdownUpdated` is debounced — measured empty a whole animation frame
+	 * after a keystroke — so a save clicked straight after typing posts the
+	 * document as it was before, and the save reports success over a body nobody
+	 * wrote. §16 named this as the hazard of putting ProseMirror over a form
+	 * field: it does not fail, it loses the last edit quietly.
+	 *
+	 * Serialising at submit time closes it. The listener is on `document` in the
+	 * capture phase because `use:enhance` registers its own submit handler on the
+	 * form while this component is still waiting for its dynamic imports — a
+	 * listener added to the form later would run after enhance had already read
+	 * the field.
+	 */
+	function syncBeforeSubmit(event: Event): void {
+		if (!field || event.target !== field.form || !readMarkdown) return;
+		if (writtenFromOutside) return;
+
+		markdown = readMarkdown();
+		field.value = markdown;
+	}
+
 	onMount(() => {
 		void mount();
-		return () => void editor?.destroy();
+		document.addEventListener('submit', syncBeforeSubmit, true);
+
+		return () => {
+			document.removeEventListener('submit', syncBeforeSubmit, true);
+			void editor?.destroy();
+		};
 	});
 </script>
 
@@ -132,5 +179,11 @@
 	<div bind:this={host} data-testid="{testId}-editor" class="rounded border px-2 py-1"></div>
 	<!-- Hidden, not absent: this is the field the form posts, and the editor is
 	     a view over it. -->
-	<textarea data-testid={testId} {name} hidden bind:value={markdown}></textarea>
+	<textarea
+		bind:this={field}
+		data-testid={testId}
+		{name}
+		hidden
+		bind:value={markdown}
+		oninput={() => (writtenFromOutside = true)}></textarea>
 {/if}

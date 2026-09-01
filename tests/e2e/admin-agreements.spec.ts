@@ -133,3 +133,44 @@ test('imports a docx into a draft body without saving it', async ({ page }) => {
 	await awaitHydration(page);
 	await expect(page.getByTestId('body-de')).not.toHaveValue(/Vertraulichkeitsvereinbarung/);
 });
+
+test('saves what was typed in the editor, and previews it from the server', async ({ page }) => {
+	// The failure this guards is silent: a keystroke that never reaches the
+	// hidden field produces a passing save over a body that was never written.
+	await gotoAdmin(page, await draftVersion(page));
+
+	const typed = `Geheimhaltung ${Date.now()}`;
+	await page.getByTestId('body-de-editor').click();
+	await page.keyboard.type(typed);
+
+	await submitAndWait(page, 'version-save', '?/saveBody');
+	await page.reload();
+	await awaitHydration(page);
+
+	// The server parsed it and rendered it back: the preview is the control
+	// (§5.4), and it drawing the text is what proves the editor's document
+	// reached the field the form posted.
+	await expect(page.getByTestId('agreement-body').first()).toContainText(typed);
+
+	// §14 asks for the journey through to publication, because a body that saves
+	// but cannot be published is a body nobody can be asked to sign. A version is
+	// effective only once every enabled locale has a body (§5.2).
+	await page.getByTestId('body-en-editor').click();
+	await page.keyboard.type(typed);
+	await submitAndWait(page, 'version-save', '?/saveBody');
+	await submitAndWait(page, 'version-publish', '?/publish');
+
+	await expect(page.getByTestId('version-status')).toContainText(/effective|wirksam/i);
+});
+
+test('reports a node the server refuses, which the editor cannot show', async ({ page }) => {
+	await gotoAdmin(page, await draftVersion(page));
+
+	// Straight into the hidden field, which is what a paste of raw Markdown or a
+	// client with the editor disabled produces. §5.1: the client schema is a
+	// convenience, the server refusal is the control.
+	await fillBody(page, 'de', '| a | b |\n| - | - |\n\n![x](https://example.test/x.png)');
+
+	await submitAndWait(page, 'version-save', '?/saveBody');
+	await expect(page.getByTestId('body-not-in-subset')).toBeVisible();
+});

@@ -8,11 +8,14 @@ import {
 	accessRequestDocument,
 	documentFile,
 	ndaAcceptance,
+	ndaTemplate,
+	ndaTemplateVersion,
 	outboundEmail,
 	requester
 } from '../../src/lib/server/db/schema';
 import { createLocalStorage, newStorageKey } from '../../src/lib/server/storage/local';
 import { gotoAdmin, seedRequestForAgreement, signInAsAdmin, submitAndWait } from '../helpers/admin';
+import { docxWith } from '../helpers/docx';
 import { awaitHydration } from '../helpers/hydration';
 import { blankPdf, drawnText } from '../helpers/pdf';
 
@@ -218,3 +221,60 @@ async function seedSecondRequest(documentId: string, requesterId: string): Promi
 	await db.insert(accessRequestDocument).values({ requestId: row!.id, documentId });
 	return row!.id;
 }
+
+test('refuses an import into a version somebody has already accepted', async ({ page }) => {
+	// Here rather than in admin-agreements.spec.ts because a version becomes
+	// immutable only once somebody has accepted it, and this file already drives
+	// a full acceptance — rebuilding one to reach the guard would be a second
+	// copy of the longest chain in the suite.
+	await signInAsAdmin(page);
+	const seeded = await seedRequestForAgreement(page, db);
+
+	await gotoAdmin(page, `/de/admin/requests/${seeded.requestId}`);
+	await submitAndWait(page, 'decision-approve', '?/approve');
+
+	await page.goto('/de/access');
+	await awaitHydration(page);
+	await page.getByTestId('access-open-agreements').click();
+	await awaitHydration(page);
+	await page.getByTestId(`agreement-open-${seeded.agreementSlug}`).click();
+	await awaitHydration(page);
+	await page.getByTestId('agreement-typed-name').fill('Šimon Čech');
+	await submitAndWait(page, 'agreement-accept', `/access/agreements/`);
+
+	const [template] = await db
+		.select()
+		.from(ndaTemplate)
+		.where(eq(ndaTemplate.slug, seeded.agreementSlug));
+	const [version] = await db
+		.select()
+		.from(ndaTemplateVersion)
+		.where(eq(ndaTemplateVersion.templateId, template!.id));
+
+	// The immutability guard is the server's; the disabled control on the page is
+	// only a courtesy, so this posts straight at the action. `page.request`
+	// carries the staff cookie the sign-in above left in the context, and the
+	// Origin header is what SvelteKit's CSRF check wants from a form POST.
+	const response = await page.request.post(
+		`/de/admin/agreements/${template!.id}/versions/${version!.id}?/import`,
+		{
+			headers: { origin: new URL(page.url()).origin },
+			multipart: {
+				locale: 'de',
+				file: {
+					name: 'nda.docx',
+					mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+					buffer: Buffer.from(docxWith([{ text: 'Neuer Text.' }]))
+				}
+			}
+		}
+	);
+
+	// SvelteKit answers a scripted POST with an ActionResult envelope — HTTP 200
+	// carrying the failure — so the refusal to assert is the one inside it, and
+	// asserting the reason as well is what keeps this from passing on any 4xx.
+	const result = (await response.json()) as { type: string; status: number; data: string };
+	expect(result.type).toBe('failure');
+	expect(result.status).toBe(409);
+	expect(result.data).toContain('immutable');
+});
