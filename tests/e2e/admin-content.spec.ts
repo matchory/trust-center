@@ -122,7 +122,7 @@ test('an update reaches the feed only once it carries a publication date', async
 
 	await page.getByTestId('translation-title-de').fill('Neuer Unterauftragsverarbeiter');
 	await page.getByTestId('translation-body-de').fill('Wir haben Hetzner aufgenommen.');
-	await submitAndWait(page, 'translation-save-de', '?/saveTranslation');
+	await submitAndWait(page, 'translation-save', '?/saveTranslations');
 
 	// A translated post with no date is still a draft.
 	await page.goto('/de/updates');

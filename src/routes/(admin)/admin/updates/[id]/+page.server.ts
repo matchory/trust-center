@@ -2,7 +2,7 @@ import { error, redirect } from '@sveltejs/kit';
 import { z } from 'zod';
 import { UPDATE_KINDS } from '$lib/content-types';
 import { localizePath } from '$lib/i18n/locale';
-import { saveMetaAction, saveTranslationAction } from '$lib/server/admin/actions';
+import { saveMetaAction, saveTranslationsAction } from '$lib/server/admin/actions';
 import { recordEvent } from '$lib/server/audit';
 import {
 	deleteUpdate,
@@ -56,7 +56,7 @@ export const actions: Actions = {
 		fallbackField: 'slug'
 	}),
 
-	saveTranslation: saveTranslationAction({
+	saveTranslations: saveTranslationsAction({
 		type: 'update',
 		subjectType: 'update_post',
 		required: ['title', 'body'],

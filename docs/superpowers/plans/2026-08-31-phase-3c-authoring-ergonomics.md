@@ -2416,7 +2416,7 @@ Same four steps against `src/routes/(admin)/admin/subprocessors/[id]/`. The acti
 
 The two inputs become `name="purpose.{locale}"` and `name="dataCategories.{locale}"`, keeping their existing test ids and labels. The e2e change is at `admin-content.spec.ts:74`. Commit as `refactor(admin): submit every subprocessor locale in one form`.
 
-- [ ] **Steps 9–12 (Task 16): the updates editor**
+- [x] **Steps 9–12 (Task 16): the updates editor**
 
 Against `src/routes/(admin)/admin/updates/[id]/`. Note `subjectType` — dropping it would silently rewrite the audit subject of every future row:
 
