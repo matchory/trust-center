@@ -2432,7 +2432,7 @@ Against `src/routes/(admin)/admin/updates/[id]/`. Note `subjectType` — droppin
 
 Inputs become `title.{locale}` and `body.{locale}`. The e2e change is at `admin-content.spec.ts:125`. Commit as `refactor(admin): submit every update locale in one form`.
 
-- [ ] **Steps 13–16 (Task 17): the controls editor**
+- [x] **Steps 13–16 (Task 17): the controls editor**
 
 Against `src/routes/(admin)/admin/controls/[id]/`. This one has an optional field, so a locale carrying only a description and no title is a half-filled locale and must be refused — which `readTranslations` does, naming `title`:
 

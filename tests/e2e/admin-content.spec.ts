@@ -21,7 +21,7 @@ test('an admin can publish a control and see it on the portal', async ({ page })
 	await expect(page).toHaveURL(/\/admin\/controls\/[0-9a-f-]{36}$/);
 
 	await page.getByTestId('translation-title-de').fill('Mehr-Faktor-Authentifizierung');
-	await submitAndWait(page, 'translation-save-de', '?/saveTranslation');
+	await submitAndWait(page, 'translation-save', '?/saveTranslations');
 
 	await page.getByTestId('control-status').selectOption('implemented');
 	await page.getByTestId('control-published').check();
