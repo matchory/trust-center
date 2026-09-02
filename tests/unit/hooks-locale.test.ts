@@ -39,7 +39,10 @@ function fakeEvent(pathname: string): Event {
 		url: new URL(`https://trust.example.com${pathname}`),
 		request: new Request('https://trust.example.com/'),
 		cookies: { get: () => undefined },
-		locals: {} as App.Locals
+		locals: {} as App.Locals,
+		// `handle` reads this for the span name and `http.route`; SvelteKit
+		// always populates it, so the fake must too.
+		route: { id: null }
 	} as unknown as Event;
 }
 

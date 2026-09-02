@@ -15,6 +15,12 @@ import {
 import { COMPILED_LOCALES } from '$lib/i18n/compiled';
 import { classifyPath, resolveLocale } from '$lib/i18n/locale';
 import { assertIsLocale, overwriteServerAsyncLocalStorage } from '$lib/paraglide/runtime.js';
+import {
+	recordRequestDuration,
+	requestAttributes,
+	requestSpanName,
+	withSpan
+} from '$lib/server/telemetry';
 
 type Locale = ReturnType<typeof assertIsLocale>;
 
@@ -150,17 +156,38 @@ export const handle: Handle = async ({ event, resolve }) => {
 		}
 	}
 
-	// localeStorage.run MUST remain the outermost wrapper around resolve, or
-	// server-rendered translations silently fall back to the base locale.
-	return localeStorage.run({ locale: assertIsLocale(event.locals.locale) }, async () => {
-		const response = await resolve(event, {
-			transformPageChunk: ({ html }) => html.replace('%lang%', event.locals.locale)
-		});
+	const routeId = event.route.id;
+	const method = event.request.method;
 
-		// Only the unprefixed responses vary by Accept-Language — and those are
-		// all redirects issued by the root layout. Every content URL carries its
-		// locale in the path and stays unconditionally cacheable.
-		if (route.kind === 'unprefixed') response.headers.append('Vary', 'Accept-Language');
+	// The span wraps outside `localeStorage.run`, which stays the immediate
+	// wrapper around `resolve` — the rule CLAUDE.md states, and whose breach
+	// shows up as SSR translations silently falling back to the base locale.
+	return withSpan(requestSpanName(method, routeId), {}, async (span) => {
+		const started = performance.now();
+
+		const response = await localeStorage.run(
+			{ locale: assertIsLocale(event.locals.locale) },
+			async () => {
+				const resolved = await resolve(event, {
+					transformPageChunk: ({ html }) => html.replace('%lang%', event.locals.locale)
+				});
+
+				// Only the unprefixed responses vary by Accept-Language — and those
+				// are all redirects issued by the root layout. Every content URL
+				// carries its locale in the path and stays unconditionally cacheable.
+				if (route.kind === 'unprefixed') resolved.headers.append('Vary', 'Accept-Language');
+
+				return resolved;
+			}
+		);
+
+		span.setAttributes(requestAttributes({ method, routeId, status: response.status }));
+		recordRequestDuration({
+			method,
+			routeId,
+			status: response.status,
+			seconds: (performance.now() - started) / 1000
+		});
 
 		return response;
 	});

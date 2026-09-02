@@ -1,5 +1,6 @@
 import { metrics, trace } from '@opentelemetry/api';
 import type { AppConfig } from '../config';
+import { resetInstruments } from './metrics';
 
 /**
  * Held so shutdown can flush. Empty is the normal state: a deployment with no
@@ -71,6 +72,11 @@ export async function startTelemetry(config: AppConfig['telemetry']): Promise<bo
 		]
 	});
 	metrics.setGlobalMeterProvider(meterProvider);
+
+	// Any instrument built before this point was built against the no-op meter
+	// and would never export. Dropping them forces a rebuild against the real
+	// provider on next use.
+	resetInstruments();
 
 	started = [tracerProvider, meterProvider];
 	return true;
