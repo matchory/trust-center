@@ -1,4 +1,5 @@
-import { metrics, type Attributes } from '@opentelemetry/api';
+import { metrics } from '@opentelemetry/api';
+import { requestAttributes } from './attributes';
 
 const METER_NAME = 'trust-center';
 
@@ -31,15 +32,13 @@ export function recordRequestDuration(input: {
 	status: number;
 	seconds: number;
 }): void {
-	// Same rule as the span: no route id means no attribute, so an unmatched
-	// path cannot mint one time series per probe.
-	const attributes: Attributes = {
-		'http.request.method': input.method,
-		'http.response.status_code': input.status,
-		...(input.routeId === null ? {} : { 'http.route': input.routeId })
-	};
-
-	get().requestDuration.record(input.seconds, attributes);
+	// Shares `requestAttributes` with the span so the two never drift: same
+	// request, same rule — including the unmatched-route omission, which keeps
+	// an unmatched path from minting one time series per probe.
+	get().requestDuration.record(
+		input.seconds,
+		requestAttributes({ method: input.method, routeId: input.routeId, status: input.status })
+	);
 }
 
 /** Called by `startTelemetry` after the real meter provider is registered. */

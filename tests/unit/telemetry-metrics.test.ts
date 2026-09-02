@@ -6,7 +6,7 @@ import {
 	PeriodicExportingMetricReader,
 	type DataPoint
 } from '@opentelemetry/sdk-metrics';
-import { beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { recordRequestDuration } from '../../src/lib/server/telemetry';
 import { resetInstruments } from '../../src/lib/server/telemetry/metrics';
 
@@ -23,6 +23,13 @@ const reader = new PeriodicExportingMetricReader({
 });
 
 beforeAll(() => {
+	// `@opentelemetry/api` registers providers on `globalThis`, not per module
+	// graph, and `registerGlobal` silently refuses a second registration — so
+	// without this, a meter provider left registered by another test file
+	// sharing this worker would make this file's own registration below a
+	// no-op, and every recording here would go to nothing. See
+	// tests/unit/telemetry-provider.test.ts for the same guard.
+	metrics.disable();
 	metrics.setGlobalMeterProvider(new MeterProvider({ readers: [reader] }));
 	// The trap this exists for: an instrument built against the API's no-op
 	// meter stays a no-op forever, so anything constructed before a provider
@@ -30,6 +37,11 @@ beforeAll(() => {
 	// for the same reason.
 	resetInstruments();
 });
+
+// Leaves the API as disabled as this file found it, so a real, recording
+// meter provider registered here does not leak into another test file's
+// metrics.
+afterAll(() => metrics.disable());
 
 describe('recordRequestDuration', () => {
 	it('exports http.server.request.duration with the route attributes', async () => {

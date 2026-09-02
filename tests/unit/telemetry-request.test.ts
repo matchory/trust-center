@@ -4,7 +4,7 @@ import {
 	InMemorySpanExporter,
 	SimpleSpanProcessor
 } from '@opentelemetry/sdk-trace-base';
-import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const exporter = new InMemorySpanExporter();
 
@@ -19,10 +19,21 @@ beforeAll(async () => {
 		OIDC_CLIENT_SECRET: 'secret',
 		OIDC_ADMIN_GROUP: 'trust-center-admins'
 	});
+	// `@opentelemetry/api` registers providers on `globalThis`, not per module
+	// graph, and tests/unit/telemetry-span.test.ts registers a recording
+	// tracer provider globally. `registerGlobal` silently refuses a second
+	// registration, so without this, this file's own provider would never take
+	// effect if it ever shared a worker with that one — see
+	// tests/unit/telemetry-provider.test.ts for the same guard.
+	trace.disable();
 	trace.setGlobalTracerProvider(
 		new BasicTracerProvider({ spanProcessors: [new SimpleSpanProcessor(exporter)] })
 	);
 });
+
+// Leaves the API as disabled as this file found it, so a real, recording
+// provider registered here does not leak into another test file's spans.
+afterAll(() => trace.disable());
 
 beforeEach(() => exporter.reset());
 
