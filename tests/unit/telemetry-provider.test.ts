@@ -53,7 +53,7 @@ describe('startTelemetry', () => {
 	});
 
 	it('is idempotent, so a second call does not stack providers', async () => {
-		await startTelemetry(on);
+		await expect(startTelemetry(on)).resolves.toBe(true);
 
 		// The inverse of the disabled-path assertion: a provider is genuinely
 		// registered now, so a freshly created span records. Deliberately never
@@ -63,15 +63,15 @@ describe('startTelemetry', () => {
 		const first = trace.getTracer('probe').startSpan('probe');
 		expect(first.isRecording()).toBe(true);
 
-		// A guard that only checked `!config.endpoint` would pass this call
-		// through and register a second provider on top of the first; asserting
-		// resolution alone (as the previous version of this test did) can't
-		// distinguish that from the real no-stacking behaviour, since with no
-		// endpoint the first disjunct always short-circuits before the second is
-		// ever evaluated. Starting from a real, already-registered provider is
-		// what makes the `started.length > 0` guard the thing actually under
-		// test.
-		await expect(startTelemetry(on)).resolves.toBeUndefined();
+		// The return value is the guard's own contract, not a side effect we
+		// have to infer: `registerGlobal` silently refuses a second
+		// registration of the same singleton, and `trace.disable()` /
+		// `metrics.disable()` below clear whatever is registered regardless of
+		// which objects `started` holds — so neither "a span still records"
+		// nor "shutdown still resolves" can tell a stacked second provider
+		// apart from a correctly-skipped one. `false` here is the only
+		// observable proof the `started.length > 0` guard actually ran.
+		await expect(startTelemetry(on)).resolves.toBe(false);
 
 		// `first` was never ended, so nothing was ever queued in the batch
 		// processor and there is nothing for shutdown's flush to export — no

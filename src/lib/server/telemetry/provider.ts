@@ -13,9 +13,18 @@ let started: { shutdown: () => Promise<void> }[] = [];
  * build` must need neither configuration nor a database, and an operator
  * running without telemetry should not pay to load an exporter they will never
  * use.
+ *
+ * Returns whether this call actually started providers, so a caller (or a
+ * test) can observe the guard's effect directly instead of through
+ * `globalThis` side effects that a second, redundant registration would
+ * leave equally intact. `init` ignores it; a second call must still return
+ * `false` rather than build a second `NodeTracerProvider`/`MeterProvider`
+ * pair, since later tasks add a `PeriodicExportingMetricReader` with its own
+ * live export timer, and orphaning one of those on every restart is a leak,
+ * not a curiosity.
  */
-export async function startTelemetry(config: AppConfig['telemetry']): Promise<void> {
-	if (!config.endpoint || started.length > 0) return;
+export async function startTelemetry(config: AppConfig['telemetry']): Promise<boolean> {
+	if (!config.endpoint || started.length > 0) return false;
 
 	const [
 		{ resourceFromAttributes },
@@ -64,6 +73,7 @@ export async function startTelemetry(config: AppConfig['telemetry']): Promise<vo
 	metrics.setGlobalMeterProvider(meterProvider);
 
 	started = [tracerProvider, meterProvider];
+	return true;
 }
 
 /**
