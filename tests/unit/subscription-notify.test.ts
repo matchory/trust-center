@@ -94,6 +94,45 @@ describe('planNotices', () => {
 		expect(plan.cursor.toISOString()).toBe('2026-03-01T10:00:00.000Z');
 	});
 
+	// The cursor must advance past a post that was SKIPPED, not only past ones
+	// that were sent (§6.4). A single-post subscription can't distinguish this
+	// from the pre-loop seed at notify.ts — this needs a usable post and a
+	// later, unsendable one in the same subscription.
+	it('advances past a skipped post that is later than the last usable one', () => {
+		const plan = planNotices(
+			[
+				subscriber([
+					post({ id: 'a', publishedAt: new Date('2026-03-01T10:00:00Z') }),
+					post({
+						id: 'b',
+						publishedAt: new Date('2026-03-05T10:00:00Z'),
+						translations: [{ locale: 'fr', title: 'Titre', body: 'Corps' }]
+					})
+				])
+			],
+			OPTIONS
+		)[0]!;
+
+		// One line in the mail — post 'b' was skipped …
+		expect(plan.mail?.payload.count).toBe(1);
+		// … but the cursor still moved past it, so it is never reconsidered.
+		expect(plan.cursor.toISOString()).toBe('2026-03-05T10:00:00.000Z');
+	});
+
+	it('skips a post with no translations at all', () => {
+		const plan = planNotices(
+			[
+				subscriber([
+					post({ id: 'a', publishedAt: new Date('2026-03-01T10:00:00Z'), translations: [] })
+				])
+			],
+			OPTIONS
+		)[0]!;
+
+		expect(plan.mail).toBeNull();
+		expect(plan.cursor.toISOString()).toBe('2026-03-01T10:00:00.000Z');
+	});
+
 	it('labels a title that resolved by fallback', () => {
 		const plan = planNotices(
 			[
