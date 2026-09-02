@@ -11,6 +11,8 @@ import { getMailer, MailNotConfigured } from '../mail';
 import { drainOutbox } from '../mail/queue';
 import { redactDeliveredMail, sweepRateLimits } from '../retention';
 import { getStorage } from '../storage';
+import { sweepUnconfirmedSubscriptions } from '../subscriptions';
+import { notifySubscribers } from '../subscriptions/notify';
 import { runJob } from './runner';
 import type { Db } from '../db';
 
@@ -56,7 +58,7 @@ export async function drainMailQueue(db: Db): Promise<void> {
 	}
 }
 
-interface Job {
+export interface Job {
 	name: string;
 	everyMs: number;
 	run: (db: Db) => Promise<void>;
@@ -97,6 +99,27 @@ export const JOBS: readonly Job[] = [
 			// hour, and deleting a counter can only forgive, never deny.
 			await sweepRateLimits(db, { olderThanHours: 24 });
 			await redactDeliveredMail(db, { retentionDays: getConfig().mailRetentionDays });
+			// A row whose confirmation token has expired can never become
+			// confirmed, so it holds an address nobody proved they control.
+			// Folded in here rather than becoming a seventh timer (spec §8).
+			await sweepUnconfirmedSubscriptions(db);
+		}
+	},
+	{
+		// Fifteen minutes rather than an hour or a day (P4.14): a lone post
+		// reaches subscribers promptly enough that nobody asks for an immediate
+		// mode, while a burst published together still coalesces into one mail by
+		// itself. The interval IS the digest window, in one operator-visible
+		// place rather than as a per-subscriber preference.
+		name: 'subscriptions:notify',
+		everyMs: 15 * 60 * 1000,
+		run: async (db) => {
+			const config = getConfig();
+			await notifySubscribers(db, {
+				baseUrl: config.baseUrl,
+				enabledLocales: config.locales,
+				defaultLocale: config.defaultLocale
+			});
 		}
 	}
 ];

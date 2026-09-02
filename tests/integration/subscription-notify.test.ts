@@ -7,6 +7,7 @@ import {
 	updatePost,
 	updatePostTranslation
 } from '../../src/lib/server/db/schema';
+import { JOBS } from '../../src/lib/server/jobs';
 import {
 	confirmSubscription,
 	saveSubscription,
@@ -297,5 +298,14 @@ describe('notifySubscribers', () => {
 			expect(payload.items).toContain(newerPost.slug);
 			expect((await cursorOf(id)).getTime()).toBe(newer.getTime());
 		}
+	});
+});
+
+describe('the notify job is registered', () => {
+	it('runs every fifteen minutes', () => {
+		const job = JOBS.find((entry) => entry.name === 'subscriptions:notify');
+		// P4.14: a lone notice arrives promptly and a burst coalesces by itself,
+		// so the interval IS the digest window and no cadence setting is needed.
+		expect(job?.everyMs).toBe(15 * 60 * 1000);
 	});
 });
