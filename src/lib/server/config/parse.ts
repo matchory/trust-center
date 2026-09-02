@@ -124,6 +124,9 @@ function buildSchema(compiledLocales: readonly string[]) {
 				z
 					.string()
 					.url()
+					// Zod's .url() alone accepts non-HTTP schemes like collector: (a valid
+					// URL per RFC 3986), so this refine ensures only HTTP or HTTPS endpoints
+					// reach the application.
 					.refine(
 						(url) => url.startsWith('http://') || url.startsWith('https://'),
 						'must be an HTTP or HTTPS URL'
@@ -139,7 +142,7 @@ function buildSchema(compiledLocales: readonly string[]) {
 						'expected comma-separated key=value pairs'
 					)
 			),
-			OTEL_TRACES_SAMPLER_ARG: z.coerce.number().min(0).max(1).default(1)
+			OTEL_TRACES_SAMPLER_ARG: blankAsUndefined(z.coerce.number().min(0).max(1)).default(1)
 		})
 		.superRefine((value, ctx) => {
 			const unsupported = value.LOCALES.filter((locale) => !compiledLocales.includes(locale));

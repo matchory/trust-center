@@ -161,4 +161,9 @@ describe('telemetry configuration', () => {
 	it('refuses a sampler ratio outside 0..1', () => {
 		expect(() => parseConfig({ ...valid, OTEL_TRACES_SAMPLER_ARG: '2' }, COMPILED)).toThrow();
 	});
+
+	it('treats a blank sample ratio as the documented default 1, not as 0', () => {
+		const config = parseConfig({ ...valid, OTEL_TRACES_SAMPLER_ARG: '' }, COMPILED);
+		expect(config.telemetry.sampleRatio).toBe(1);
+	});
 });
