@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from 'node:crypto';
-import { eq } from 'drizzle-orm';
+import { and, eq, gt, isNull } from 'drizzle-orm';
 import type { UpdateKind } from '../../content-types';
 import { subscription, subscriptionTopic } from '../db/schema';
 import type { Db } from '../db';
@@ -106,4 +106,56 @@ export async function subscribe(
 
 		return { kind: 'resent', subscriptionId: existing.id, confirmToken: token };
 	});
+}
+
+export interface ConfirmedSubscription {
+	subscriptionId: string;
+	email: string;
+	locale: string;
+	/** Stored as-is, not hashed — see §4.2. Every notice mail carries a link
+	 * built from it, so it has to be recoverable. */
+	manageToken: string;
+}
+
+/**
+ * One conditional update, as `consumeMagicLink` does: two concurrent presses of
+ * the same button cannot both return a row, because the second matches nothing.
+ * That is what makes the confirmation token single-use without a second read.
+ *
+ * Returns null for an unknown, spent, or expired token — the page cannot tell
+ * them apart and should not try.
+ */
+export async function confirmSubscription(
+	db: Db,
+	token: string
+): Promise<ConfirmedSubscription | null> {
+	const manageToken = newToken();
+	const now = new Date();
+
+	const [row] = await db
+		.update(subscription)
+		.set({
+			confirmedAt: now,
+			confirmTokenHash: null,
+			confirmExpiresAt: null,
+			manageToken,
+			// `now()`, never null: this is what stops a new subscriber receiving
+			// the entire back catalogue in their first mail (P4.6).
+			lastNotifiedAt: now
+		})
+		.where(
+			and(
+				eq(subscription.confirmTokenHash, hashToken(token)),
+				isNull(subscription.confirmedAt),
+				gt(subscription.confirmExpiresAt, now)
+			)
+		)
+		.returning({
+			id: subscription.id,
+			email: subscription.email,
+			locale: subscription.locale
+		});
+
+	if (!row) return null;
+	return { subscriptionId: row.id, email: row.email, locale: row.locale, manageToken };
 }

@@ -2,7 +2,7 @@ import { asc, eq } from 'drizzle-orm';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createDb, type Db } from '../../src/lib/server/db';
 import { subscription, subscriptionTopic } from '../../src/lib/server/db/schema';
-import { subscribe } from '../../src/lib/server/subscriptions';
+import { confirmSubscription, subscribe } from '../../src/lib/server/subscriptions';
 
 let db: Db;
 let close: () => Promise<void>;
@@ -248,5 +248,66 @@ describe('subscribe', () => {
 		expect(row?.hash).toBeNull();
 
 		await db.delete(subscription).where(eq(subscription.id, created.subscriptionId));
+	});
+});
+
+describe('confirmSubscription', () => {
+	it('confirms once, mints a manage token, and starts the cursor at now', async () => {
+		const email = `confirm-${Date.now()}@example.test`;
+		const created = await subscribe(db, {
+			email,
+			locale: 'de',
+			topics: ['advisory'],
+			ttlMinutes: 60
+		});
+		const token = created.kind === 'created' ? created.confirmToken : '';
+
+		const before = Date.now();
+		const confirmed = await confirmSubscription(db, token);
+
+		expect(confirmed?.subscriptionId).toBe(created.subscriptionId);
+		expect(confirmed?.email).toBe(email);
+		expect(confirmed?.manageToken).toBeTruthy();
+
+		const [row] = await db
+			.select()
+			.from(subscription)
+			.where(eq(subscription.id, created.subscriptionId));
+		expect(row?.confirmedAt).toBeTruthy();
+		expect(row?.confirmTokenHash).toBeNull();
+		expect(row?.confirmExpiresAt).toBeNull();
+		expect(row?.manageToken).toBeTruthy();
+		// P4.6: not null. A null cursor would hand a new subscriber the entire
+		// back catalogue in their first mail.
+		expect(row!.lastNotifiedAt!.getTime()).toBeGreaterThanOrEqual(before - 1000);
+
+		// Single-use by construction: the conditional update matches nothing the
+		// second time, so a double-clicked button cannot confirm twice.
+		expect(await confirmSubscription(db, token)).toBeNull();
+
+		await db.delete(subscription).where(eq(subscription.id, created.subscriptionId));
+	});
+
+	it('refuses an expired token', async () => {
+		const email = `expired-${Date.now()}@example.test`;
+		const created = await subscribe(db, {
+			email,
+			locale: 'de',
+			topics: ['advisory'],
+			ttlMinutes: 60
+		});
+		const token = created.kind === 'created' ? created.confirmToken : '';
+
+		await db
+			.update(subscription)
+			.set({ confirmExpiresAt: new Date(Date.now() - 1000) })
+			.where(eq(subscription.id, created.subscriptionId));
+
+		expect(await confirmSubscription(db, token)).toBeNull();
+		await db.delete(subscription).where(eq(subscription.id, created.subscriptionId));
+	});
+
+	it('refuses an unknown token', async () => {
+		expect(await confirmSubscription(db, 'not-a-token')).toBeNull();
 	});
 });
