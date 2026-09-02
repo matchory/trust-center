@@ -339,18 +339,29 @@ Both conditions require `published`. An unpublished subprocessor has been disclo
 neither its addition nor its removal needs announcing, and the operator can already see `published`
 is false in the same row. Warning about it would be the noise P4.10 is about.
 
-- `published` and **no live covering post with `published_at >= started_at`** → *addition not
-  announced*. When `started_at` is null there is no date to anchor against and the condition degrades
-  to "no live covering post at all".
+- `published` and **no live covering post with `published_at >= started_at` and, when `ended_at` is
+  set, `published_at < ended_at`** → *addition not announced*. When `started_at` is null there is no
+  lower bound to anchor against and that half degrades to "any live covering post".
 - `ended_at` set and **no live covering post with `published_at >= ended_at`** → *removal not
   announced*
 
-**Both conditions are anchored; an earlier draft anchored only the second.** Reading the addition
-condition as "no live covering post at all" means a subprocessor added silently and removed later
-*with* an announcement has a live linked post — so the addition warning clears retroactively, on the
-strength of a post announcing the opposite fact. That is the one case the warning exists for, and it
-was the case that would have been unreachable. `subprocessor.started_at` already exists and is the
-right anchor; it is nullable, which is why the fallback is stated rather than assumed.
+**The addition condition is bounded at both ends, and it took two passes to get there.** The case it
+exists for is a subprocessor added silently and removed later *with* an announcement: the removal post
+is linked, so a naive condition clears the addition warning retroactively on the strength of a post
+announcing the opposite fact.
+
+A lower bound alone does not catch it, which an earlier draft of this section got wrong. Anchoring
+only to `started_at` asks "is there a covering post on or after the addition?" — and a removal post
+published later trivially satisfies that, so the anchored and unanchored conditions behave
+*identically* in exactly the scenario the anchor was introduced for. The lower bound does real work,
+but different work: it rejects a covering post that **predates** `started_at` and therefore cannot
+have announced the addition.
+
+The upper bound is what closes the original case. A post published on or after `ended_at` announces
+the removal, not the addition, so it must not count as coverage for the addition — which is the
+retroactive clearing this condition exists to prevent. `started_at` is nullable, so its half degrades
+to "any live covering post"; `ended_at` being null simply means there is no removal yet and no upper
+bound to apply.
 
 "Live" in both conditions means `published_at IS NOT NULL AND published_at <= now()`, the same
 predicate `listPublicUpdates` uses. A draft or scheduled post is not coverage: nobody has been told
@@ -564,7 +575,7 @@ remains the only egress, which is what keeps the integrations note's §7 boundar
 | P4.19 | The tick is one select and one transaction of two batched statements, bounded at 500 subscriptions | A transaction per subscriber is the N+1 the select was shaped to avoid; and `runJob` holds an advisory lock for the whole run, so an unbounded tick holds it for an unbounded time |
 | P4.20 | The send locale is resolved against `getConfig().locales`, falling back to the default | Disabling a locale would otherwise mail a perfectly rendered notice carrying a manage link that 404s — a dead unsubscribe link produced by a configuration change, with no error anywhere |
 | P4.21 | The confirm and manage pages are `no-store` with `Referrer-Policy: no-referrer` | They carry a permanent credential in a query string; a shared cache serving one to the next visitor hands it over outright. Cookie-free and cacheable come apart here for the first time |
-| P4.22 | The addition warning is anchored to `started_at`, degrading to "any live covering post" when null | Unanchored, a removal announcement clears the addition warning retroactively — the one case the warning exists for |
+| P4.22 | The addition warning is bounded below by `started_at` and above by `ended_at`, each degrading when null | A lower bound alone does not close the motivating case: a removal post published later satisfies it trivially, so anchored and unanchored behave identically there. The upper bound is what stops a post announcing the removal from clearing the addition warning; the lower bound separately rejects a post predating the addition |
 | P4.23 | The subprocessor link is edited on the update post, through the existing `saveMetaAction` groove | The operator is writing the announcement at that moment; `control_evidence` is the same shape and settled the set-valued questions already, so this reuses a groove rather than widening an abstraction |
 
 ---
@@ -658,7 +669,8 @@ token, and it is the only one where the design as written could not have been bu
 | # | What was wrong | Where it was fixed |
 | --- | --- | --- |
 | 1 | The cursor only advances when a tick sends something, so a subscriber adding a topic on the manage page would receive every post of that kind since they confirmed — P4.6's back catalogue, by a door P4.6 did not look at | §6.1, P4.18 |
-| 2 | The addition-coverage condition was unanchored, so a *removal* announcement cleared the "addition not announced" warning retroactively — the one case the warning exists for | §7, P4.22 |
+| 2 | The addition-coverage condition was unbounded, so a *removal* announcement cleared the "addition not announced" warning retroactively — the one case the warning exists for | §7, P4.22 |
+| 15 | **The fix for #2 did not actually fix it.** Anchoring the addition condition to `started_at` alone leaves the motivating case behaving exactly as before, because a removal post published later satisfies the anchor trivially. Found while reviewing Task 13's tests, when a case named for the removal scenario turned out to be a byte-identical duplicate of the predating-post case — the name described a behaviour the condition did not have. Closed by bounding the condition above by `ended_at` as well | §7, P4.22 |
 | 3 | Nothing in scope populated `update_post_subprocessor`, so the badge would have fired on every subprocessor forever | §3, §7, §13, P4.23 |
 | 4 | The confirm and manage pages were placed under "the public, cacheable portal" while carrying a permanent credential in a query string | §10.3, P4.21 |
 | 5 | §6.2 claimed "not N+1" and then specified one transaction per subscriber; it was also unbounded while holding the advisory lock | §6.2, P4.19 |
