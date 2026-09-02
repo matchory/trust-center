@@ -186,7 +186,7 @@ describe('audit log', () => {
 		);
 	});
 
-	it('rejects an actor_type outside the four the application defines', async () => {
+	it('rejects an actor_type outside the five the application defines', async () => {
 		expect(
 			await rejectionCause(
 				db.execute(

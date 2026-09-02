@@ -42,7 +42,10 @@ export const actions: Actions = {
 				.refine((date) => date === null || !Number.isNaN(date.getTime()), {
 					message: 'invalid date'
 				}),
-			subprocessorIds: z.array(z.string().uuid())
+			// Deduped for the same reason as the portal topic arrays: a repeated
+			// id raises a primary-key violation in setUpdateSubprocessors, which
+			// saveMetaAction's catch reports as the slug being taken.
+			subprocessorIds: z.array(z.string().uuid()).transform((ids) => [...new Set(ids)])
 		}),
 		read: (form) => ({
 			slug: form.get('slug'),

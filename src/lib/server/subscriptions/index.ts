@@ -112,13 +112,22 @@ export async function subscribe(
  * The manage link for a confirmed subscription, for the one caller that needs
  * it without holding the token: the `already` branch of §4.3, which mails it to
  * the address rather than returning it. Never surface this to a response body.
+ *
+ * Returns the subscription's own locale alongside the token: spec §6.4 makes
+ * the stored locale the rule for every subscriber-facing mail, not the
+ * submitter's — a re-submission from a browser in a different language must
+ * not mail the wrong language or link to it.
  */
-export async function manageTokenFor(db: Db, id: string): Promise<string | null> {
+export async function manageTokenFor(
+	db: Db,
+	id: string
+): Promise<{ token: string; locale: string } | null> {
 	const [row] = await db
-		.select({ token: subscription.manageToken })
+		.select({ token: subscription.manageToken, locale: subscription.locale })
 		.from(subscription)
 		.where(eq(subscription.id, id));
-	return row?.token ?? null;
+	if (!row?.token) return null;
+	return { token: row.token, locale: row.locale };
 }
 
 export interface ConfirmedSubscription {

@@ -83,16 +83,20 @@ export const actions: Actions = {
 			// stranger's credential never reaches a response body — only their
 			// mailbox. A confirmed row always has one (the check constraint says
 			// so), but a null must not become the string "null" in a mailed link.
-			const token = await manageTokenFor(db, result.subscriptionId);
-			if (token) {
+			//
+			// The subscription's own locale, not the submitter's (spec §6.4): a
+			// re-submission from a browser in another language must still mail the
+			// address the language it originally chose, with a matching link.
+			const found = await manageTokenFor(db, result.subscriptionId);
+			if (found) {
 				await enqueueEmail(db, {
 					to: parsed.data.email,
 					template: 'subscription_already',
-					locale: event.locals.locale,
+					locale: found.locale,
 					payload: {
 						url: `${config.baseUrl}${localizePath(
-							`/subscribe/manage?token=${encodeURIComponent(token)}`,
-							event.locals.locale
+							`/subscribe/manage?token=${encodeURIComponent(found.token)}`,
+							found.locale
 						)}`
 					}
 				});

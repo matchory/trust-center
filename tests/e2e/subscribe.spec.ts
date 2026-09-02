@@ -58,6 +58,12 @@ test('subscribe, confirm, manage, unsubscribe', async ({ page }) => {
 	await page.goto(manageUrl);
 	await expect(page.getByTestId('manage-topic-advisory')).toBeChecked();
 
+	// Spec §10.3's no-cookie guarantee, pinned here rather than in
+	// security.spec.ts's path loop: that loop asserts a 200, and a tokenless
+	// manage URL 404s — this is the one place the page actually renders with a
+	// valid token, which is the case worth guarding.
+	expect(await page.context().cookies(), 'the manage page must set no cookie').toHaveLength(0);
+
 	await page.getByTestId('manage-topic-document').check();
 	await page.getByTestId('manage-save').click();
 	await expect(page.getByTestId('manage-topic-document')).toBeChecked();
