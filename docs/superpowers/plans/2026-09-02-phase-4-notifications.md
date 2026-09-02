@@ -63,7 +63,7 @@ Every task's requirements implicitly include this section.
 | `src/routes/(admin)/admin/updates/[id]/+page.server.ts` | The subprocessor set inside `saveMetaAction`'s `update` callback; `subprocessorCount` in `meta`; `load` also returns the pickable list. |
 | `src/routes/(admin)/admin/updates/[id]/+page.svelte` | The subprocessor multi-select. |
 | `src/routes/(admin)/admin/subprocessors/+page.svelte` | The coverage badge column. |
-| `src/lib/components/portal/PortalNav.svelte` (or equivalent) | A link to `/subscribe`. |
+| `src/lib/portal/sections.ts` | A `/subscribe` entry in `PORTAL_SECTIONS`. Drives the layout nav and the landing grid; the sitemap does not consume it. |
 | `tests/e2e/security.spec.ts` | Two paths on the no-cookie list, plus a new case for the `no-store`, `no-referrer` and still-cacheable assertions. |
 | `docs/self-hosting.md` | The back-dating rule, the forward-dating mirror, and the token-in-access-log note. |
 
@@ -1226,7 +1226,7 @@ Expected: `pnpm check` at 0 errors — a missing catalog key in either locale fa
 ```bash
 pnpm format
 git add src/lib/server/mail/templates.ts messages/ tests/unit/mail-templates.test.ts
-git commit -m "feat(mail): four subscription templates"
+git commit -m "feat(mail): three subscription templates"
 ```
 
 **Gate C:** `pnpm lint && pnpm check && pnpm test:unit && pnpm test:integration`
