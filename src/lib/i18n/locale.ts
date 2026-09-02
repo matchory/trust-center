@@ -82,6 +82,15 @@ export function localizePath(path: string, locale: string): string {
 	return path === '/' ? `/${locale}` : `/${locale}${path}`;
 }
 
+/**
+ * Intl.DisplayNames rather than a hand-maintained map: it names any locale the
+ * deployment compiles, in that locale's own language, and it is built into the
+ * platform — the portal loads nothing third-party.
+ */
+export function endonym(locale: string): string {
+	return new Intl.DisplayNames([locale], { type: 'language' }).of(locale) ?? locale;
+}
+
 export type LocaleRoute =
 	| { kind: 'localized'; locale: string; path: string }
 	| { kind: 'unprefixed'; path: string }

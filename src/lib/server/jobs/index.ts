@@ -58,7 +58,7 @@ export async function drainMailQueue(db: Db): Promise<void> {
 	}
 }
 
-export interface Job {
+interface Job {
 	name: string;
 	everyMs: number;
 	run: (db: Db) => Promise<void>;

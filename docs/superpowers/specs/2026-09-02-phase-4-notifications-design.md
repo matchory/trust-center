@@ -321,12 +321,14 @@ If those rules leave nothing to say, **no mail is sent but the cursor still adva
 considered and found unsendable; reconsidering them every fifteen minutes forever would be a slow
 loop that never terminates.
 
-**The payload is a pre-rendered string.** `MailPayload` is
-`Record<string, string | number | readonly MailAttachment[]>`, so the job builds the list of titles
-and URLs into one string field plus a count, rather than widening the payload contract to carry a
-structured list. The consequence is that the message catalogs cannot itemise the list themselves —
-acceptable for a plain-text mail, and cheaper than a port change. Noted in §13 because it is the kind
-of thing that gets missed on a first pass.
+**The payload carries structured items.** `MailPayload` gains one union member —
+`readonly { title: string; url: string; isFallback: boolean }[]` — and the job hands `renderTemplate`
+the list rather than a string it has already joined. `outbound_email.payload` exists precisely so
+that mail is rendered at send time, and a correction to a template reaches mail that has not gone
+out yet; pre-rendering the list would have exempted this one template from that invariant, and would
+have frozen the fallback label in whichever locale the tick happened to plan under rather than the
+row's. The mail port is untouched — `renderTemplate` still produces `{subject, text}` — so this is a
+type change inside the queue, not a port change.
 
 ---
 
@@ -568,7 +570,7 @@ remains the only egress, which is what keeps the integrations note's §7 boundar
 | P4.12 | Notice sends are not audited | `outbound_email` already records them; one audit row per subscriber per tick is a volume log inside the compliance record |
 | P4.13 | Unsubscribing deletes the row rather than retaining a suppression record | Data minimisation; the subscription has no dependents needing referential integrity, so deletion reaches the same place pseudonymisation reaches for requesters |
 | P4.14 | 15 minutes, and the interval is the digest window | A lone notice arrives promptly and a burst coalesces by itself, so no cadence setting and no immediate mode are needed |
-| P4.15 | The notice payload is a pre-rendered string | Keeps the `MailPayload` contract and the mail port unchanged; the cost is that catalogs cannot itemise the list |
+| P4.15 | The notice payload carries structured items, joined by `renderTemplate` at send time | Supersedes the pre-rendered string this table first recorded: `outbound_email.payload` exists so a template fix reaches queued mail, and pre-rendering would have exempted this template from that invariant and frozen the fallback label in the planning locale. Widening `MailPayload` by one union member leaves the mail port unchanged |
 | P4.16 | The management token is stored recoverably rather than hashed, and is never rotated | Every notice mail carries the link, so the sending job must be able to produce the token; a hash could be mailed once and never again. Its authority is a subset of the disclosure that would expose it. Rotation is rejected because every mail already sent carries the old one, and a stranger could trigger it five times an hour |
 | P4.17 | Re-subscribing an already-confirmed address writes no audit event | An unauthenticated caller must not append rows against a stranger's subscription id into a log with no delete path; `outbound_email` holds the only trace that case leaves |
 | P4.18 | A save on the manage page advances `last_notified_at` to `now()`, unconditionally | A subscriber adding a topic would otherwise receive every post of that kind since they confirmed — P4.6's back catalogue by a second door; comparing old and new topic sets is more code and still floods on narrow-then-widen |
@@ -616,8 +618,9 @@ callback exactly as the control editor's evidence set does.
 this is a typed change and a missing catalog entry fails `pnpm check` rather than production.
 
 **No port change.** Unlike Phase 3b, which needed attachments through the mail adapter, this phase
-fits inside the existing `{to, from, subject, text}` contract — which is exactly why P4.15 pre-renders
-the list rather than carrying structure.
+fits inside the existing `{to, from, subject, text}` contract. `MailPayload` widens by one union
+member to carry P4.15's structured notice items, which is a type change inside the queue rather than
+a change to the port the adapter implements.
 
 ---
 

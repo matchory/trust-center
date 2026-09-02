@@ -8,13 +8,14 @@ const OPTIONS = {
 	defaultLocale: 'de'
 };
 
-function post(partial: Partial<NoticePost> & { id: string; publishedAt: Date }): NoticePost {
+function post(seed: Partial<NoticePost> & { id: string; publishedAt: Date }): NoticePost {
+	const { id, ...rest } = seed;
 	return {
-		...partial,
-		slug: partial.slug ?? partial.id,
-		translations: partial.translations ?? [
-			{ locale: 'de', title: `Titel ${partial.id}`, body: 'Rumpf' },
-			{ locale: 'en', title: `Title ${partial.id}`, body: 'Body' }
+		...rest,
+		slug: seed.slug ?? id,
+		translations: seed.translations ?? [
+			{ locale: 'de', title: `Titel ${id}`, body: 'Rumpf' },
+			{ locale: 'en', title: `Title ${id}`, body: 'Body' }
 		]
 	};
 }
@@ -24,7 +25,7 @@ function subscriber(posts: NoticePost[], locale = 'de'): NoticeSubscription {
 }
 
 describe('planNotices', () => {
-	it('builds one mail with a line per post and a count', () => {
+	it('builds one mail with an item per post', () => {
 		const plan = planNotices(
 			[
 				subscriber([
@@ -35,9 +36,12 @@ describe('planNotices', () => {
 			OPTIONS
 		)[0]!;
 
-		expect(plan.mail?.payload.count).toBe(2);
-		expect(plan.mail?.payload.items).toContain('Titel a');
-		expect(plan.mail?.payload.items).toContain('https://trust.example/de/updates#alpha');
+		expect(plan.mail?.payload.items).toHaveLength(2);
+		expect(plan.mail?.payload.items[0]).toEqual({
+			title: 'Titel a',
+			url: 'https://trust.example/de/updates#alpha',
+			isFallback: false
+		});
 		expect(plan.mail?.payload.url).toBe('https://trust.example/de/subscribe/manage?token=tok');
 	});
 
@@ -113,8 +117,8 @@ describe('planNotices', () => {
 			OPTIONS
 		)[0]!;
 
-		// One line in the mail — post 'b' was skipped …
-		expect(plan.mail?.payload.count).toBe(1);
+		// One item in the mail — post 'b' was skipped …
+		expect(plan.mail?.payload.items).toHaveLength(1);
 		// … but the cursor still moved past it, so it is never reconsidered.
 		expect(plan.cursor.toISOString()).toBe('2026-03-05T10:00:00.000Z');
 	});
@@ -150,10 +154,11 @@ describe('planNotices', () => {
 			OPTIONS
 		)[0]!;
 
-		expect(plan.mail?.payload.items).toContain('Nur Deutsch');
+		expect(plan.mail?.payload.items[0]?.title).toBe('Nur Deutsch');
 		// The reader asked for English and got German; saying so is the rule the
 		// portal already applies, and a mail must not silently swap languages.
-		expect(plan.mail?.payload.items).toMatch(/another language|anderen Sprache/);
+		// The wording itself is `renderTemplate`'s, and pinned there.
+		expect(plan.mail?.payload.items[0]?.isFallback).toBe(true);
 	});
 
 	// P4.20. `assertIsLocale` validates against the COMPILED catalogs, so a mail

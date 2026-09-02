@@ -8,7 +8,12 @@ import { getDb } from '$lib/server/db/instance';
 import { clientIp } from '$lib/server/http/client-ip';
 import { enqueueEmail } from '$lib/server/mail/queue';
 import { consumeRateLimit, rateLimitKey } from '$lib/server/ratelimit';
-import { manageTokenFor, subscribe } from '$lib/server/subscriptions';
+import {
+	managePath,
+	manageTokenFor,
+	subscribe,
+	subscriptionLocale
+} from '$lib/server/subscriptions';
 import type { Actions, PageServerLoad } from './$types';
 
 export const load: PageServerLoad = async ({ setHeaders }) => {
@@ -16,7 +21,6 @@ export const load: PageServerLoad = async ({ setHeaders }) => {
 	// /request is. The confirm and manage pages are NOT — they carry a token,
 	// and spec §10.3 is where that divergence is argued.
 	setHeaders({ 'cache-control': 'public, max-age=0, s-maxage=60, must-revalidate' });
-	return { topics: [...UPDATE_KINDS] };
 };
 
 type SubscribeFailure = { field: string };
@@ -26,14 +30,7 @@ const schema = z.object({
 	// Refused here rather than by a constraint: a subscription that matches
 	// nothing is a row that exists to send no mail, and would read as a bug
 	// from both ends (spec §5).
-	topics: z
-		.array(z.enum(UPDATE_KINDS))
-		.min(1)
-		// Deduped here rather than defended in replaceTopics: subscription_topic has
-		// a composite primary key, so a repeated value raises 23505 and 500s — and
-		// because the `already` path returns before topics are written, that 500
-		// would answer "is this address subscribed?" for anyone who asked (P4.4).
-		.transform((topics) => [...new Set(topics)])
+	topics: z.array(z.enum(UPDATE_KINDS)).min(1)
 });
 
 export const actions: Actions = {
@@ -89,16 +86,14 @@ export const actions: Actions = {
 			// address the language it originally chose, with a matching link.
 			const found = await manageTokenFor(db, result.subscriptionId);
 			if (found) {
+				// Clamped, as every other subscriber-facing mail is: a locale the
+				// operator has since disabled would make this recovery link 404.
+				const locale = subscriptionLocale(found.locale, config.locales, config.defaultLocale);
 				await enqueueEmail(db, {
 					to: parsed.data.email,
 					template: 'subscription_already',
-					locale: found.locale,
-					payload: {
-						url: `${config.baseUrl}${localizePath(
-							`/subscribe/manage?token=${encodeURIComponent(found.token)}`,
-							found.locale
-						)}`
-					}
+					locale,
+					payload: { url: `${config.baseUrl}${managePath(found.token, locale)}` }
 				});
 			}
 			return { submitted: true };

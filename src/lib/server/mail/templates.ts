@@ -32,7 +32,18 @@ export interface RenderedMail {
 	text: string;
 }
 
-export type MailPayload = Record<string, string | number | readonly MailAttachment[]>;
+/** One line of a subscription notice, carried structured so the wording around
+ * it is chosen at send time rather than baked in when the mail was queued. */
+export interface MailNoticeItem {
+	title: string;
+	url: string;
+	isFallback: boolean;
+}
+
+export type MailPayload = Record<
+	string,
+	string | number | readonly MailAttachment[] | readonly MailNoticeItem[]
+>;
 
 /**
  * Every message function is called with an explicit `locale` option, so these
@@ -57,11 +68,6 @@ export function renderTemplate(
 	const expiresAt = String(payload.expiresAt ?? '');
 	const agreement = String(payload.agreement ?? '');
 	const dueAt = String(payload.dueAt ?? '');
-	// Pre-rendered by the notify job rather than carried as a structured list
-	// (P4.15): `MailPayload` admits no array of objects, and widening it would
-	// be a port change for a plain-text mail.
-	const items = String(payload.items ?? '');
-	const count = String(payload.count ?? 0);
 
 	switch (id) {
 		case 'verify_request':
@@ -117,11 +123,27 @@ export function renderTemplate(
 				subject: m.mail_subscription_confirm_subject({}, options),
 				text: m.mail_subscription_confirm_body({ url }, options)
 			};
-		case 'subscription_notice':
+		case 'subscription_notice': {
+			// Composed here rather than by the notify job, so the payload column
+			// keeps the promise its comment makes: a correction to the fallback
+			// wording or the item layout reaches mail that has not gone out yet,
+			// and the text is produced in the row's locale rather than in the one
+			// the tick happened to plan under.
+			const items = (payload.items ?? []) as readonly MailNoticeItem[];
+			const lines = items.map((item) => {
+				const label = item.isFallback
+					? ` (${m.mail_subscription_notice_fallback({}, options)})`
+					: '';
+				return `${item.title}${label}\n${item.url}`;
+			});
 			return {
 				subject: m.mail_subscription_notice_subject({}, options),
-				text: m.mail_subscription_notice_body({ url, items, count }, options)
+				text: m.mail_subscription_notice_body(
+					{ url, items: lines.join('\n\n'), count: String(items.length) },
+					options
+				)
 			};
+		}
 		case 'subscription_already':
 			return {
 				subject: m.mail_subscription_already_subject({}, options),

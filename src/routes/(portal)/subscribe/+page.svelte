@@ -2,21 +2,12 @@
 	import { enhance } from '$app/forms';
 	import SectionHeading from '$lib/components/portal/SectionHeading.svelte';
 	import Seo from '$lib/components/portal/Seo.svelte';
-	import type { UpdateKind } from '$lib/content-types';
+	import { UPDATE_KINDS } from '$lib/content-types';
 	import { m } from '$lib/paraglide/messages.js';
+	import { updateKindLabel } from '$lib/portal/update-kinds';
 	import type { PageProps } from './$types';
 
 	let { data, form }: PageProps = $props();
-
-	// A label per topic rather than one interpolated message: a kind is a
-	// database value, and rendering it inside German copy would leave an
-	// English word in the sentence.
-	const TOPIC_LABEL: Record<UpdateKind, () => string> = {
-		document: () => m.update_kind_document(),
-		subprocessor: () => m.update_kind_subprocessor(),
-		certification: () => m.update_kind_certification(),
-		advisory: () => m.update_kind_advisory()
-	};
 </script>
 
 <Seo
@@ -56,7 +47,7 @@
 
 		<fieldset>
 			<legend class="mb-1 block text-sm font-medium">{m.subscribe_topics()}</legend>
-			{#each data.topics as topic (topic)}
+			{#each UPDATE_KINDS as topic (topic)}
 				<label class="flex items-center gap-2 py-1">
 					<input
 						type="checkbox"
@@ -64,7 +55,7 @@
 						value={topic}
 						data-testid="subscribe-topic-{topic}"
 					/>
-					<span>{TOPIC_LABEL[topic]()}</span>
+					<span>{updateKindLabel(topic)}</span>
 				</label>
 			{/each}
 			{#if form?.field === 'topics'}

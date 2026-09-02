@@ -7,8 +7,10 @@ import { getConfig } from '$lib/server/config';
 import { getDb } from '$lib/server/db/instance';
 import { clientIp } from '$lib/server/http/client-ip';
 import {
+	managePath,
 	saveSubscription,
 	subscriptionByManageToken,
+	subscriptionLocale,
 	unsubscribe
 } from '$lib/server/subscriptions';
 import type { Actions, PageServerLoad } from './$types';
@@ -33,13 +35,16 @@ export const load: PageServerLoad = async ({ setHeaders, url }) => {
 	// path that does not exist, and should look like one.
 	if (!found) error(404, 'Not found');
 
+	// Clamped here rather than in the template: the stored locale may name one
+	// the operator has since disabled, and the select must preselect something
+	// it actually offers.
+	const config = getConfig();
 	return {
 		gone: false as const,
 		token,
 		topics: found.topics,
-		subscriptionLocale: found.locale,
-		allTopics: [...UPDATE_KINDS],
-		availableLocales: [...getConfig().locales]
+		selectedLocale: subscriptionLocale(found.locale, config.locales, config.defaultLocale),
+		availableLocales: [...config.locales]
 	};
 };
 
@@ -48,16 +53,7 @@ const saveSchema = z.object({
 	// quietly an unsubscribe: that button is right there, and a save that
 	// silently deleted the record being edited would be a destructive action
 	// behind a non-destructive control.
-	topics: z
-		.array(z.enum(UPDATE_KINDS))
-		.min(1)
-		// Deduped for the same reason as the subscribe form: subscription_topic
-		// has a composite primary key, so a repeated value raises 23505 and
-		// 500s. There it was an enumeration oracle (P4.4); here the token
-		// already identifies the subscriber, so a duplicate is "only" an
-		// unhandled 500 and an inflated topicCount in the audit meta — same
-		// fix, smaller blast radius.
-		.transform((topics) => [...new Set(topics)]),
+	topics: z.array(z.enum(UPDATE_KINDS)).min(1),
 	locale: z.string()
 });
 
@@ -76,9 +72,7 @@ export const actions: Actions = {
 		// A locale the operator has since disabled must not be storable, or the
 		// notice job would have to fall back on every send (spec §6.4).
 		const config = getConfig();
-		const locale = config.locales.includes(parsed.data.locale)
-			? parsed.data.locale
-			: config.defaultLocale;
+		const locale = subscriptionLocale(parsed.data.locale, config.locales, config.defaultLocale);
 
 		await saveSubscription(getDb(), found.id, { locale, topics: parsed.data.topics });
 
@@ -95,10 +89,7 @@ export const actions: Actions = {
 		// The path prefix names the locale being left, so a locale change has to
 		// land on the new one — otherwise the page redraws in the old language
 		// and reads as a save that did not take.
-		redirect(
-			303,
-			localizePath(`/subscribe/manage?token=${encodeURIComponent(found.manageToken)}`, locale)
-		);
+		redirect(303, managePath(found.manageToken, locale));
 	},
 
 	unsubscribe: async (event) => {

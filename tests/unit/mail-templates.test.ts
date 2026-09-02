@@ -80,15 +80,31 @@ describe('subscription templates', () => {
 		}
 	});
 
-	it('renders the notice with the pre-rendered list and the manage link', () => {
+	it('renders the notice from its structured items and the manage link', () => {
 		const mail = renderTemplate('subscription_notice', 'de', {
 			url: 'https://trust.example/de/subscribe/manage?token=xyz',
-			items: 'Neue Unterauftragsverarbeiter\nhttps://trust.example/de/updates#sub-1',
-			count: 1
+			items: [
+				{
+					title: 'Neue Unterauftragsverarbeiter',
+					url: 'https://trust.example/de/updates#sub-1',
+					isFallback: false
+				}
+			]
 		});
 		expect(mail.text).toContain('Neue Unterauftragsverarbeiter');
 		expect(mail.text).toContain('https://trust.example/de/updates#sub-1');
 		expect(mail.text).toContain('https://trust.example/de/subscribe/manage?token=xyz');
+	});
+
+	// The label is chosen here rather than by the notify job, so it renders in
+	// the row's locale at send time — and a correction to the wording reaches
+	// mail that is already queued.
+	it('labels an item that fell back to another language', () => {
+		const mail = renderTemplate('subscription_notice', 'de', {
+			url: 'https://trust.example/de/subscribe/manage?token=xyz',
+			items: [{ title: 'Nur Deutsch', url: 'https://trust.example/de/updates#a', isFallback: true }]
+		});
+		expect(mail.text).toMatch(/anderen Sprache|another language/);
 	});
 
 	// P4.4: this template exists so the confirmed case is indistinguishable from

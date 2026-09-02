@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { page } from '$app/state';
 	import { COMPILED_LOCALES } from '$lib/i18n/compiled';
-	import { localizePath, stripLocale } from '$lib/i18n/locale';
+	import { endonym, localizePath, stripLocale } from '$lib/i18n/locale';
 	import { m } from '$lib/paraglide/messages.js';
 
 	let { locales, current }: { locales: readonly string[]; current: string } = $props();
@@ -21,13 +21,6 @@
 		return gated
 			? `${localizePath('/access/switch', current)}?to=${encodeURIComponent(locale)}`
 			: localizePath(basePath, locale);
-	}
-
-	// Intl.DisplayNames rather than a hand-maintained map: it names any locale
-	// the deployment compiles, in that locale's own language, and it is built
-	// into the platform — the portal loads nothing third-party.
-	function endonym(locale: string): string {
-		return new Intl.DisplayNames([locale], { type: 'language' }).of(locale) ?? locale;
 	}
 </script>
 

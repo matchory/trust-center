@@ -1,13 +1,11 @@
 import { sql } from 'drizzle-orm';
 import { localizePath, pickTranslation } from '../../i18n/locale';
-import { m } from '../../paraglide/messages.js';
-import { assertIsLocale } from '../../paraglide/runtime.js';
+import { managePath, subscriptionLocale } from './index';
 import { outboundEmail } from '../db/schema';
 import type { Db } from '../db';
-import type { MailTemplate } from '../mail/templates';
+import type { MailNoticeItem, MailTemplate } from '../mail/templates';
 
 export interface NoticePost {
-	id: string;
 	slug: string;
 	publishedAt: Date;
 	translations: readonly { locale: string; title: string; body: string }[];
@@ -29,7 +27,7 @@ export interface NoticePlan {
 	mail: {
 		to: string;
 		locale: string;
-		payload: { url: string; items: string; count: number };
+		payload: { url: string; items: readonly MailNoticeItem[] };
 	} | null;
 }
 
@@ -55,17 +53,9 @@ export function planNotices(
 	for (const item of subscriptions) {
 		if (item.posts.length === 0) continue;
 
-		// The stored locale can name one the operator has since removed from
-		// LOCALES. The mail would still render — `assertIsLocale` validates
-		// against the compiled catalogs, not the enabled ones — but the manage
-		// link it carries would 404, because `classifyPath` rejects a disabled
-		// prefix. A dead unsubscribe link is the defect §4.2 is about (P4.20).
-		const locale = options.enabledLocales.includes(item.locale)
-			? item.locale
-			: options.defaultLocale;
-		const messageOptions = { locale: assertIsLocale(locale) };
+		const locale = subscriptionLocale(item.locale, options.enabledLocales, options.defaultLocale);
 
-		const lines: string[] = [];
+		const items: MailNoticeItem[] = [];
 		let cursor = item.posts[0]!.publishedAt;
 
 		for (const post of item.posts) {
@@ -86,31 +76,25 @@ export function planNotices(
 			// The same two rules the portal applies, for the same reason.
 			if (!title || !body) continue;
 
-			const label = title.isFallback
-				? ` (${m.mail_subscription_notice_fallback({}, messageOptions)})`
-				: '';
-			const url = `${options.baseUrl}${localizePath('/updates', locale)}#${post.slug}`;
-			lines.push(`${title.value}${label}\n${url}`);
+			items.push({
+				title: title.value,
+				url: `${options.baseUrl}${localizePath('/updates', locale)}#${post.slug}`,
+				isFallback: title.isFallback
+			});
 		}
 
 		plans.push({
 			subscriptionId: item.id,
 			cursor,
 			mail:
-				lines.length === 0
+				items.length === 0
 					? null
 					: {
 							to: item.email,
 							locale,
 							payload: {
-								// Pre-rendered rather than structured (P4.15): MailPayload admits
-								// no array of objects, and widening it would be a port change.
-								items: lines.join('\n\n'),
-								count: lines.length,
-								url: `${options.baseUrl}${localizePath(
-									`/subscribe/manage?token=${encodeURIComponent(item.manageToken)}`,
-									locale
-								)}`
+								items,
+								url: `${options.baseUrl}${managePath(item.manageToken, locale)}`
 							}
 						}
 		});
@@ -229,7 +213,6 @@ export async function notifySubscribers(
 		let post = byPost.get(key);
 		if (!post) {
 			post = {
-				id: row.post_id,
 				slug: row.slug,
 				publishedAt: new Date(row.published_at),
 				translations: []

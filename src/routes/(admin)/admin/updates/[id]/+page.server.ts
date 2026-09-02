@@ -4,7 +4,7 @@ import { UPDATE_KINDS } from '$lib/content-types';
 import { localizePath } from '$lib/i18n/locale';
 import { saveMetaAction, saveTranslationsAction } from '$lib/server/admin/actions';
 import { recordEvent } from '$lib/server/audit';
-import { listSubprocessorsForAdmin } from '$lib/server/content/subprocessors';
+import { listSubprocessorOptions } from '$lib/server/content/subprocessors';
 import {
 	deleteUpdate,
 	getUpdateForAdmin,
@@ -17,9 +17,15 @@ import { clientIp } from '$lib/server/http/client-ip';
 import type { Actions, PageServerLoad } from './$types';
 
 export const load: PageServerLoad = async ({ params }) => {
-	const item = await getUpdateForAdmin(getDb(), params.id);
+	const db = getDb();
+	// Neither read feeds the other, so they go together rather than one after
+	// the other — the picker is the larger of the two.
+	const [item, subprocessors] = await Promise.all([
+		getUpdateForAdmin(db, params.id),
+		listSubprocessorOptions(db)
+	]);
 	if (!item) error(404, 'Update not found');
-	return { post: item, subprocessors: await listSubprocessorsForAdmin(getDb()) };
+	return { post: item, subprocessors };
 };
 
 export const actions: Actions = {
@@ -42,10 +48,7 @@ export const actions: Actions = {
 				.refine((date) => date === null || !Number.isNaN(date.getTime()), {
 					message: 'invalid date'
 				}),
-			// Deduped for the same reason as the portal topic arrays: a repeated
-			// id raises a primary-key violation in setUpdateSubprocessors, which
-			// saveMetaAction's catch reports as the slug being taken.
-			subprocessorIds: z.array(z.string().uuid()).transform((ids) => [...new Set(ids)])
+			subprocessorIds: z.array(z.string().uuid())
 		}),
 		read: (form) => ({
 			slug: form.get('slug'),

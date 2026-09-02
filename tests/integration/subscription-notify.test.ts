@@ -90,6 +90,11 @@ async function mailsFor(id: string): Promise<{ template: string; payload: unknow
 		.orderBy(desc(outboundEmail.createdAt));
 }
 
+/** The links a queued notice carries, one per post it announces. */
+function noticeUrls(payload: unknown): string[] {
+	return (payload as { items: { url: string }[] }).items.map((item) => item.url);
+}
+
 async function cursorOf(id: string): Promise<Date> {
 	const [row] = await db
 		.select({ at: subscription.lastNotifiedAt })
@@ -263,10 +268,10 @@ describe('notifySubscribers', () => {
 		// instead of two, and the cursor would land on the older post's date,
 		// permanently skipping the newer one — the silent loss this task
 		// exists to prevent.
-		const payload = mails[0]!.payload as { count: number; items: string };
-		expect(payload.count).toBe(2);
-		expect(payload.items).toContain(olderPost.slug);
-		expect(payload.items).toContain(newerPost.slug);
+		const urls = noticeUrls(mails[0]!.payload);
+		expect(urls).toHaveLength(2);
+		expect(urls.join(' ')).toContain(olderPost.slug);
+		expect(urls.join(' ')).toContain(newerPost.slug);
 		expect((await cursorOf(id)).getTime()).toBe(newer.getTime());
 	});
 
@@ -292,10 +297,10 @@ describe('notifySubscribers', () => {
 		for (const id of ids) {
 			const mails = (await mailsFor(id)).filter((mail) => mail.template === 'subscription_notice');
 			expect(mails).toHaveLength(1);
-			const payload = mails[0]!.payload as { count: number; items: string };
-			expect(payload.count).toBe(2);
-			expect(payload.items).toContain(olderPost.slug);
-			expect(payload.items).toContain(newerPost.slug);
+			const urls = noticeUrls(mails[0]!.payload);
+			expect(urls).toHaveLength(2);
+			expect(urls.join(' ')).toContain(olderPost.slug);
+			expect(urls.join(' ')).toContain(newerPost.slug);
 			expect((await cursorOf(id)).getTime()).toBe(newer.getTime());
 		}
 	});

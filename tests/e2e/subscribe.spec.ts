@@ -1,7 +1,8 @@
 import { expect, test } from '@playwright/test';
-import { and, desc, eq } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 import { createDb, type Db } from '../../src/lib/server/db';
-import { outboundEmail, subscription } from '../../src/lib/server/db/schema';
+import { subscription } from '../../src/lib/server/db/schema';
+import { lastMailUrl } from '../helpers/db';
 
 const databaseUrl = process.env.DATABASE_URL;
 if (!databaseUrl) throw new Error('DATABASE_URL is not set — see .env.example');
@@ -17,21 +18,6 @@ test.afterAll(async () => {
 	await closeDb();
 });
 
-async function lastMailUrl(to: string, template: string): Promise<string> {
-	// Filtered by template, not just by recipient: this spec queues several
-	// kinds of mail to one address, and "the newest row" would silently follow
-	// the wrong link the moment the order changes.
-	const [row] = await db
-		.select({ payload: outboundEmail.payload })
-		.from(outboundEmail)
-		.where(and(eq(outboundEmail.to, to), eq(outboundEmail.template, template)))
-		.orderBy(desc(outboundEmail.createdAt));
-	if (!row) throw new Error(`no ${template} mail queued for ${to}`);
-	const payload = row.payload as { url?: string };
-	if (!payload.url) throw new Error(`${template} mail carried no url`);
-	return payload.url;
-}
-
 test('subscribe, confirm, manage, unsubscribe', async ({ page }) => {
 	const email = `e2e-${Date.now()}@example.test`;
 
@@ -41,7 +27,7 @@ test('subscribe, confirm, manage, unsubscribe', async ({ page }) => {
 	await page.getByTestId('subscribe-submit').click();
 	await expect(page.getByTestId('subscribe-submitted')).toBeVisible();
 
-	const confirmUrl = await lastMailUrl(email, 'subscription_confirm');
+	const confirmUrl = await lastMailUrl(db, email, 'subscription_confirm');
 
 	// P4.3, and the assertion that would catch a future refactor turning this
 	// page back into a mutation: a mail scanner's GET must confirm nothing.
@@ -133,7 +119,7 @@ test('re-subscribing a confirmed address changes nothing and mails a working man
 	// the mail is queued unless something waits for the re-render it causes —
 	// without this, the DB read below races the submission.
 	await expect(page.getByTestId('subscribe-submitted')).toBeVisible();
-	await page.goto(await lastMailUrl(email, 'subscription_confirm'));
+	await page.goto(await lastMailUrl(db, email, 'subscription_confirm'));
 	await page.getByTestId('confirm-submit').click();
 	await expect(page.getByTestId('confirm-done')).toBeVisible();
 
@@ -145,7 +131,7 @@ test('re-subscribing a confirmed address changes nothing and mails a working man
 	await page.getByTestId('subscribe-submit').click();
 	await expect(page.getByTestId('subscribe-submitted')).toBeVisible();
 
-	await page.goto(await lastMailUrl(email, 'subscription_already'));
+	await page.goto(await lastMailUrl(db, email, 'subscription_already'));
 	await expect(page.getByTestId('manage-topic-advisory')).toBeChecked();
 	await expect(page.getByTestId('manage-topic-document')).not.toBeChecked();
 

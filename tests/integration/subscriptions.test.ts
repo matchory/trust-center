@@ -1,8 +1,8 @@
 import { isRedirect } from '@sveltejs/kit';
-import { and, asc, desc, eq } from 'drizzle-orm';
+import { asc, eq } from 'drizzle-orm';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { createDb, type Db } from '../../src/lib/server/db';
-import { outboundEmail, subscription, subscriptionTopic } from '../../src/lib/server/db/schema';
+import { subscription, subscriptionTopic } from '../../src/lib/server/db/schema';
 import type { UpdateKind } from '../../src/lib/content-types';
 import { queryEvents } from '../../src/lib/server/audit';
 import {
@@ -23,6 +23,7 @@ import {
 import { actions as subscribeActions } from '../../src/routes/(portal)/subscribe/+page.server';
 import { actions as confirmActions } from '../../src/routes/(portal)/subscribe/confirm/+page.server';
 import { actions as manageActions } from '../../src/routes/(portal)/subscribe/manage/+page.server';
+import { lastMailUrl, rejectionCause } from '../helpers/db';
 
 let db: Db;
 let close: () => Promise<void>;
@@ -62,16 +63,6 @@ beforeAll(() => {
 afterAll(async () => {
 	await close();
 });
-
-async function rejectionCause(query: PromiseLike<unknown>): Promise<string> {
-	try {
-		await query;
-	} catch (error) {
-		const wrapped = error as Error & { cause?: Error };
-		return wrapped.cause?.message ?? wrapped.message;
-	}
-	throw new Error('expected the query to be rejected, but it succeeded');
-}
 
 describe('subscription check constraints', () => {
 	it('accepts a well-formed unconfirmed row', async () => {
@@ -502,18 +493,6 @@ describe('the audit trail the routes write (spec §10.1, §10.2, §14)', () => {
 		}
 	}
 
-	async function lastMailUrl(to: string, template: string): Promise<string> {
-		const [row] = await db
-			.select({ payload: outboundEmail.payload })
-			.from(outboundEmail)
-			.where(and(eq(outboundEmail.to, to), eq(outboundEmail.template, template)))
-			.orderBy(desc(outboundEmail.createdAt));
-		if (!row) throw new Error(`no ${template} mail queued for ${to}`);
-		const payload = row.payload as { url?: string };
-		if (!payload.url) throw new Error(`${template} mail carried no url`);
-		return payload.url;
-	}
-
 	function tokenFrom(url: string): string {
 		return new URL(url).searchParams.get('token') ?? '';
 	}
@@ -540,7 +519,7 @@ describe('the audit trail the routes write (spec §10.1, §10.2, §14)', () => {
 		topics: string[] = ['advisory']
 	): Promise<{ id: string; manageToken: string }> {
 		await subscribeActions.default!(fakeEvent({ email, topics }));
-		const confirmUrl = await lastMailUrl(email, 'subscription_confirm');
+		const confirmUrl = await lastMailUrl(db, email, 'subscription_confirm');
 		await confirmActions.default!(fakeEvent({ token: tokenFrom(confirmUrl) }));
 		const id = await idFor(email);
 		const [row] = await db

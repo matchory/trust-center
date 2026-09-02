@@ -1,5 +1,6 @@
-import { and, asc, eq, inArray, isNotNull, lte } from 'drizzle-orm';
+import { asc, eq, inArray } from 'drizzle-orm';
 import { pickTranslation } from '../../i18n/locale';
+import { livePost } from './updates';
 import type { Db } from '../db';
 import {
 	subprocessor,
@@ -184,8 +185,8 @@ export async function listSubprocessorsForAdmin(db: Db): Promise<AdminSubprocess
 			)
 		);
 
-	// "Live" is the same predicate `listPublicUpdates` uses, and for the same
-	// reason: a draft or scheduled post has told nobody anything yet.
+	// The same predicate `listPublicUpdates` uses, and for the same reason: a
+	// draft or scheduled post has told nobody anything yet.
 	const covering = await db
 		.select({
 			subprocessorId: updatePostSubprocessor.subprocessorId,
@@ -193,7 +194,7 @@ export async function listSubprocessorsForAdmin(db: Db): Promise<AdminSubprocess
 		})
 		.from(updatePostSubprocessor)
 		.innerJoin(updatePost, eq(updatePost.id, updatePostSubprocessor.postId))
-		.where(and(isNotNull(updatePost.publishedAt), lte(updatePost.publishedAt, new Date())));
+		.where(livePost());
 
 	return rows.map((row) => ({
 		id: row.id,
@@ -225,6 +226,21 @@ export async function listSubprocessorsForAdmin(db: Db): Promise<AdminSubprocess
 				.filter((publishedAt): publishedAt is Date => publishedAt !== null)
 		})
 	}));
+}
+
+/**
+ * Just enough to render a picker. The update editor links posts to
+ * subprocessors by id, and `listSubprocessorsForAdmin` would charge that
+ * checkbox list for every translation and for the notice-coverage join — work
+ * only the subprocessor list page displays.
+ */
+export async function listSubprocessorOptions(
+	db: Db
+): Promise<{ id: string; slug: string; name: string }[]> {
+	return db
+		.select({ id: subprocessor.id, slug: subprocessor.slug, name: subprocessor.name })
+		.from(subprocessor)
+		.orderBy(asc(subprocessor.position), asc(subprocessor.name));
 }
 
 export async function getSubprocessorForAdmin(

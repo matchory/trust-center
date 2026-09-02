@@ -2,25 +2,13 @@
 	import { enhance } from '$app/forms';
 	import SectionHeading from '$lib/components/portal/SectionHeading.svelte';
 	import Seo from '$lib/components/portal/Seo.svelte';
-	import type { UpdateKind } from '$lib/content-types';
+	import { UPDATE_KINDS } from '$lib/content-types';
+	import { endonym } from '$lib/i18n/locale';
 	import { m } from '$lib/paraglide/messages.js';
+	import { updateKindLabel } from '$lib/portal/update-kinds';
 	import type { PageProps } from './$types';
 
 	let { data, form }: PageProps = $props();
-
-	const TOPIC_LABEL: Record<UpdateKind, () => string> = {
-		document: () => m.update_kind_document(),
-		subprocessor: () => m.update_kind_subprocessor(),
-		certification: () => m.update_kind_certification(),
-		advisory: () => m.update_kind_advisory()
-	};
-
-	// Intl.DisplayNames rather than a hand-maintained map, matching
-	// LocaleSwitcher: it names any locale the deployment compiles, in that
-	// locale's own language, and it is built into the platform.
-	function endonym(locale: string): string {
-		return new Intl.DisplayNames([locale], { type: 'language' }).of(locale) ?? locale;
-	}
 </script>
 
 <!-- Same reasoning as the confirm page: the layout emits no default robots
@@ -41,9 +29,6 @@
 	<SectionHeading title={m.manage_gone_title()} />
 	<p data-testid="manage-gone" class="max-w-prose text-neutral-700">{m.manage_gone_body()}</p>
 {:else}
-	{@const selectedLocale = data.availableLocales.includes(data.subscriptionLocale)
-		? data.subscriptionLocale
-		: data.defaultLocale}
 	<SectionHeading title={m.manage_title()} description={m.manage_intro()} />
 
 	<form method="POST" action="?/save" use:enhance class="max-w-xl space-y-4">
@@ -51,7 +36,7 @@
 
 		<fieldset>
 			<legend class="mb-1 block text-sm font-medium">{m.subscribe_topics()}</legend>
-			{#each data.allTopics as topic (topic)}
+			{#each UPDATE_KINDS as topic (topic)}
 				<label class="flex items-center gap-2 py-1">
 					<input
 						type="checkbox"
@@ -60,7 +45,7 @@
 						data-testid="manage-topic-{topic}"
 						checked={data.topics.includes(topic)}
 					/>
-					<span>{TOPIC_LABEL[topic]()}</span>
+					<span>{updateKindLabel(topic)}</span>
 				</label>
 			{/each}
 			{#if form?.field === 'topics'}
@@ -72,7 +57,8 @@
 			<span class="mb-1 block text-sm font-medium">{m.manage_language()}</span>
 			<select name="locale" data-testid="manage-locale" class="rounded border px-2 py-1">
 				{#each data.availableLocales as locale (locale)}
-					<option value={locale} selected={locale === selectedLocale}>{endonym(locale)}</option>
+					<option value={locale} selected={locale === data.selectedLocale}>{endonym(locale)}</option
+					>
 				{/each}
 			</select>
 		</label>

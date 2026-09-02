@@ -1,6 +1,7 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { and, asc, eq, gt, isNull, lt } from 'drizzle-orm';
 import type { UpdateKind } from '../../content-types';
+import { localizePath } from '../../i18n/locale';
 import { subscription, subscriptionTopic } from '../db/schema';
 import type { Db } from '../db';
 
@@ -18,6 +19,29 @@ function newToken(): string {
 	return randomBytes(32).toString('base64url');
 }
 
+/**
+ * The locale every subscriber-facing mail and link must use: the stored one,
+ * unless the operator has since removed it from LOCALES. Such a mail would
+ * still render — `assertIsLocale` validates against the compiled catalogs, not
+ * the enabled ones — but the manage link it carries would 404, because
+ * `classifyPath` rejects a disabled prefix. A dead unsubscribe link is the
+ * defect §4.2 is about (P4.20).
+ */
+export function subscriptionLocale(
+	stored: string,
+	locales: readonly string[],
+	defaultLocale: string
+): string {
+	return locales.includes(stored) ? stored : defaultLocale;
+}
+
+/** The one shape of the manage link. Two mails carry it and one redirect lands
+ * on it, so the token encoding and the locale prefix are built here rather than
+ * three times over. */
+export function managePath(token: string, locale: string): string {
+	return localizePath(`/subscribe/manage?token=${encodeURIComponent(token)}`, locale);
+}
+
 /** The form submits the complete set, so an empty selection would clear it —
  * which §5 refuses at the form rather than here, because a subscription that
  * matches nothing is a row that exists to send no mail. */
@@ -26,9 +50,16 @@ async function replaceTopics(
 	subscriptionId: string,
 	topics: readonly UpdateKind[]
 ): Promise<void> {
+	// Deduped here rather than in each caller's form schema, as `createRequest`
+	// dedupes its document ids: subscription_topic has a composite primary key,
+	// so a repeated value raises 23505 and 500s — and because the `already` path
+	// returns before topics are written, that 500 would answer "is this address
+	// subscribed?" for anyone who asked (P4.4). A caller cannot see that from
+	// the signature, so it cannot be the caller's job.
+	const unique = [...new Set(topics)];
 	await tx.delete(subscriptionTopic).where(eq(subscriptionTopic.subscriptionId, subscriptionId));
-	if (topics.length > 0) {
-		await tx.insert(subscriptionTopic).values(topics.map((topic) => ({ subscriptionId, topic })));
+	if (unique.length > 0) {
+		await tx.insert(subscriptionTopic).values(unique.map((topic) => ({ subscriptionId, topic })));
 	}
 }
 

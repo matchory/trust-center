@@ -15,16 +15,24 @@ export interface PublicUpdate {
 	isTranslationFallback: boolean;
 }
 
+/**
+ * One column answers both "is it published" and "is it scheduled": a null date
+ * is a draft, a future date is scheduled, and neither is public yet. Exported
+ * because notice coverage decides the same thing about the same posts, and a
+ * post that has told nobody anything must mean that in both places.
+ */
+export function livePost() {
+	return and(isNotNull(updatePost.publishedAt), lte(updatePost.publishedAt, new Date()));
+}
+
 export async function listPublicUpdates(
 	db: Db,
 	opts: { locale: string; defaultLocale: string }
 ): Promise<PublicUpdate[]> {
-	// One column answers both "is it published" and "is it scheduled": a null
-	// date is a draft, a future date is scheduled, and neither is public yet.
 	const rows = await db
 		.select()
 		.from(updatePost)
-		.where(and(isNotNull(updatePost.publishedAt), lte(updatePost.publishedAt, new Date())))
+		.where(livePost())
 		.orderBy(desc(updatePost.publishedAt));
 
 	if (rows.length === 0) return [];
@@ -185,12 +193,16 @@ export async function setUpdateSubprocessors(
 	postId: string,
 	subprocessorIds: readonly string[]
 ): Promise<void> {
+	// Deduped here rather than in the editor's form schema, for the same reason
+	// `replaceTopics` dedupes: the join table has a composite primary key, so a
+	// repeated id raises a violation the caller cannot see coming.
+	const unique = [...new Set(subprocessorIds)];
 	await db.transaction(async (tx) => {
 		await tx.delete(updatePostSubprocessor).where(eq(updatePostSubprocessor.postId, postId));
-		if (subprocessorIds.length > 0) {
+		if (unique.length > 0) {
 			await tx
 				.insert(updatePostSubprocessor)
-				.values(subprocessorIds.map((subprocessorId) => ({ postId, subprocessorId })));
+				.values(unique.map((subprocessorId) => ({ postId, subprocessorId })));
 		}
 	});
 }
