@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from 'node:crypto';
-import { and, eq, gt, isNull } from 'drizzle-orm';
+import { and, asc, eq, gt, isNull, lt } from 'drizzle-orm';
 import type { UpdateKind } from '../../content-types';
 import { subscription, subscriptionTopic } from '../db/schema';
 import type { Db } from '../db';
@@ -158,4 +158,97 @@ export async function confirmSubscription(
 
 	if (!row) return null;
 	return { subscriptionId: row.id, email: row.email, locale: row.locale, manageToken };
+}
+
+export interface ManagedSubscription {
+	id: string;
+	email: string;
+	locale: string;
+	/** Carried so the manage page can rebuild its own URL after a locale
+	 * change — the caller already holds it, so this exposes nothing new. */
+	manageToken: string;
+	topics: UpdateKind[];
+}
+
+/**
+ * The management token is permanent and never rotated (P4.16): an unsubscribe
+ * link in a mail from eighteen months ago must still work, and every mail
+ * already sent carries this one. Compared directly rather than through a hash
+ * — §4.2 explains why this one is not hashed and why the confirmation token is.
+ */
+export async function subscriptionByManageToken(
+	db: Db,
+	token: string
+): Promise<ManagedSubscription | null> {
+	const [row] = await db
+		.select({
+			id: subscription.id,
+			email: subscription.email,
+			locale: subscription.locale,
+			manageToken: subscription.manageToken
+		})
+		.from(subscription)
+		.where(eq(subscription.manageToken, token));
+
+	if (!row) return null;
+
+	const topics = await db
+		.select({ topic: subscriptionTopic.topic })
+		.from(subscriptionTopic)
+		.where(eq(subscriptionTopic.subscriptionId, row.id))
+		.orderBy(asc(subscriptionTopic.topic));
+
+	// manageToken is nullable in the column type but never null on a confirmed
+	// row, and only a confirmed row has one to match against.
+	return {
+		...row,
+		manageToken: row.manageToken!,
+		topics: topics.map((item) => item.topic as UpdateKind)
+	};
+}
+
+/**
+ * Advancing the cursor is not incidental to this write (P4.18). The cursor only
+ * moves when a tick finds posts, so a subscriber whose topics matched nothing
+ * for months still carries their confirmation-time cursor; adding a topic would
+ * then deliver everything of that kind published since. Unconditional rather
+ * than conditional on the set widening, because narrowing and widening again in
+ * one sitting would slip past a comparison.
+ */
+export async function saveSubscription(
+	db: Db,
+	id: string,
+	input: { locale: string; topics: readonly UpdateKind[] }
+): Promise<void> {
+	await db.transaction(async (tx) => {
+		await tx
+			.update(subscription)
+			.set({ locale: input.locale, lastNotifiedAt: new Date() })
+			.where(eq(subscription.id, id));
+		await replaceTopics(tx, id, input.topics);
+	});
+}
+
+/**
+ * Deletion rather than a suppression record (P4.13). The subscription has no
+ * dependents needing referential integrity, so deleting reaches the same place
+ * pseudonymisation reaches for a requester: the audit events survive, and the
+ * UUID in `actor_id` now points at nothing.
+ */
+export async function unsubscribe(db: Db, id: string): Promise<void> {
+	await db.delete(subscription).where(eq(subscription.id, id));
+}
+
+/**
+ * A row whose confirmation token has expired can never become confirmed, so it
+ * is garbage holding an address nobody proved they control. Folded into
+ * `retention:sweep` rather than becoming a sixth timer (spec §8).
+ */
+export async function sweepUnconfirmedSubscriptions(db: Db): Promise<{ deleted: number }> {
+	const deleted = await db
+		.delete(subscription)
+		.where(and(isNull(subscription.confirmedAt), lt(subscription.confirmExpiresAt, new Date())))
+		.returning({ id: subscription.id });
+
+	return { deleted: deleted.length };
 }

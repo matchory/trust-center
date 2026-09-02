@@ -2,7 +2,15 @@ import { asc, eq } from 'drizzle-orm';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createDb, type Db } from '../../src/lib/server/db';
 import { subscription, subscriptionTopic } from '../../src/lib/server/db/schema';
-import { confirmSubscription, subscribe } from '../../src/lib/server/subscriptions';
+import type { UpdateKind } from '../../src/lib/content-types';
+import {
+	confirmSubscription,
+	saveSubscription,
+	subscribe,
+	subscriptionByManageToken,
+	sweepUnconfirmedSubscriptions,
+	unsubscribe
+} from '../../src/lib/server/subscriptions';
 
 let db: Db;
 let close: () => Promise<void>;
@@ -309,5 +317,100 @@ describe('confirmSubscription', () => {
 
 	it('refuses an unknown token', async () => {
 		expect(await confirmSubscription(db, 'not-a-token')).toBeNull();
+	});
+});
+
+describe('managing a subscription', () => {
+	async function confirmed(topics: UpdateKind[] = ['advisory']) {
+		const email = `manage-${Date.now()}-${Math.random().toString(36).slice(2, 8)}@example.test`;
+		const created = await subscribe(db, { email, locale: 'de', topics, ttlMinutes: 60 });
+		const token = created.kind === 'created' ? created.confirmToken : '';
+		const result = await confirmSubscription(db, token);
+		if (!result) throw new Error('fixture failed to confirm');
+		return result;
+	}
+
+	it('reads a subscription back by its manage token', async () => {
+		const it = await confirmed(['advisory', 'document']);
+		const found = await subscriptionByManageToken(db, it.manageToken);
+
+		expect(found?.id).toBe(it.subscriptionId);
+		expect(found?.topics).toEqual(['advisory', 'document']);
+		expect(await subscriptionByManageToken(db, 'wrong')).toBeNull();
+
+		await db.delete(subscription).where(eq(subscription.id, it.subscriptionId));
+	});
+
+	// P4.18. Without this, a subscriber who adds a topic receives every post of
+	// that kind published since they confirmed — P4.6's back catalogue, by a
+	// second door. Unconditional on save, so narrow-then-widen cannot beat it.
+	it('advances the cursor on every save', async () => {
+		const it = await confirmed();
+		await db
+			.update(subscription)
+			.set({ lastNotifiedAt: new Date('2020-01-01T00:00:00Z') })
+			.where(eq(subscription.id, it.subscriptionId));
+
+		const before = Date.now();
+		await saveSubscription(db, it.subscriptionId, {
+			locale: 'en',
+			topics: ['document', 'subprocessor']
+		});
+
+		const [row] = await db
+			.select()
+			.from(subscription)
+			.where(eq(subscription.id, it.subscriptionId));
+		expect(row?.locale).toBe('en');
+		expect(row!.lastNotifiedAt!.getTime()).toBeGreaterThanOrEqual(before - 1000);
+		expect(await topicsOf(it.subscriptionId)).toEqual(['document', 'subprocessor']);
+
+		await db.delete(subscription).where(eq(subscription.id, it.subscriptionId));
+	});
+
+	it('deletes the row and cascades its topics on unsubscribe', async () => {
+		const it = await confirmed(['advisory', 'document']);
+		await unsubscribe(db, it.subscriptionId);
+
+		const rows = await db.select().from(subscription).where(eq(subscription.id, it.subscriptionId));
+		expect(rows).toHaveLength(0);
+		expect(await topicsOf(it.subscriptionId)).toEqual([]);
+	});
+});
+
+describe('sweepUnconfirmedSubscriptions', () => {
+	it('deletes expired unconfirmed rows and spares confirmed ones', async () => {
+		const stale = await subscribe(db, {
+			email: `stale-${Date.now()}@example.test`,
+			locale: 'de',
+			topics: ['advisory'],
+			ttlMinutes: 60
+		});
+		await db
+			.update(subscription)
+			.set({ confirmExpiresAt: new Date(Date.now() - 1000) })
+			.where(eq(subscription.id, stale.subscriptionId));
+
+		const live = await subscribe(db, {
+			email: `live-${Date.now()}@example.test`,
+			locale: 'de',
+			topics: ['advisory'],
+			ttlMinutes: 60
+		});
+		const confirmedRow = await confirmSubscription(
+			db,
+			live.kind === 'created' ? live.confirmToken : ''
+		);
+
+		await sweepUnconfirmedSubscriptions(db);
+
+		expect(
+			await db.select().from(subscription).where(eq(subscription.id, stale.subscriptionId))
+		).toHaveLength(0);
+		expect(
+			await db.select().from(subscription).where(eq(subscription.id, confirmedRow!.subscriptionId))
+		).toHaveLength(1);
+
+		await db.delete(subscription).where(eq(subscription.id, confirmedRow!.subscriptionId));
 	});
 });
