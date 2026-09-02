@@ -5,8 +5,8 @@ import type { PageServerLoad } from './$types';
 
 const PAGE_SIZE = 100;
 
-/** The four `actor_type` values the CHECK constraint permits. */
-const ACTOR_TYPES = ['staff', 'staff-unresolved', 'requester', 'system'] as const;
+/** The five `actor_type` values the CHECK constraint permits. */
+const ACTOR_TYPES = ['staff', 'staff-unresolved', 'requester', 'subscriber', 'system'] as const;
 
 function text(params: URLSearchParams, key: string): string {
 	return params.get(key)?.trim() ?? '';
