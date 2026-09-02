@@ -1,4 +1,5 @@
-import { trace } from '@opentelemetry/api';
+import { context, trace } from '@opentelemetry/api';
+import { AsyncLocalStorageContextManager } from '@opentelemetry/context-async-hooks';
 import {
 	BasicTracerProvider,
 	InMemorySpanExporter,
@@ -11,6 +12,13 @@ import {
 	requestSpanName,
 	withSpan
 } from '../../src/lib/server/telemetry';
+
+// `trace.setGlobalTracerProvider` does not install a context manager, and
+// without one `context.active()` never propagates — `startActiveSpan` creates
+// the span but cannot make it active, so `getActiveSpan()` returns undefined.
+// `NodeTracerProvider.register()` does this for us in the real server; a
+// BasicTracerProvider in a test has to do it by hand.
+context.setGlobalContextManager(new AsyncLocalStorageContextManager().enable());
 
 const exporter = new InMemorySpanExporter();
 const provider = new BasicTracerProvider({
