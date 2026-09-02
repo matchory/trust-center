@@ -4,6 +4,7 @@ import { noticeCoverage } from '../../src/lib/server/content/subprocessors';
 const JAN = new Date('2026-01-01T00:00:00Z');
 const FEB = new Date('2026-02-01T00:00:00Z');
 const MAR = new Date('2026-03-01T00:00:00Z');
+const APR = new Date('2026-04-01T00:00:00Z');
 
 describe('noticeCoverage', () => {
 	it('warns when a published addition has no covering post', () => {
@@ -47,17 +48,28 @@ describe('noticeCoverage', () => {
 		).toBe('removal-unannounced');
 	});
 
-	it('does not warn when a post went live after the end date', () => {
+	// A single post can no longer clear both conditions once there is an end
+	// date: the addition's window is upper-bounded by `endedAt` (P4.22), so a
+	// post at or after the end covers only the removal. Covering both here
+	// needs two separate posts, one inside each window.
+	it('does not warn when the addition and the removal each have their own covering post', () => {
 		expect(
-			noticeCoverage({ published: true, startedAt: JAN, endedAt: FEB, coveringPublishedAt: [MAR] })
+			noticeCoverage({
+				published: true,
+				startedAt: JAN,
+				endedAt: FEB,
+				coveringPublishedAt: [JAN, MAR]
+			})
 		).toBeNull();
 	});
 
-	// The exact case P4.22 was written for: the addition was never announced,
-	// and an unanchored condition would let the *removal* announcement clear it.
-	it('still reports the unannounced addition when only the removal was announced', () => {
+	// The case the condition exists for: added silently, and the only covering
+	// post is the one announcing the REMOVAL. Without the upper bound this
+	// clears the addition warning on the strength of a post announcing the
+	// opposite fact (P4.22).
+	it('reports the unannounced addition when only the removal was announced', () => {
 		expect(
-			noticeCoverage({ published: true, startedAt: FEB, endedAt: null, coveringPublishedAt: [JAN] })
+			noticeCoverage({ published: true, startedAt: FEB, endedAt: MAR, coveringPublishedAt: [APR] })
 		).toBe('addition-unannounced');
 	});
 

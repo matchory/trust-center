@@ -130,10 +130,15 @@ export type NoticeCoverage = 'addition-unannounced' | 'removal-unannounced' | nu
  * nobody has been told yet, and a warning that cleared the moment an
  * announcement was *written* would clear before the obligation is discharged.
  *
- * Both conditions are anchored (P4.22). With the addition condition reading
- * "any live covering post", a subprocessor added silently and removed later
- * *with* an announcement would have its addition warning cleared retroactively
- * by a post announcing the opposite fact — the one case this exists for.
+ * Both conditions are anchored to a window, not just a lower bound (P4.22).
+ * The addition needs a covering post on/after `startedAt` AND — when there is
+ * an `endedAt` — strictly before it. A post published on or after the removal
+ * is evidence the removal was announced, not the addition: without that upper
+ * bound, a subprocessor added silently and removed later *with* an
+ * announcement would have its addition warning cleared retroactively by a
+ * post announcing the opposite fact — the one case this exists for. (An
+ * earlier version anchored only the lower bound and missed this; a lower
+ * bound alone cannot reject a post that comes after the removal.)
  */
 export function noticeCoverage(input: {
 	published: boolean;
@@ -146,14 +151,19 @@ export function noticeCoverage(input: {
 	// in the same row and needs no second signal.
 	if (!input.published) return null;
 
-	const covers = (since: Date | null): boolean =>
-		since === null
-			? input.coveringPublishedAt.length > 0
-			: input.coveringPublishedAt.some((at) => at.getTime() >= since.getTime());
+	// A covering post counts for a given event only if its publish date falls
+	// in that event's window: on/after the event itself, and — for the
+	// addition only — strictly before a later removal.
+	const covers = (lower: Date | null, upper: Date | null): boolean =>
+		input.coveringPublishedAt.some(
+			(at) =>
+				(lower === null || at.getTime() >= lower.getTime()) &&
+				(upper === null || at.getTime() < upper.getTime())
+		);
 
 	// The removal first: it is the live obligation, and only one badge is shown.
-	if (input.endedAt && !covers(input.endedAt)) return 'removal-unannounced';
-	if (!covers(input.startedAt)) return 'addition-unannounced';
+	if (input.endedAt && !covers(input.endedAt, null)) return 'removal-unannounced';
+	if (!covers(input.startedAt, input.endedAt)) return 'addition-unannounced';
 	return null;
 }
 
