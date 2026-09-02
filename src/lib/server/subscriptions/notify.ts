@@ -259,11 +259,21 @@ export async function notifySubscribers(
 			),
 			sql`, `
 		);
+		// The select above ran outside this transaction, so a `saveSubscription`
+		// committing in that window would otherwise be rolled backwards here —
+		// losing the cursor push P4.18 exists to perform, and delivering the back
+		// catalogue that save was meant to suppress. Monotonic rather than
+		// `= v.previous`: a row whose cursor a save already pushed past `v.cursor`
+		// simply does not match, so no per-row reconciliation with the insert is
+		// needed. The notice this tick queued is still sent, which is the
+		// at-least-once direction the single transaction was chosen to fail in;
+		// the next tick finds nothing older than the save, so it is not repeated.
 		await tx.execute(sql`
 			UPDATE subscription
 			SET last_notified_at = v.cursor
 			FROM (VALUES ${values}) AS v(id, cursor)
 			WHERE subscription.id = v.id
+			  AND subscription.last_notified_at < v.cursor
 		`);
 	});
 
