@@ -1,7 +1,12 @@
-import { asc, eq, inArray } from 'drizzle-orm';
+import { and, asc, eq, inArray, isNotNull, lte } from 'drizzle-orm';
 import { pickTranslation } from '../../i18n/locale';
 import type { Db } from '../db';
-import { subprocessor, subprocessorTranslation } from '../db/schema';
+import {
+	subprocessor,
+	subprocessorTranslation,
+	updatePost,
+	updatePostSubprocessor
+} from '../db/schema';
 
 export interface PublicSubprocessor {
 	id: string;
@@ -106,6 +111,50 @@ export interface AdminSubprocessor extends Omit<NewSubprocessor, 'position'> {
 	published: boolean;
 	position: number;
 	translations: { locale: string; purpose: string; dataCategories: string }[];
+	coverage: NoticeCoverage;
+}
+
+export type NoticeCoverage = 'addition-unannounced' | 'removal-unannounced' | null;
+
+/**
+ * Whether a subprocessor change has an announcement behind it (spec §7).
+ * Computed from `published`, `started_at`, `ended_at` and the live covering
+ * posts — no new state and no new timestamps.
+ *
+ * Deliberately not driven by `updated_at`: that column bumps on any edit, so a
+ * typo fix in a hosting provider's name would raise a notice warning, and a
+ * warning that fires on noise is one nobody reads (P4.10).
+ *
+ * `coveringPublishedAt` must already be filtered to LIVE posts — published_at
+ * not null and not in the future. A draft or scheduled post is not coverage:
+ * nobody has been told yet, and a warning that cleared the moment an
+ * announcement was *written* would clear before the obligation is discharged.
+ *
+ * Both conditions are anchored (P4.22). With the addition condition reading
+ * "any live covering post", a subprocessor added silently and removed later
+ * *with* an announcement would have its addition warning cleared retroactively
+ * by a post announcing the opposite fact — the one case this exists for.
+ */
+export function noticeCoverage(input: {
+	published: boolean;
+	startedAt: Date | null;
+	endedAt: Date | null;
+	coveringPublishedAt: readonly Date[];
+}): NoticeCoverage {
+	// An unpublished subprocessor was never disclosed, so nothing about it needs
+	// announcing — including its removal. The operator sees `published: false`
+	// in the same row and needs no second signal.
+	if (!input.published) return null;
+
+	const covers = (since: Date | null): boolean =>
+		since === null
+			? input.coveringPublishedAt.length > 0
+			: input.coveringPublishedAt.some((at) => at.getTime() >= since.getTime());
+
+	// The removal first: it is the live obligation, and only one badge is shown.
+	if (input.endedAt && !covers(input.endedAt)) return 'removal-unannounced';
+	if (!covers(input.startedAt)) return 'addition-unannounced';
+	return null;
 }
 
 export async function listSubprocessorsForAdmin(db: Db): Promise<AdminSubprocessor[]> {
@@ -124,6 +173,17 @@ export async function listSubprocessorsForAdmin(db: Db): Promise<AdminSubprocess
 				rows.map((row) => row.id)
 			)
 		);
+
+	// "Live" is the same predicate `listPublicUpdates` uses, and for the same
+	// reason: a draft or scheduled post has told nobody anything yet.
+	const covering = await db
+		.select({
+			subprocessorId: updatePostSubprocessor.subprocessorId,
+			publishedAt: updatePost.publishedAt
+		})
+		.from(updatePostSubprocessor)
+		.innerJoin(updatePost, eq(updatePost.id, updatePostSubprocessor.postId))
+		.where(and(isNotNull(updatePost.publishedAt), lte(updatePost.publishedAt, new Date())));
 
 	return rows.map((row) => ({
 		id: row.id,
@@ -144,7 +204,16 @@ export async function listSubprocessorsForAdmin(db: Db): Promise<AdminSubprocess
 				locale: item.locale,
 				purpose: item.purpose,
 				dataCategories: item.dataCategories
-			}))
+			})),
+		coverage: noticeCoverage({
+			published: row.published,
+			startedAt: row.startedAt,
+			endedAt: row.endedAt,
+			coveringPublishedAt: covering
+				.filter((item) => item.subprocessorId === row.id)
+				.map((item) => item.publishedAt)
+				.filter((publishedAt): publishedAt is Date => publishedAt !== null)
+		})
 	}));
 }
 
