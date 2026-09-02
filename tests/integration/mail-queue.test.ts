@@ -2,6 +2,12 @@ import { randomUUID } from 'node:crypto';
 import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { trace } from '@opentelemetry/api';
+import {
+	BasicTracerProvider,
+	InMemorySpanExporter,
+	SimpleSpanProcessor
+} from '@opentelemetry/sdk-trace-base';
 import { eq } from 'drizzle-orm';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { createDb } from '../../src/lib/server/db';
@@ -17,14 +23,31 @@ const FROM = 'trust-center@test.invalid';
 let db: Db;
 let close: () => Promise<void>;
 let storage: StorageAdapter;
+let exporter: InMemorySpanExporter;
 
 beforeAll(async () => {
 	({ db, close } = createDb(process.env.TEST_DATABASE_URL!));
 	storage = createLocalStorage(await mkdtemp(join(tmpdir(), 'mail-attachment-')));
+
+	// `trace.setGlobalTracerProvider` silently refuses a second registration
+	// (returns false, no throw) once one is already registered on globalThis —
+	// disable first so this file's provider actually takes effect, and
+	// register once here rather than per test so the second test's fresh
+	// exporter is not silently ignored.
+	trace.disable();
+	exporter = new InMemorySpanExporter();
+	trace.setGlobalTracerProvider(
+		new BasicTracerProvider({ spanProcessors: [new SimpleSpanProcessor(exporter)] })
+	);
 });
+
+beforeEach(() => exporter.reset());
 
 afterAll(async () => {
 	await close();
+	// Leave the global tracing API as this file found it, for whichever test
+	// file's `beforeAll` runs next in the same worker.
+	trace.disable();
 });
 
 function mailerThat(behaviour: 'succeed' | 'fail'): { adapter: MailAdapter; sent: string[] } {
@@ -233,5 +256,36 @@ describe('attachments', () => {
 
 		expect(sent).toBe(0);
 		expect(failed).toBe(1);
+	});
+});
+
+describe('mail drain telemetry', () => {
+	it('emits one span per send, naming the template and never the address', async () => {
+		// `access_link` is not a real MailTemplate (the file has no such id, and
+		// `renderTemplate`'s exhaustive switch would return undefined for it,
+		// failing the row before the mailer is ever called) — `sign_in` is the
+		// closest existing template with a matching `{ url }` payload shape.
+		await db.insert(outboundEmail).values({
+			to: 'telemetry-probe@example.test',
+			template: 'sign_in',
+			locale: 'de',
+			payload: { url: 'https://trust.example/de/access' }
+		});
+
+		await drainOutbox(db, {
+			limit: 10,
+			mailer: mailerThat('succeed').adapter,
+			from: FROM,
+			storage
+		});
+
+		const sendSpans = exporter.getFinishedSpans().filter((span) => span.name === 'mail send');
+		expect(sendSpans).toHaveLength(1);
+		expect(sendSpans[0]?.attributes['mail.template']).toBe('sign_in');
+
+		// Spec §8: the recipient is personal data and telemetry leaves the
+		// boundary, so no attribute may carry it.
+		const values = Object.values(sendSpans[0]?.attributes ?? {}).map(String);
+		expect(values.some((value) => value.includes('@'))).toBe(false);
 	});
 });

@@ -1,6 +1,6 @@
 import { metrics, trace } from '@opentelemetry/api';
 import type { AppConfig } from '../config';
-import { resetInstruments } from './metrics';
+import { registerQueueDepthGauge, resetInstruments } from './metrics';
 
 /**
  * Held so shutdown can flush. Empty is the normal state: a deployment with no
@@ -77,6 +77,21 @@ export async function startTelemetry(config: AppConfig['telemetry']): Promise<bo
 	// and would never export. Dropping them forces a rebuild against the real
 	// provider on next use.
 	resetInstruments();
+
+	// `getDb` is imported here rather than at module scope: it is lazy, but
+	// keeping the database out of this module's import graph preserves the rule
+	// that importing telemetry never reaches for a connection. Only when an
+	// endpoint is configured does this run at all, so a deployment without a
+	// collector never issues the query.
+	const [{ getDb }, { sql }] = await Promise.all([import('../db/instance'), import('drizzle-orm')]);
+
+	registerQueueDepthGauge(async () => {
+		const rows = (await getDb().execute(
+			sql`SELECT count(*)::int AS depth FROM outbound_email WHERE status = 'pending'`
+		)) as unknown as { depth: number }[];
+
+		return rows[0]?.depth ?? 0;
+	});
 
 	started = [tracerProvider, meterProvider];
 	return true;

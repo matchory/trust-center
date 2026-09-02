@@ -68,3 +68,21 @@ export function recordJobTick(input: {
 export function resetInstruments(): void {
 	instruments = undefined;
 }
+
+/**
+ * Registered by `startTelemetry` only when telemetry is on, so a deployment
+ * with no collector never runs the query. Nothing in this application sends
+ * mail inline: a deployment whose SMTP is misconfigured looks entirely healthy
+ * from the outside while the queue grows, and one with no SMTP_URL at all is a
+ * supported configuration whose queue grows by design. This gauge is what
+ * tells those two apart.
+ */
+export function registerQueueDepthGauge(read: () => Promise<number>): void {
+	const gauge = metrics.getMeter(METER_NAME).createObservableGauge('trustcenter.mail.queue.depth', {
+		description: 'Outbound emails queued and not yet sent'
+	});
+
+	gauge.addCallback(async (result) => {
+		result.observe(await read());
+	});
+}

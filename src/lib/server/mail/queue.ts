@@ -1,6 +1,7 @@
 import { sql } from 'drizzle-orm';
 import { outboundEmail } from '../db/schema';
 import { renderTemplate } from './templates';
+import { withSpan } from '../telemetry';
 import type { MailPayload, MailTemplate } from './templates';
 import type { MailAdapter, MailAttachment, OutgoingMail } from './index';
 import type { StorageAdapter } from '../storage';
@@ -81,13 +82,20 @@ export async function drainOutbox(
 			// attachment silently dropped would be worse than one that did not go.
 			const attachments = await resolveAttachments(storage, row.payload);
 
-			const { providerId } = await mailer.send({
-				to: row.to,
-				from,
-				subject: rendered.subject,
-				text: rendered.text,
-				attachments
-			});
+			const { providerId } = await withSpan(
+				'mail send',
+				// The template and locale, never `row.to`: the recipient is personal
+				// data and telemetry leaves the reach of `purgeRequester` (spec §8).
+				{ 'mail.template': row.template, 'mail.locale': row.locale },
+				() =>
+					mailer.send({
+						to: row.to,
+						from,
+						subject: rendered.subject,
+						text: rendered.text,
+						attachments
+					})
+			);
 
 			await db.execute(sql`
 				UPDATE outbound_email
