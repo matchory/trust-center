@@ -1,6 +1,7 @@
 import { and, desc, eq, gte, lt, lte } from 'drizzle-orm';
 import { auditEvent } from '../db/schema';
 import type { Db } from '../db';
+import { activeTraceId } from '../telemetry';
 
 /**
  * `id` is typed per actor type so the two identifier spaces this system has
@@ -48,7 +49,11 @@ export async function recordEvent(db: Db, input: AuditEventInput): Promise<void>
 		subjectId: input.subjectId ?? null,
 		ip: input.ip ?? null,
 		ua: input.ua ?? null,
-		requestId: input.requestId ?? null,
+		// The correlation column has existed since Phase 0 with no writer. The
+		// trace id gives it one, so "who downloaded this" and "why was that
+		// request slow" become the same query. An explicit value still wins, and
+		// with tracing off this stays null rather than becoming a constant.
+		requestId: input.requestId ?? activeTraceId() ?? null,
 		meta: input.meta ?? null
 	});
 }

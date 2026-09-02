@@ -16,6 +16,7 @@ import { COMPILED_LOCALES } from '$lib/i18n/compiled';
 import { classifyPath, resolveLocale } from '$lib/i18n/locale';
 import { assertIsLocale, overwriteServerAsyncLocalStorage } from '$lib/paraglide/runtime.js';
 import {
+	activeTraceId,
 	recordRequestDuration,
 	requestAttributes,
 	requestSpanName,
@@ -201,7 +202,10 @@ export const handle: Handle = async ({ event, resolve }) => {
  * logs. Message, route, and a correlation id are enough to investigate.
  */
 export const handleError: HandleServerError = ({ error: caught, event, status, message }) => {
-	const id = crypto.randomUUID();
+	// The identifier in the log line is the identifier in the trace backend
+	// when tracing is on; a uuid remains the fallback when it is not, so the
+	// line is never without one.
+	const id = activeTraceId() ?? crypto.randomUUID();
 
 	console.error(
 		JSON.stringify({
