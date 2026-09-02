@@ -10,6 +10,26 @@ function blankAsUndefined<T extends z.ZodTypeAny>(schema: T) {
 	return z.preprocess((value) => (value === '' ? undefined : value), schema.optional());
 }
 
+/**
+ * `k=v,k=v`, split on the *first* `=` only — an OTLP bearer token is a header
+ * value that can itself contain `=`, and splitting on every one would truncate
+ * it into a credential that fails authentication with no error here.
+ */
+function parseOtlpHeaders(raw: string | undefined): Record<string, string> {
+	if (!raw) return {};
+
+	return Object.fromEntries(
+		raw
+			.split(',')
+			.map((pair) => pair.trim())
+			.filter((pair) => pair.length > 0)
+			.map((pair) => {
+				const split = pair.indexOf('=');
+				return [pair.slice(0, split).trim(), pair.slice(split + 1).trim()];
+			})
+	);
+}
+
 const localeList = z
 	.string()
 	.min(1)
@@ -51,6 +71,13 @@ export interface AppConfig {
 		adminGroup: string;
 		approverGroup: string | undefined;
 	};
+	/** Off unless `endpoint` is set; see docs/superpowers/specs/2026-09-02-otel-egress-design.md. */
+	telemetry: {
+		endpoint: string | undefined;
+		serviceName: string;
+		headers: Record<string, string>;
+		sampleRatio: number;
+	};
 }
 
 /**
@@ -88,7 +115,31 @@ function buildSchema(compiledLocales: readonly string[]) {
 			SMTP_URL: blankAsUndefined(z.string().url()),
 			MAIL_FROM: z.string().min(1).default('trust-center@localhost'),
 			MAIL_RETENTION_DAYS: z.coerce.number().int().positive().default(90),
-			STAFF_NOTIFICATION_EMAIL: blankAsUndefined(z.string().email())
+			STAFF_NOTIFICATION_EMAIL: blankAsUndefined(z.string().email()),
+			// Standard OTel variable names, read and validated here rather than by
+			// the SDK's own environment parsing: a typo'd endpoint must refuse to
+			// boot like every other setting, not degrade to silently exporting
+			// nothing. Only these four are honoured (spec C3).
+			OTEL_EXPORTER_OTLP_ENDPOINT: blankAsUndefined(
+				z
+					.string()
+					.url()
+					.refine(
+						(url) => url.startsWith('http://') || url.startsWith('https://'),
+						'must be an HTTP or HTTPS URL'
+					)
+			),
+			OTEL_SERVICE_NAME: z.string().min(1).default('trust-center'),
+			OTEL_EXPORTER_OTLP_HEADERS: blankAsUndefined(
+				z
+					.string()
+					.min(1)
+					.refine(
+						(raw) => raw.split(',').every((pair) => pair.includes('=')),
+						'expected comma-separated key=value pairs'
+					)
+			),
+			OTEL_TRACES_SAMPLER_ARG: z.coerce.number().min(0).max(1).default(1)
 		})
 		.superRefine((value, ctx) => {
 			const unsupported = value.LOCALES.filter((locale) => !compiledLocales.includes(locale));
@@ -162,6 +213,12 @@ export function parseConfig(
 			groupsClaim: parsed.OIDC_GROUPS_CLAIM,
 			adminGroup: parsed.OIDC_ADMIN_GROUP,
 			approverGroup: parsed.OIDC_APPROVER_GROUP
+		},
+		telemetry: {
+			endpoint: parsed.OTEL_EXPORTER_OTLP_ENDPOINT,
+			serviceName: parsed.OTEL_SERVICE_NAME,
+			headers: parseOtlpHeaders(parsed.OTEL_EXPORTER_OTLP_HEADERS),
+			sampleRatio: parsed.OTEL_TRACES_SAMPLER_ARG
 		}
 	};
 }

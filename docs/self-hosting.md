@@ -57,6 +57,10 @@ refusal is recorded in the audit log.
 | `MAIL_FROM` | for mail | `trust-center@localhost` | Envelope sender for every message. |
 | `MAIL_RETENTION_DAYS` | no | `90` | After this many days a delivered or failed notification is stripped of its address and payload. The row stays. |
 | `STAFF_NOTIFICATION_EMAIL` | no | — | Where "a new request is waiting for triage" notices go. Unset means none are sent. |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | no | — | Your OTLP/HTTP collector, e.g. `https://otel.internal:4318`. Unset means no telemetry is exported and no OpenTelemetry SDK is loaded. See §11. |
+| `OTEL_SERVICE_NAME` | no | `trust-center` | The `service.name` attached to exported traces and metrics. |
+| `OTEL_EXPORTER_OTLP_HEADERS` | no | — | Collector authentication, as `key=value` pairs separated by commas. |
+| `OTEL_TRACES_SAMPLER_ARG` | no | `1` | Fraction of traces sampled, 0 to 1. The default keeps all of them. |
 | `REQUESTER_SESSION_TTL_HOURS` | no | `72` | How long a verified requester stays signed in. |
 | `MAGIC_LINK_TTL_MINUTES` | no | `30` | Lifetime of a single-use verification or sign-in link. |
 | `ACCESS_GRANT_DEFAULT_DAYS` | no | `90` | Default expiry when staff approve without naming one. |
