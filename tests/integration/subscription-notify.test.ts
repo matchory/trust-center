@@ -219,6 +219,49 @@ describe('notifySubscribers', () => {
 		).toHaveLength(0);
 	});
 
+	// The tick's select runs outside the transaction that writes, so a save
+	// committing in that window is rolled backwards by the `UPDATE` unless the
+	// write is guarded — losing exactly the cursor push P4.18 exists to
+	// perform, and delivering on the next tick the back catalogue the save was
+	// meant to suppress. The proxy interposes the save in that window: after
+	// the select has read the stale cursor, before the write.
+	it('does not roll a concurrent save backwards', async () => {
+		const advisoryAt = new Date(Date.now() - 60_000);
+		await makePost('advisory', advisoryAt);
+		// Newer than the advisory post, so a rolled-back cursor exposes it, and
+		// older than the save, so a preserved cursor does not.
+		await makePost('document', new Date(Date.now() - 30_000));
+		const id = await makeSubscriber(['advisory'], new Date(Date.now() - 172_800_000));
+
+		let saved = false;
+		const racy = new Proxy(db, {
+			get(target, prop, receiver) {
+				if (prop !== 'transaction') {
+					const value = Reflect.get(target, prop, receiver);
+					return typeof value === 'function' ? value.bind(target) : value;
+				}
+				return async (fn: Parameters<Db['transaction']>[0]) => {
+					if (!saved) {
+						saved = true;
+						await saveSubscription(db, id, { locale: 'de', topics: ['advisory', 'document'] });
+					}
+					return target.transaction(fn);
+				};
+			}
+		}) as Db;
+
+		// The advisory notice this tick queues is not the defect: the select
+		// had already read the row, and at-least-once is the direction the
+		// single transaction was chosen to fail in.
+		await notifySubscribers(racy, OPTIONS);
+		expect((await cursorOf(id)).getTime()).toBeGreaterThan(advisoryAt.getTime());
+
+		await notifySubscribers(db, OPTIONS);
+		expect(
+			(await mailsFor(id)).filter((mail) => mail.template === 'subscription_notice')
+		).toHaveLength(1);
+	});
+
 	it('stops at its bound and leaves the rest for the next tick', async () => {
 		await makePost('advisory', new Date(Date.now() - 60_000));
 		const ids = [

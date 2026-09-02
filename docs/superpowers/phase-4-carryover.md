@@ -180,3 +180,68 @@ All three were correct in implementation and undefended in test. None would have
 reading the tests, and all three are rules a later reader would reasonably delete as dead weight.
 When a rule matters, applying its inverse and watching a test fail is cheap and is the only evidence
 that the test defends it.
+
+---
+
+## 6. Amendment — 2026-09-02, after the phase closed
+
+Closing §2.1 and answering §2.4, which was recorded as a hypothesis rather than a diagnosis.
+
+### 6.1 The notification race is closed
+
+`AND subscription.last_notified_at < v.cursor`, exactly the monotonic form §2.1 corrected itself to.
+It is pinned by an integration case that interposes a `saveSubscription` in the real window — a proxy
+around `Db` that runs the save when `notifySubscribers` opens its write transaction, which is after
+the select has already read the stale cursor. Without the guard the cursor is rolled back to the
+post's date and the next tick delivers the back catalogue; with it the save stands.
+
+### 6.2 §2.4's shared-resource-contention hypothesis was wrong
+
+Neither test fails for the reason recorded, and load is not the variable in either case.
+
+**`setting.test.ts` is shared state plus file ordering.** Half its cases assert on the *absence* of a
+key, and `setting` is one global table with no per-test axis. `nda-grants.test.ts` leaves
+`nda.default_template_id` behind. Vitest's sequencer does not order files alphabetically, so whether
+that row is present is a property of ordering, not of load — and `nda-delivery.test.ts` clears the
+table in its own `beforeAll`, so the flake also depends on whether that file happens to land between
+them. Reproduced deterministically:
+
+```sh
+pnpm test:integration tests/integration/nda-grants.test.ts tests/integration/setting.test.ts
+```
+
+Fixed in the test, not in the fixture that dirtied the table: a `beforeEach` clean slate, the same
+one `subscription-notify.test.ts` already takes for the same reason.
+
+**`auth.spec.ts:92` did not reproduce.** Three consecutive full-suite runs passed 103/103. The only
+reproduction achieved was an artifact of the reproduction method: `--repeat-each` with parallel
+workers puts several workers on the plain `admin` fixture account at once, and signing in revokes
+that staff member's other sessions — the deliberate property `tools/dev-idp/server.js` and
+`tests/helpers/admin.ts` both already document. Single-worker repeats pass 20/20. The suite itself
+never does this, because the file's cases run serially in one worker and nothing else claims `admin`.
+So this remains open and undiagnosed, but it is *not* contention, and the next attempt should capture
+the received URL from a real full-suite failure before changing anything.
+
+**Nothing is silently retried.** `playwright.config.ts` sets no `retries`, so the default of 0
+applies. That question from §2.4 is answered.
+
+**`--repeat-each` is not a valid stressor for this suite.** Beyond the account collision, spec files
+build fixtures with fixed slugs in `beforeAll` and delete them in `afterAll`, so parallel copies of
+one file collide on unique constraints and tear each other's fixtures down. Stress the real
+configuration by repeating whole runs.
+
+### 6.3 A third intermittent test, found and fixed on the way
+
+`access-portal.spec.ts:149`, "the gated portal is never cached", failed a full-suite run with
+`public, max-age=0, s-maxage=60, must-revalidate`. Its local `signIn` returned without waiting for
+the verification POST's navigation. Every other caller follows with a retrying assertion and tolerates
+that; this one follows with `page.goto`, which cancels the pending POST and requests the gated subtree
+with no session cookie — landing on the public request form, whose headers are exactly the ones
+asserted against. A security assertion failing for a reason unrelated to the security property is the
+worst shape a flake can take, since the obvious reading of the failure is that the portal really is
+cacheable. Fixed by making the helper wait for its own navigation.
+
+### 6.4 §2.5's environment defect is still present
+
+Confirmed today: `matchory-trust-center-postgres-1` publishes no host port, and
+`phase-3a-scope-is-a-set-postgres-1` still answers on `127.0.0.1:5433`, where `.env` points.

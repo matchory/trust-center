@@ -99,6 +99,15 @@ async function signIn(page: Page, domain: string): Promise<string> {
 	await page.goto(`/de/access/verify?token=${encodeURIComponent(magicLinkToken)}`);
 	await page.getByTestId('verify-confirm').click();
 
+	// The click's navigation has to land before this returns. Most callers
+	// follow with a retrying assertion and tolerate an in-flight one, but a
+	// caller that follows with `page.goto` does not: the goto cancels the
+	// pending verification POST and requests the gated subtree with no session
+	// cookie yet, which bounces to the *public* request form — and asserting on
+	// that response's headers fails on cache-control rather than on the sign-in
+	// that actually did not happen.
+	await page.waitForURL(/\/de\/access$/);
+
 	return email;
 }
 
