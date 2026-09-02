@@ -17,5 +17,6 @@ export const PORTAL_SECTIONS: PortalSection[] = [
 	{ path: '/controls', label: () => m.nav_controls() },
 	{ path: '/subprocessors', label: () => m.nav_subprocessors() },
 	{ path: '/faq', label: () => m.nav_faq() },
-	{ path: '/updates', label: () => m.nav_updates() }
+	{ path: '/updates', label: () => m.nav_updates() },
+	{ path: '/subscribe', label: () => m.nav_subscribe() }
 ];

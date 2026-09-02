@@ -108,6 +108,19 @@ export async function subscribe(
 	});
 }
 
+/**
+ * The manage link for a confirmed subscription, for the one caller that needs
+ * it without holding the token: the `already` branch of §4.3, which mails it to
+ * the address rather than returning it. Never surface this to a response body.
+ */
+export async function manageTokenFor(db: Db, id: string): Promise<string | null> {
+	const [row] = await db
+		.select({ token: subscription.manageToken })
+		.from(subscription)
+		.where(eq(subscription.id, id));
+	return row?.token ?? null;
+}
+
 export interface ConfirmedSubscription {
 	subscriptionId: string;
 	email: string;
