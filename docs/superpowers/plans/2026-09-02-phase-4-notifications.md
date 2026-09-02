@@ -1859,10 +1859,32 @@ export const actions: Actions = {
 			ua: event.request.headers.get('user-agent') ?? undefined
 		});
 
-		return { gone: true };
+		// NOT `return { gone: true }` — that state is unreachable. Every path back
+		// to this page re-runs `load`, which looks up the now-deleted token and
+		// throws 404: with JS because `use:enhance`'s default callback runs
+		// `invalidateAll()` before `applyAction`, and without JS because SvelteKit
+		// runs the action and then the load. The user would be shown "Not found"
+		// though the deletion succeeded. Redirecting to a tokenless confirmation
+		// is also the house pattern for deleting the row a load depends on — see
+		// `admin/faq/[id]`'s remove action.
+		redirect(303, localizePath('/subscribe/manage?gone=1', event.locals.locale));
 	}
 };
 ```
+
+And `load` gains an early branch, **above** the token lookup and below `setHeaders`, so the
+confirmation renders without a token while a present-but-unresolvable token still 404s:
+
+```ts
+	// Tokenless `?gone=1` only. A token that is present but does not resolve must
+	// still 404 — otherwise the flag would become a way to probe the route.
+	if (url.searchParams.get('gone') === '1' && !url.searchParams.has('token')) {
+		return { gone: true as const };
+	}
+```
+
+The page's confirmation branch keys off `data.gone`, not `form?.gone`: after a redirect there is
+no `form`.
 
 `found.manageToken` comes from Task 4's `ManagedSubscription`, so the redirect needs no `?? ''` — drop it.
 
