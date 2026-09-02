@@ -40,7 +40,7 @@
 
 	<form method="POST" use:enhance class="max-w-xl space-y-4">
 		<label class="block">
-			<span class="mb-1 block text-sm font-medium">{m.request_email()}</span>
+			<span class="mb-1 block text-sm font-medium">{m.subscribe_email()}</span>
 			<input
 				name="email"
 				type="email"

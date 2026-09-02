@@ -26,7 +26,14 @@ const schema = z.object({
 	// Refused here rather than by a constraint: a subscription that matches
 	// nothing is a row that exists to send no mail, and would read as a bug
 	// from both ends (spec §5).
-	topics: z.array(z.enum(UPDATE_KINDS)).min(1)
+	topics: z
+		.array(z.enum(UPDATE_KINDS))
+		.min(1)
+		// Deduped here rather than defended in replaceTopics: subscription_topic has
+		// a composite primary key, so a repeated value raises 23505 and 500s — and
+		// because the `already` path returns before topics are written, that 500
+		// would answer "is this address subscribed?" for anyone who asked (P4.4).
+		.transform((topics) => [...new Set(topics)])
 });
 
 export const actions: Actions = {

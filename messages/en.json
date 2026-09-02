@@ -313,6 +313,7 @@
 	"subprocessors_region": "Region",
 	"subprocessors_since": "Since {date}",
 	"subprocessors_until": "Until {date}",
+	"subscribe_email": "Email address",
 	"subscribe_error_email": "Please enter a valid email address.",
 	"subscribe_error_throttled": "Too many attempts. Please try again later.",
 	"subscribe_error_topics": "Please choose at least one topic.",
