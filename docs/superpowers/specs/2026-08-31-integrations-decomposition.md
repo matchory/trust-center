@@ -5,6 +5,10 @@
 document before it is planned; §9 records what each of those must still settle.
 **Author:** Moritz Friedrich (CISO, Matchory), with Claude
 
+**Amended 2026-09-02.** Section 6 is settled: enriched payloads, with the erasure boundary at the
+egress edge, and the enrichment performed at delivery so no payload is ever at rest. Sections 9 A and
+9 D record the consequence — D is no longer a prerequisite for a useful A. No other section changed.
+
 This note exists because integrations were never designed as a subsystem. They are not absent from
 `2026-08-28-trust-center-design.md` — they are scattered through it as feature bullets in five
 different phases, which is how five ad-hoc implementations get built:
@@ -127,26 +131,65 @@ and analytics is a read model over it.* Integration egress is another read model
 
 ---
 
-## 6. Open decision: the outbound payload
+## 6. Settled: the outbound payload
 
-**Unresolved. A cannot be planned until this is settled, because it decides whether D is a
-prerequisite.**
+**Resolved 2026-09-02. Enriched payloads, enriched at delivery. A no longer depends on D.**
+
+### The question as it stood
 
 §6.6 confines requester personal data in `audit_event` to `ip`, `ua` and `actor_id`, which is what
 makes the erasure path in §10 expressible as a trigger. But a useful Teams card reads "someone at
 acme.example requested the SOC 2 report" — a name, a company, an address, none of which are in the
-audit row. Enriching from domain tables reintroduces the problem the schema was shaped to avoid: once
-an address is in an n8n execution history, erasure cannot reach it — and the product's "erasure on
-request" claim, stated without qualification in the README and mechanised as a column-scoped purge in
-§10, acquires an asterisk.
+audit row. Enriching from domain tables looked like it reintroduced the problem the schema was shaped
+to avoid: once an address is in an n8n execution history, erasure cannot reach it.
 
-| Option | Consequence |
+| Option | Consequence as originally weighed |
 | --- | --- |
-| **Identifiers only; the consumer calls back** through D's read API | Erasure stays authoritative — after a purge the callback returns blanked data. Consistent with the thesis. Makes D a prerequisite for a *useful* A. |
-| **Enriched payloads, documented boundary** | Immediately useful with no callback. Honest only if the documentation states that erasure stops at the egress edge, which weakens a claim §1 currently makes without qualification. |
+| **Identifiers only; the consumer calls back** through D's read API | Erasure stays authoritative — after a purge the callback returns blanked data. Makes D a prerequisite for a *useful* A. |
+| **Enriched payloads, documented boundary** | Immediately useful with no callback. Held to require qualifying a claim §1 makes without one. |
 
-A per-subscription toggle is available and should be resisted: it makes the erasure story "it
-depends," which is worse than either answer.
+### What the question got wrong
+
+**This note was applying two different principles to the same n8n.** §2 refuses to build CRM
+connectors precisely because operator-run glue is the operator's own exposure — "the egress is
+theirs, disclosed on their subprocessor list, not ours." §6 then treated that same glue as breaking
+*our* erasure claim. Both cannot govern. The operator's n8n is their processor, and their Art. 17
+obligation reaches its execution history exactly as it reaches the HubSpot record that execution
+wrote. Our claim is about what we hold and what we control, and it remains true unqualified.
+
+**Identifiers-only bought less than it appeared to.** If the operator's automation writes the
+requester into HubSpot, the personal data is in HubSpot under either option — the consumer merely
+calls back for the name first. What identifiers-only actually buys is narrower: that our payload is
+not a permanent copy, and that anything re-reading after a purge sees blanks. the rule below obtains the second
+of those without the callback, and without making A wait on D.
+
+### The rule that replaces it
+
+**Nothing is ever at rest.** A tails `audit_event` by `seq` and renders each payload at delivery from
+live domain state, exactly as §5 describes the spine — a consumer is a cursor holding one bigint. No
+outbox row holds a rendered payload.
+
+This is the whole of the erasure story, and it is structural rather than maintained. `purgeRequester`
+needs no new path: a purge landing before delivery means the card renders blank, which is the correct
+outcome and not a special case. The alternative — enriching at queue time, as the mail queue does —
+would make `outbound_email`'s purge path (which matches on `to`) the first of two such paths rather
+than the only one, and that is the kind of path that rots silently when somebody adds a field.
+
+Two costs, both accepted. A delayed delivery reflects current state rather than state at event time,
+which for "someone requested X" is right rather than merely tolerable. And a retried delivery is not
+byte-identical, which rules out signing a stored payload once and replaying it.
+
+A per-subscription enrichment toggle stays resisted — no longer because it would make the erasure
+story "it depends", but because it is surface with nothing left to buy.
+
+### What must still be written down, and where
+
+The boundary statement — that egress leaves our erasure mechanism and enters the operator's own
+obligation — belongs in A's design document and in `docs/self-hosting.md` when A ships.
+
+It does **not** belong as a qualification on the README's erasure bullet. That claim is accurate for
+what the application holds; bolting an asterisk onto a true statement to describe someone else's
+processor makes it read as weaker than it is.
 
 ---
 
@@ -180,9 +223,13 @@ URL-valued setting B accepts.
 
 Serves Matchory's own requirement: access requests to Teams, and to n8n, which updates HubSpot.
 
-Must settle: the payload question (§6); the subscription model and event filtering; secret storage
-and signature scheme; retry and failure policy, including when a subscription is disabled; whether
-Teams gets a first-party Adaptive Card formatter or is expected to sit behind n8n.
+The payload question is settled (§6): enriched, rendered at delivery from live domain state, nothing
+at rest. A is therefore plannable now, and does not wait on D.
+
+Must settle: the subscription model and event filtering; secret storage and signature scheme; retry
+and failure policy, including when a subscription is disabled; whether Teams gets a first-party
+Adaptive Card formatter or is expected to sit behind n8n. Note that §6 rules out signing a stored
+payload once and replaying it, so the signature scheme must sign what is rendered at delivery.
 
 ### B — Audit sink
 
@@ -228,6 +275,12 @@ with no egress from the application at all.
 §17 of `2026-08-30-phase-3-nda-workflow-design.md` defers people-cohort groups explicitly
 ("a membership axis arrives if and when invite-driven requests become reachable"). D needs that axis
 to exist.
+
+Strictly, the *assert-facts* half needs it — that is the half the rules engine consumes, and the half
+that reasons about people. The read-activity half is keyed by request and requester and needs no
+cohort. Recorded because §6 no longer forces the split: with A independent of D, there is nothing
+left waiting on the read half, and splitting D on this seam should be a decision D's own design makes
+on its merits rather than one inherited from A's sequencing.
 
 Must settle: token scoping model and storage; **a new `AuditActor` variant** — an API token that
 causes a grant is neither `staff`, `requester` nor `system`, and attributing it to `system` would make
