@@ -387,7 +387,7 @@ ALTER TABLE "audit_event" ADD CONSTRAINT "audit_event_actor_type_check"
 	CHECK ("actor_type" IN ('staff', 'staff-unresolved', 'requester', 'subscriber', 'system'));
 ```
 
-Confirm the generated SQL contains all four `subscription_*_check` constraints, both partial indexes with their `WHERE` clauses, and `ON DELETE cascade` on all four foreign keys. A partial index Drizzle emitted without its predicate is the failure to look for.
+Confirm the generated SQL contains all four paired `subscription_*_check` constraints plus `subscription_topic_check`, both partial indexes with their `WHERE` clauses, and `ON DELETE cascade` on all three foreign keys (`subscription_topic` → `subscription`, and `update_post_subprocessor` → each of `update_post` and `subprocessor`). A partial index Drizzle emitted without its predicate is the failure to look for.
 
 - [ ] **Step 6: Run the test to verify it passes**
 
@@ -495,14 +495,15 @@ describe('subscribe', () => {
 			ttlMinutes: 60
 		});
 
+		if (first.kind === 'already' || second.kind === 'already') {
+			throw new Error('fixture produced the wrong outcome');
+		}
 		expect(second.kind).toBe('resent');
 		expect(second.subscriptionId).toBe(first.subscriptionId);
 		// The regenerated token kills the link the first mail carried. That is
 		// the accepted trade of §4.3 — nobody has proven control of the mailbox,
 		// so the row is indistinguishable from one created fresh.
-		expect(second.kind === 'resent' && second.confirmToken).not.toBe(
-			first.kind === 'created' && first.confirmToken
-		);
+		expect(second.confirmToken).not.toBe(first.confirmToken);
 		expect(await topicsOf(first.subscriptionId)).toEqual(['certification', 'document']);
 
 		const [row] = await db
@@ -2504,6 +2505,12 @@ Append to `src/lib/server/subscriptions/notify.ts` (adding the Drizzle and schem
  * tick holds it for an unbounded time. */
 const DEFAULT_LIMIT = 500;
 
+/** The grouping builder's view of a post, before it is handed to planNotices
+ * as readonly. */
+type MutablePost = Omit<NoticePost, 'translations'> & {
+	translations: { locale: string; title: string; body: string }[];
+};
+
 /**
  * One select, rendering in memory, then one transaction of two statements
  * (P4.19). Not one transaction per subscriber — that is the N+1 the select was
@@ -2579,9 +2586,12 @@ export async function notifySubscribers(
 
 	if (rows.length === 0) return { queued: 0, advanced: 0 };
 
-	// Group the flat result back into the shape planNotices takes.
-	const bySubscription = new Map<string, NoticeSubscription>();
-	const byPost = new Map<string, NoticePost>();
+	// Group the flat result back into the shape planNotices takes. Built in
+	// mutable locals rather than casting the readonly arrays away: the readonly
+	// on the interface is for planNotices' callers, and the builder is not one.
+	type Building = Omit<NoticeSubscription, 'posts'> & { posts: MutablePost[] };
+	const bySubscription = new Map<string, Building>();
+	const byPost = new Map<string, MutablePost>();
 
 	for (const row of rows) {
 		let item = bySubscription.get(row.subscription_id);
@@ -2606,13 +2616,13 @@ export async function notifySubscribers(
 				translations: []
 			};
 			byPost.set(key, post);
-			(item.posts as NoticePost[]).push(post);
+			item.posts.push(post);
 		}
 
 		// LEFT JOIN, so a post with no translation at all arrives with nulls and
 		// is skipped by planNotices rather than vanishing from the cursor.
 		if (row.translation_locale && row.title !== null && row.body !== null) {
-			(post.translations as { locale: string; title: string; body: string }[]).push({
+			post.translations.push({
 				locale: row.translation_locale,
 				title: row.title,
 				body: row.body
