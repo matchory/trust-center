@@ -61,6 +61,16 @@ describe('noticeCoverage', () => {
 		).toBe('addition-unannounced');
 	});
 
+	// Rule 2: the removal is checked first because it is the live obligation and
+	// only one badge is shown. This is the only shape where the order is
+	// observable — both conditions true at once — so without it, swapping the
+	// two `if` branches passes the whole suite.
+	it('reports the removal when the addition is also unannounced', () => {
+		expect(
+			noticeCoverage({ published: true, startedAt: FEB, endedAt: MAR, coveringPublishedAt: [] })
+		).toBe('removal-unannounced');
+	});
+
 	it('says nothing about an unpublished subprocessor', () => {
 		expect(
 			noticeCoverage({ published: false, startedAt: JAN, endedAt: MAR, coveringPublishedAt: [] })
