@@ -4,6 +4,7 @@ import { m } from '../../paraglide/messages.js';
 import { assertIsLocale } from '../../paraglide/runtime.js';
 import { outboundEmail } from '../db/schema';
 import type { Db } from '../db';
+import type { MailTemplate } from '../mail/templates';
 
 export interface NoticePost {
 	id: string;
@@ -258,7 +259,7 @@ export async function notifySubscribers(
 			await tx.insert(outboundEmail).values(
 				mails.map((plan) => ({
 					to: plan.mail!.to,
-					template: 'subscription_notice',
+					template: 'subscription_notice' satisfies MailTemplate,
 					locale: plan.mail!.locale,
 					payload: plan.mail!.payload
 				}))

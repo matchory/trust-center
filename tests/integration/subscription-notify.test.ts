@@ -46,7 +46,10 @@ beforeEach(async () => {
 	await db.delete(updatePost);
 });
 
-async function makePost(kind: UpdateKind, publishedAt: Date | null): Promise<string> {
+async function makePost(
+	kind: UpdateKind,
+	publishedAt: Date | null
+): Promise<{ id: string; slug: string }> {
 	const slug = `notify-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 	const [row] = await db
 		.insert(updatePost)
@@ -56,7 +59,7 @@ async function makePost(kind: UpdateKind, publishedAt: Date | null): Promise<str
 		{ postId: row!.id, locale: 'de', title: `Titel ${slug}`, body: 'Rumpf' },
 		{ postId: row!.id, locale: 'en', title: `Title ${slug}`, body: 'Body' }
 	]);
-	return row!.id;
+	return { id: row!.id, slug };
 }
 
 async function makeSubscriber(topics: UpdateKind[], cursor: Date): Promise<string> {
@@ -146,14 +149,14 @@ describe('notifySubscribers', () => {
 	// §6.3, the mirror case: the same predicate giving the same answer. Pinned
 	// so both directions are known rather than discovered.
 	it('notifies again when a live post is re-dated forward', async () => {
-		const postId = await makePost('advisory', new Date(Date.now() - 60_000));
+		const post = await makePost('advisory', new Date(Date.now() - 60_000));
 		const id = await makeSubscriber(['advisory'], new Date(Date.now() - 3_600_000));
 
 		await notifySubscribers(db, OPTIONS);
 		await db
 			.update(updatePost)
 			.set({ publishedAt: new Date(Date.now() - 1_000) })
-			.where(eq(updatePost.id, postId));
+			.where(eq(updatePost.id, post.id));
 		await notifySubscribers(db, OPTIONS);
 
 		expect(
@@ -231,5 +234,68 @@ describe('notifySubscribers', () => {
 		expect(
 			(await mailsFor(ids[1]!)).filter((mail) => mail.template === 'subscription_notice')
 		).toHaveLength(1);
+	});
+
+	// The two-subscriber, one-post case above cannot tell a `LIMIT` that
+	// correctly bounds subscribers apart from one that wrongly bounds the
+	// flat subscriber-post join: with one post, the row count and the
+	// subscriber count are the same number, so a mis-scoped LIMIT produces
+	// the same output. One subscriber with two due posts breaks the tie: the
+	// CTE's LIMIT sees one subscriber either way, but only a LIMIT that
+	// stayed inside the CTE lets both of that subscriber's posts survive the
+	// join.
+	it('the bound counts subscribers, not subscriber-post rows', async () => {
+		const older = new Date(Date.now() - 7_200_000);
+		const newer = new Date(Date.now() - 60_000);
+		const olderPost = await makePost('advisory', older);
+		const newerPost = await makePost('advisory', newer);
+		const id = await makeSubscriber(['advisory'], new Date(Date.now() - 86_400_000));
+
+		const result = await notifySubscribers(db, { ...OPTIONS, limit: 1 });
+		expect(result.queued).toBe(1);
+
+		const mails = (await mailsFor(id)).filter((mail) => mail.template === 'subscription_notice');
+		expect(mails).toHaveLength(1);
+
+		// A LIMIT applied to the joined rows instead of the CTE would let only
+		// one of these two posts through: the mail would carry one item
+		// instead of two, and the cursor would land on the older post's date,
+		// permanently skipping the newer one — the silent loss this task
+		// exists to prevent.
+		const payload = mails[0]!.payload as { count: number; items: string };
+		expect(payload.count).toBe(2);
+		expect(payload.items).toContain(olderPost.slug);
+		expect(payload.items).toContain(newerPost.slug);
+		expect((await cursorOf(id)).getTime()).toBe(newer.getTime());
+	});
+
+	// Pins `notifySubscribers`' `byPost` keying (`${subscriptionId}:${postId}`,
+	// not `postId` alone): two subscribers due for the same two posts in one
+	// tick. Keying on the post id alone would find the first subscriber's
+	// post object already cached when grouping the second subscriber's rows
+	// and skip attaching it — the second subscriber's plan would carry too
+	// few posts, or none at all, with no error anywhere.
+	it('gives each of two subscribers due in the same tick its own posts', async () => {
+		const older = new Date(Date.now() - 7_200_000);
+		const newer = new Date(Date.now() - 60_000);
+		const olderPost = await makePost('advisory', older);
+		const newerPost = await makePost('advisory', newer);
+		const ids = [
+			await makeSubscriber(['advisory'], new Date(Date.now() - 172_800_000)),
+			await makeSubscriber(['advisory'], new Date(Date.now() - 86_400_000))
+		];
+
+		const result = await notifySubscribers(db, { ...OPTIONS, limit: 2 });
+		expect(result.queued).toBe(2);
+
+		for (const id of ids) {
+			const mails = (await mailsFor(id)).filter((mail) => mail.template === 'subscription_notice');
+			expect(mails).toHaveLength(1);
+			const payload = mails[0]!.payload as { count: number; items: string };
+			expect(payload.count).toBe(2);
+			expect(payload.items).toContain(olderPost.slug);
+			expect(payload.items).toContain(newerPost.slug);
+			expect((await cursorOf(id)).getTime()).toBe(newer.getTime());
+		}
 	});
 });
