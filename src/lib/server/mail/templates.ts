@@ -20,7 +20,10 @@ export const MAIL_TEMPLATES = [
 	// Carries the acceptance record as an attachment. The mail is a convenience:
 	// the record itself is the stored object and the portal view, so a
 	// deployment with no SMTP at all still produces the evidence.
-	'nda_record'
+	'nda_record',
+	'subscription_confirm',
+	'subscription_notice',
+	'subscription_already'
 ] as const;
 export type MailTemplate = (typeof MAIL_TEMPLATES)[number];
 
@@ -54,6 +57,11 @@ export function renderTemplate(
 	const expiresAt = String(payload.expiresAt ?? '');
 	const agreement = String(payload.agreement ?? '');
 	const dueAt = String(payload.dueAt ?? '');
+	// Pre-rendered by the notify job rather than carried as a structured list
+	// (P4.15): `MailPayload` admits no array of objects, and widening it would
+	// be a port change for a plain-text mail.
+	const items = String(payload.items ?? '');
+	const count = String(payload.count ?? 0);
 
 	switch (id) {
 		case 'verify_request':
@@ -103,6 +111,21 @@ export function renderTemplate(
 			return {
 				subject: m.mail_nda_record_subject({ agreement }, options),
 				text: m.mail_nda_record_body({ agreement }, options)
+			};
+		case 'subscription_confirm':
+			return {
+				subject: m.mail_subscription_confirm_subject({}, options),
+				text: m.mail_subscription_confirm_body({ url }, options)
+			};
+		case 'subscription_notice':
+			return {
+				subject: m.mail_subscription_notice_subject({}, options),
+				text: m.mail_subscription_notice_body({ url, items, count }, options)
+			};
+		case 'subscription_already':
+			return {
+				subject: m.mail_subscription_already_subject({}, options),
+				text: m.mail_subscription_already_body({ url }, options)
 			};
 	}
 }

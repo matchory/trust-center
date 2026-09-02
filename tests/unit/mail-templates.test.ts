@@ -68,3 +68,37 @@ describe('renderTemplate', () => {
 		}
 	});
 });
+
+describe('subscription templates', () => {
+	it('renders the confirmation mail with its link in both locales', () => {
+		for (const locale of ['de', 'en']) {
+			const mail = renderTemplate('subscription_confirm', locale, {
+				url: 'https://trust.example/de/subscribe/confirm?token=abc'
+			});
+			expect(mail.subject).toBeTruthy();
+			expect(mail.text).toContain('https://trust.example/de/subscribe/confirm?token=abc');
+		}
+	});
+
+	it('renders the notice with the pre-rendered list and the manage link', () => {
+		const mail = renderTemplate('subscription_notice', 'de', {
+			url: 'https://trust.example/de/subscribe/manage?token=xyz',
+			items: 'Neue Unterauftragsverarbeiter\nhttps://trust.example/de/updates#sub-1',
+			count: 1
+		});
+		expect(mail.text).toContain('Neue Unterauftragsverarbeiter');
+		expect(mail.text).toContain('https://trust.example/de/updates#sub-1');
+		expect(mail.text).toContain('https://trust.example/de/subscribe/manage?token=xyz');
+	});
+
+	// P4.4: this template exists so the confirmed case is indistinguishable from
+	// the other two, and it carries the manage link because that is the recovery
+	// path for a subscriber who has lost every mail we sent.
+	it('renders the already-subscribed mail with the manage link', () => {
+		const mail = renderTemplate('subscription_already', 'de', {
+			url: 'https://trust.example/de/subscribe/manage?token=xyz'
+		});
+		expect(mail.subject).toBeTruthy();
+		expect(mail.text).toContain('https://trust.example/de/subscribe/manage?token=xyz');
+	});
+});
