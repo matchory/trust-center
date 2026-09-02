@@ -3349,6 +3349,34 @@ test('subscribe, confirm, manage, unsubscribe', async ({ page }) => {
 	expect(await db.select().from(subscription).where(eq(subscription.email, email))).toHaveLength(0);
 });
 
+// The outcome-parity property, probed with a malformed body rather than the
+// happy path. Task 6's review found a live enumeration oracle here: duplicate
+// topic values passed validation, hit `subscription_topic`'s composite primary
+// key, and 500'd — but ONLY on the created/resent paths, because the `already`
+// branch returns before touching topics. A confirmed subscriber therefore
+// answered 200 where every other address answered 500. The schema now dedupes;
+// this is the test that would have caught it, and the one that stops it coming
+// back.
+test('a malformed topic set cannot distinguish one address from another', async ({
+	request,
+	baseURL
+}) => {
+	// Posted directly rather than through the form: a browser cannot produce a
+	// duplicate checkbox value. SvelteKit's CSRF protection is origin-header
+	// based and an APIRequestContext sends none, so it is set explicitly.
+	const post = (email: string) =>
+		request.post('/de/subscribe', {
+			headers: { origin: baseURL!, 'content-type': 'application/x-www-form-urlencoded' },
+			data: `email=${encodeURIComponent(email)}&topics=document&topics=document`
+		});
+
+	const response = await post(`e2e-dup-${Date.now()}@example.test`);
+	// A crafted body must not crash the route. Before the fix this raised 23505
+	// on the composite primary key and surfaced as a 500 — which is precisely
+	// what made the confirmed case, which never reaches that insert, distinguishable.
+	expect(response.status(), 'a duplicate topic value must not 500').toBeLessThan(500);
+});
+
 // P4.4 and P4.16 together: the confirmed case must look identical to the other
 // two, and the mail it sends must carry a link that actually authenticates —
 // which is exactly what a future move back to hashed storage would break, and
