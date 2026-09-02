@@ -508,8 +508,11 @@ If a CDN sits in front of nginx, raise `XFF_DEPTH` to match.
 
 ## 9. What this deployment does not send anywhere
 
-- **No telemetry.** Nothing reports usage, versions, or errors to us or anyone
-  else.
+- **No telemetry by default.** Nothing reports usage, versions, or errors to us
+  or to anyone else, and with `OTEL_EXPORTER_OTLP_ENDPOINT` unset the
+  application loads no OpenTelemetry SDK at all. If you set it, traces and
+  metrics go to **your** collector and nowhere else — never to us — and they
+  carry no personal data by design (§11).
 - **No third-party requests from the portal.** No CDN, no web fonts, no
   analytics. A Content-Security-Policy with every source at `'self'` and no
   `unsafe-inline` makes the browser enforce it.
@@ -571,3 +574,34 @@ sign in, so the grants are unreachable, but revoke them explicitly from
 The purge writes its own audit event, `requester.purged`, naming the staff
 member who performed it and how many events were pseudonymized. That event is
 about the operator, not the erased person, and it survives.
+
+## 11. Telemetry
+
+Off unless you set `OTEL_EXPORTER_OTLP_ENDPOINT`. With it set, the application
+exports traces and metrics to your own OTLP/HTTP collector — never to us, and
+never anywhere you have not configured.
+
+**What it sends.** One span per HTTP request, named for the matched route; one
+per background job tick, per mail send, and per watermarked document. Four
+metrics: request duration, job tick duration and outcome, and the depth of the
+outbound mail queue. Every audit event written during a request carries that
+request's trace id in `request_id`, so an access in the audit log and the trace
+that produced it are the same identifier.
+
+**What it never sends.** No email address, requester name, company, IP address,
+user agent, session or magic-link token, URL query string, or SQL parameter.
+This is a hard boundary, not a setting: telemetry leaves the reach of the
+erasure path in §10, so it carries nothing that erasure would need to reach.
+`tests/unit/telemetry-request.test.ts` asserts it on every run.
+
+**The mail queue gauge is the one to alert on.** Nothing in this deployment
+sends mail inline — everything is queued and drained by the job runner — so a
+broken SMTP configuration looks perfectly healthy from the outside while the
+queue grows. `trustcenter.mail.queue.depth` rising without falling is the
+signal. Note that a deployment with no `SMTP_URL` is a supported configuration
+in which that number grows forever by design.
+
+Only the four `OTEL_*` variables in §3 are read. Other standard OpenTelemetry
+environment variables are deliberately ignored, because every setting in this
+application is validated once at startup and a typo must refuse to boot rather
+than silently export nothing.

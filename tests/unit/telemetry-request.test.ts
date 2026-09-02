@@ -66,3 +66,33 @@ describe('the request span', () => {
 		expect(spans[0]?.attributes['http.response.status_code']).toBe(200);
 	});
 });
+
+describe('no span attribute carries a secret or an identity', () => {
+	// The magic-link and subscription-management tokens live in query strings,
+	// so a span that recorded the URL would put a live credential into the
+	// operator's monitoring platform — which `purgeRequester` cannot reach.
+	// The attribute builder cannot express this (it never receives the URL);
+	// this test defends everything the builder does not cover.
+	it('records nothing from the query string of a verification link', async () => {
+		const { handle } = await import('../../src/hooks.server');
+		const resolve = vi.fn(async () => new Response(null, { status: 200, headers: new Headers() }));
+
+		await handle({
+			event: fakeEvent(
+				'/de/access/verify',
+				'?token=SUPERSECRETTOKENVALUE&email=person%40acme.example',
+				'/(portal)/access/verify'
+			),
+			resolve
+		});
+
+		const values = exporter
+			.getFinishedSpans()
+			.flatMap((span) => [span.name, ...Object.values(span.attributes).map(String)]);
+
+		expect(values.some((value) => value.includes('SUPERSECRETTOKENVALUE'))).toBe(false);
+		expect(values.some((value) => value.includes('token='))).toBe(false);
+		expect(values.some((value) => value.includes('@'))).toBe(false);
+		expect(values.some((value) => /\d+\.\d+\.\d+\.\d+/.test(value))).toBe(false);
+	});
+});
