@@ -39,6 +39,20 @@ export const init: ServerInit = async () => {
 		process.exit(1);
 	}
 
+	// Before migrations, so a slow migration is itself a span — which is the
+	// observation an operator wants when a deploy is slow to come up. Imported
+	// dynamically for the same reason the migrator below is: `pnpm build` must
+	// need neither configuration nor a database.
+	const { startTelemetry, shutdownTelemetry } = await import('$lib/server/telemetry');
+	await startTelemetry(getConfig().telemetry);
+
+	// adapter-node already handles SIGTERM and SIGINT and emits this once the
+	// server has stopped accepting connections, so we add no signal handler of
+	// our own and cannot fight the adapter's shutdown ordering.
+	process.on('sveltekit:shutdown', () => {
+		void shutdownTelemetry();
+	});
+
 	// Default on, because the single-container deployment this ships for has
 	// nowhere else to run them. Operators running more than one replica set
 	// RUN_MIGRATIONS=false and run a one-off migration job instead — two
