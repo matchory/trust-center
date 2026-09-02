@@ -50,7 +50,19 @@ export const init: ServerInit = async () => {
 	// server has stopped accepting connections, so we add no signal handler of
 	// our own and cannot fight the adapter's shutdown ordering.
 	process.on('sveltekit:shutdown', () => {
-		void shutdownTelemetry();
+		// A final flush failing — the collector being unreachable mid-deploy is
+		// the ordinary case, not an exotic one — must not become an unhandled
+		// rejection during teardown: under Node's default mode that can abort
+		// the very shutdown sequence this handler exists to make graceful.
+		void shutdownTelemetry().catch((cause) => {
+			console.error(
+				JSON.stringify({
+					level: 'error',
+					scope: 'telemetry',
+					message: cause instanceof Error ? cause.message : String(cause)
+				})
+			);
+		});
 	});
 
 	// Default on, because the single-container deployment this ships for has

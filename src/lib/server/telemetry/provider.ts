@@ -1,3 +1,4 @@
+import { metrics, trace } from '@opentelemetry/api';
 import type { AppConfig } from '../config';
 
 /**
@@ -23,8 +24,7 @@ export async function startTelemetry(config: AppConfig['telemetry']): Promise<vo
 		{ NodeTracerProvider },
 		{ MeterProvider, PeriodicExportingMetricReader },
 		{ OTLPTraceExporter },
-		{ OTLPMetricExporter },
-		{ metrics }
+		{ OTLPMetricExporter }
 	] = await Promise.all([
 		import('@opentelemetry/resources'),
 		import('@opentelemetry/semantic-conventions'),
@@ -32,8 +32,7 @@ export async function startTelemetry(config: AppConfig['telemetry']): Promise<vo
 		import('@opentelemetry/sdk-trace-node'),
 		import('@opentelemetry/sdk-metrics'),
 		import('@opentelemetry/exporter-trace-otlp-http'),
-		import('@opentelemetry/exporter-metrics-otlp-http'),
-		import('@opentelemetry/api')
+		import('@opentelemetry/exporter-metrics-otlp-http')
 	]);
 
 	const resource = resourceFromAttributes({ [ATTR_SERVICE_NAME]: config.serviceName });
@@ -75,5 +74,18 @@ export async function startTelemetry(config: AppConfig['telemetry']): Promise<vo
 export async function shutdownTelemetry(): Promise<void> {
 	const providers = started;
 	started = [];
-	await Promise.all(providers.map((provider) => provider.shutdown()));
+	if (providers.length === 0) return;
+
+	try {
+		await Promise.all(providers.map((provider) => provider.shutdown()));
+	} finally {
+		// `provider.shutdown()` only stops the exporters it owns; the API's
+		// global delegate still points at the now-inert provider until it is
+		// disabled too. Skipped, every span created after a shutdown would keep
+		// reporting `isRecording() === true` while its data is silently
+		// dropped, instead of falling back to the safe no-op tracer the rest of
+		// this application is built to tolerate.
+		trace.disable();
+		metrics.disable();
+	}
 }
