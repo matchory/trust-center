@@ -28,13 +28,16 @@ export async function withSpan<T>(
 		try {
 			return await fn(span);
 		} catch (cause) {
-			// The message only — never the cause chain. `handleError` exists
-			// because openid-client attaches the callback request, authorization
-			// code and all, as an error's cause.
-			span.setStatus({
-				code: SpanStatusCode.ERROR,
-				message: cause instanceof Error ? cause.message : String(cause)
-			});
+			// No message, and never the cause chain. An error's message is
+			// arbitrary application text — an SMTP bounce routinely embeds the
+			// recipient ("550 no such user <addr>") — and a span status is
+			// exported like any other span data, on every failure path,
+			// unreachable by `purgeRequester`. The same discipline `handleError`
+			// already applies by refusing to log `error.cause`, because
+			// openid-client attaches the callback request, authorization code and
+			// all, as an error's cause. The trace id ties this span to the
+			// matching log line, where an arbitrary error string belongs.
+			span.setStatus({ code: SpanStatusCode.ERROR });
 			throw cause;
 		} finally {
 			span.end();

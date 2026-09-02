@@ -72,6 +72,31 @@ describe('withSpan', () => {
 		const spans = exporter.getFinishedSpans();
 		expect(spans).toHaveLength(1);
 		expect(spans[0]?.status.code).toBe(2); // SpanStatusCode.ERROR
+		expect(spans[0]?.status.message).toBeUndefined();
+	});
+
+	// An SMTP bounce routinely embeds the recipient ("550 no such user <addr>"),
+	// so the error message on the failure path of every withSpan call site is
+	// not safe to export verbatim — a span status is exported like any other
+	// span data, and `purgeRequester` cannot reach it. This is the failure-path
+	// counterpart to tests/unit/telemetry-request.test.ts's query-string case.
+	it('carries the failing address nowhere when the callback throws with one in its message', async () => {
+		await expect(
+			withSpan('mail send', {}, async () => {
+				throw new Error('550 no such user <person@acme.example>');
+			})
+		).rejects.toThrow();
+
+		const spans = exporter.getFinishedSpans();
+		expect(spans).toHaveLength(1);
+
+		const values = [
+			spans[0]?.name,
+			spans[0]?.status.message,
+			...Object.values(spans[0]?.attributes ?? {}).map(String)
+		];
+
+		expect(values.some((value) => typeof value === 'string' && value.includes('@'))).toBe(false);
 	});
 
 	it('exposes the active trace id inside the span and nothing outside it', async () => {
