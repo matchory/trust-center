@@ -241,6 +241,30 @@ silent in production. If mail is not arriving, look at `outbound_email`:
 `status` is `pending`, `sent`, or `failed`, and `last_error` records why the
 most recent attempt failed.
 
+### Update notifications
+
+Subscribers are mailed about update posts every 15 minutes. Two consequences of
+how "published" is decided are worth knowing before they surprise you.
+
+**A back-dated post notifies nobody.** Each subscription remembers when it was
+last notified, and a post is sent if it went live after that. Setting
+`published_at` to a date in the past means "this was already announced", so the
+post appears on the updates page and no mail goes out. That is intended — the
+alternative is mailing people about a change they were told about last week.
+
+**Re-dating a live post forward notifies again.** The mirror of the above: moving
+an already-published post's date to a later time steps it back over the cursors
+that had passed it, so it is sent a second time. Edit the date of a post that has
+already gone out only if you mean to.
+
+**Management links do not expire, and they appear in URLs.** Every notification
+carries a link that lets its recipient change topics or unsubscribe without
+signing in. It is valid indefinitely, by design — a dead unsubscribe link is a
+compliance problem. It follows that if your reverse proxy logs full request
+lines, those logs accumulate working management tokens. Treat them accordingly:
+either do not log query strings for `/*/subscribe/*`, or hold those logs to the
+same retention and access rules as the database.
+
 ## 7b. Access governance
 
 A prospect finds a gated document on the public portal and asks for it at
