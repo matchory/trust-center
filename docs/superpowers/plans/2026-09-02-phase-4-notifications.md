@@ -1641,11 +1641,27 @@ Create `src/routes/(portal)/subscribe/confirm/+page.svelte`:
 <script lang="ts">
 	import { enhance } from '$app/forms';
 	import SectionHeading from '$lib/components/portal/SectionHeading.svelte';
+	import Seo from '$lib/components/portal/Seo.svelte';
 	import { m } from '$lib/paraglide/messages.js';
 	import type { PageProps } from './$types';
 
 	let { data, form }: PageProps = $props();
 </script>
+
+<!-- `noindex` comes only from this component — the portal layout emits no
+     default robots directive — and without it this page would carry none at
+     all. It is reachable only with a token, but mail scanners fetch these URLs
+     by design (P4.3), and some index what they fetch. -->
+<Seo
+	baseUrl={data.baseUrl}
+	title={m.confirm_title()}
+	description={m.confirm_intro()}
+	siteName={data.branding.organizationName}
+	locale={data.locale}
+	locales={data.locales}
+	defaultLocale={data.defaultLocale}
+	noindex
+/>
 
 {#if form?.confirmed}
 	<SectionHeading title={m.confirm_done_title()} />
@@ -1667,7 +1683,7 @@ Create `src/routes/(portal)/subscribe/confirm/+page.svelte`:
 {/if}
 ```
 
-The page has no `<Seo>` block and must not be indexed — check whether the portal layout emits a default `robots` directive; if it does not, add `noindex` the way `request/+page.svelte` does.
+`data.baseUrl`, `data.branding`, `data.locale`, `data.locales` and `data.defaultLocale` come from the portal layout load, not from this page's own load — which returns only `{ token }`. Confirm that against `request/+page.svelte`, which passes the same props.
 
 - [ ] **Step 3: Verify by hand**
 
@@ -1858,6 +1874,7 @@ Create `src/routes/(portal)/subscribe/manage/+page.svelte`:
 <script lang="ts">
 	import { enhance } from '$app/forms';
 	import SectionHeading from '$lib/components/portal/SectionHeading.svelte';
+	import Seo from '$lib/components/portal/Seo.svelte';
 	import type { UpdateKind } from '$lib/content-types';
 	import { m } from '$lib/paraglide/messages.js';
 	import type { PageProps } from './$types';
@@ -1871,6 +1888,20 @@ Create `src/routes/(portal)/subscribe/manage/+page.svelte`:
 		advisory: () => m.update_kind_advisory()
 	};
 </script>
+
+<!-- Same reasoning as the confirm page: the layout emits no default robots
+     directive, and this URL carries a permanent credential in its query
+     string, so it is the last page in the portal that should be indexable. -->
+<Seo
+	baseUrl={data.baseUrl}
+	title={m.manage_title()}
+	description={m.manage_intro()}
+	siteName={data.branding.organizationName}
+	locale={data.locale}
+	locales={data.locales}
+	defaultLocale={data.defaultLocale}
+	noindex
+/>
 
 {#if form?.gone}
 	<SectionHeading title={m.manage_gone_title()} />
