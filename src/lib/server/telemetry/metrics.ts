@@ -18,6 +18,13 @@ function build() {
 		requestDuration: meter.createHistogram('http.server.request.duration', {
 			description: 'Duration of inbound HTTP requests',
 			unit: 's'
+		}),
+		jobTickDuration: meter.createHistogram('trustcenter.job.tick.duration', {
+			description: 'Duration of one background job tick',
+			unit: 's'
+		}),
+		jobTick: meter.createCounter('trustcenter.job.tick', {
+			description: 'Background job ticks by outcome'
 		})
 	};
 }
@@ -39,6 +46,22 @@ export function recordRequestDuration(input: {
 		input.seconds,
 		requestAttributes({ method: input.method, routeId: input.routeId, status: input.status })
 	);
+}
+
+/**
+ * `locked` is not a failure: another replica held the advisory lock and this
+ * tick correctly skipped. Distinguishing it from `ok` is what makes "the job
+ * is not running anywhere" different from "the job is running elsewhere".
+ */
+export function recordJobTick(input: {
+	name: string;
+	outcome: 'ok' | 'locked' | 'error';
+	seconds: number;
+}): void {
+	const attributes = { 'job.name': input.name, outcome: input.outcome };
+
+	get().jobTickDuration.record(input.seconds, { 'job.name': input.name });
+	get().jobTick.add(1, attributes);
 }
 
 /** Called by `startTelemetry` after the real meter provider is registered. */

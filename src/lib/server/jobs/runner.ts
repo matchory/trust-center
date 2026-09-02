@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { sql } from 'drizzle-orm';
+import { recordJobTick, withSpan } from '../telemetry';
 import type { Db } from '../db';
 
 /**
@@ -29,14 +30,35 @@ export interface JobResult {
 export async function runJob(db: Db, name: string, fn: () => Promise<void>): Promise<JobResult> {
 	const key = lockKey(name);
 
-	return db.transaction(async (tx) => {
-		const rows = (await tx.execute(
-			sql`SELECT pg_try_advisory_xact_lock(${key}) AS locked`
-		)) as unknown as { locked: boolean }[];
+	// One span per tick, around the transaction rather than inside it, so the
+	// span covers the lock acquisition too — a tick that spends its time
+	// waiting on the lock looks identical to a slow job without it.
+	return withSpan(`job ${name}`, { 'job.name': name }, async (span) => {
+		const started = performance.now();
 
-		if (!rows[0]?.locked) return { ran: false };
+		try {
+			const result = await db.transaction(async (tx) => {
+				const rows = (await tx.execute(
+					sql`SELECT pg_try_advisory_xact_lock(${key}) AS locked`
+				)) as unknown as { locked: boolean }[];
 
-		await fn();
-		return { ran: true };
+				if (!rows[0]?.locked) return { ran: false };
+
+				await fn();
+				return { ran: true };
+			});
+
+			span.setAttribute('job.lock_acquired', result.ran);
+			recordJobTick({
+				name,
+				outcome: result.ran ? 'ok' : 'locked',
+				seconds: (performance.now() - started) / 1000
+			});
+
+			return result;
+		} catch (cause) {
+			recordJobTick({ name, outcome: 'error', seconds: (performance.now() - started) / 1000 });
+			throw cause;
+		}
 	});
 }
