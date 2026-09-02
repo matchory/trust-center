@@ -15,6 +15,11 @@ export type AuditActor =
 	| { type: 'staff'; id: string }
 	| { type: 'staff-unresolved'; id: null }
 	| { type: 'requester'; id: string | null }
+	// A person confirming a subscription is not staff and not a requester, and
+	// `system` would make "who consented" unanswerable in precisely the case
+	// where consent is the fact being evidenced (spec §10.1, P4.11). The id is
+	// always a `subscription.id`; the address never appears in any audit column.
+	| { type: 'subscriber'; id: string }
 	| { type: 'system'; id: null };
 
 export interface AuditEventInput {

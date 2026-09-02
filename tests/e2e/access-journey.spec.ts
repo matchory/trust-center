@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { expect, test } from '@playwright/test';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, like, not } from 'drizzle-orm';
 import {
 	addDocumentFile,
 	createCategory,
@@ -95,8 +95,13 @@ test.afterAll(async () => {
 
 // The submission limiter allows five per hour per address. This spec submits
 // through the real form, so it needs the same reset request.spec.ts uses.
+//
+// Every address bucket, and nothing else. A full run submits far more than the
+// five-per-hour the address limiter allows, so specs must clear it. The email
+// buckets are spared because the flood case below asserts one of them, and a
+// delete landing mid-flood is what made that case fail only in full runs.
 test.beforeEach(async () => {
-	await db.delete(rateLimit);
+	await db.delete(rateLimit).where(not(like(rateLimit.key, 'request:email:%')));
 });
 
 test('a prospect requests, verifies, downloads, and is cut off on revocation', async ({

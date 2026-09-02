@@ -231,8 +231,12 @@ export async function effectiveVersion(
 
 	if (candidates.length === 0) return null;
 
-	const bodyRows = await db
-		.select()
+	// `(versionId, locale)` is the whole completeness question; `bodyMd` is only
+	// needed to render, and three of this function's four callers never look at
+	// it. Reading every candidate's full body put a table scan's worth of
+	// contract text on the gated download path, where `validAcceptance` calls in.
+	const present = await db
+		.select({ versionId: ndaTemplateBody.versionId, locale: ndaTemplateBody.locale })
 		.from(ndaTemplateBody)
 		.where(
 			inArray(
@@ -241,20 +245,24 @@ export async function effectiveVersion(
 			)
 		);
 
-	const byVersion = groupByKey(bodyRows, (row) => row.versionId);
+	const localesByVersion = groupByKey(present, (row) => row.versionId);
 
-	for (const candidate of candidates) {
-		const bodies: Record<string, { bodyMd: string; sha256: string }> = {};
-		for (const row of byVersion.get(candidate.id) ?? []) {
-			bodies[row.locale] = { bodyMd: row.bodyMd, sha256: row.sha256 };
-		}
+	const winner = candidates.find((candidate) => {
+		const found = new Set((localesByVersion.get(candidate.id) ?? []).map((row) => row.locale));
+		return locales.every((locale) => found.has(locale));
+	});
 
-		if (locales.every((locale) => bodies[locale])) {
-			return { versionId: candidate.id, version: candidate.version, bodies };
-		}
-	}
+	if (!winner) return null;
 
-	return null;
+	const bodyRows = await db
+		.select()
+		.from(ndaTemplateBody)
+		.where(eq(ndaTemplateBody.versionId, winner.id));
+
+	const bodies: Record<string, { bodyMd: string; sha256: string }> = {};
+	for (const row of bodyRows) bodies[row.locale] = { bodyMd: row.bodyMd, sha256: row.sha256 };
+
+	return { versionId: winner.id, version: winner.version, bodies };
 }
 
 export async function listTemplates(

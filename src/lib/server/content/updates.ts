@@ -2,7 +2,7 @@ import { and, asc, desc, eq, inArray, isNotNull, lte } from 'drizzle-orm';
 import type { UpdateKind } from '../../content-types';
 import { pickTranslation } from '../../i18n/locale';
 import type { Db } from '../db';
-import { updatePost, updatePostTranslation } from '../db/schema';
+import { updatePost, updatePostSubprocessor, updatePostTranslation } from '../db/schema';
 
 export interface PublicUpdate {
 	id: string;
@@ -15,16 +15,24 @@ export interface PublicUpdate {
 	isTranslationFallback: boolean;
 }
 
+/**
+ * One column answers both "is it published" and "is it scheduled": a null date
+ * is a draft, a future date is scheduled, and neither is public yet. Exported
+ * because notice coverage decides the same thing about the same posts, and a
+ * post that has told nobody anything must mean that in both places.
+ */
+export function livePost() {
+	return and(isNotNull(updatePost.publishedAt), lte(updatePost.publishedAt, new Date()));
+}
+
 export async function listPublicUpdates(
 	db: Db,
 	opts: { locale: string; defaultLocale: string }
 ): Promise<PublicUpdate[]> {
-	// One column answers both "is it published" and "is it scheduled": a null
-	// date is a draft, a future date is scheduled, and neither is public yet.
 	const rows = await db
 		.select()
 		.from(updatePost)
-		.where(and(isNotNull(updatePost.publishedAt), lte(updatePost.publishedAt, new Date())))
+		.where(livePost())
 		.orderBy(desc(updatePost.publishedAt));
 
 	if (rows.length === 0) return [];
@@ -81,6 +89,7 @@ export interface AdminUpdate {
 	publishedAt: Date | null;
 	translations: { locale: string; title: string; body: string }[];
 	titles: Record<string, string>;
+	subprocessorIds: string[];
 }
 
 export async function listUpdatesForAdmin(db: Db): Promise<AdminUpdate[]> {
@@ -100,6 +109,16 @@ export async function listUpdatesForAdmin(db: Db): Promise<AdminUpdate[]> {
 			)
 		);
 
+	const links = await db
+		.select()
+		.from(updatePostSubprocessor)
+		.where(
+			inArray(
+				updatePostSubprocessor.postId,
+				rows.map((row) => row.id)
+			)
+		);
+
 	return rows.map((row) => {
 		const mine = translations.filter((item) => item.postId === row.id);
 		return {
@@ -112,7 +131,10 @@ export async function listUpdatesForAdmin(db: Db): Promise<AdminUpdate[]> {
 				title: item.title,
 				body: item.body
 			})),
-			titles: Object.fromEntries(mine.map((item) => [item.locale, item.title]))
+			titles: Object.fromEntries(mine.map((item) => [item.locale, item.title])),
+			subprocessorIds: links
+				.filter((item) => item.postId === row.id)
+				.map((item) => item.subprocessorId)
 		};
 	});
 }
@@ -162,4 +184,25 @@ export async function setUpdateTranslation(
 			target: [updatePostTranslation.postId, updatePostTranslation.locale],
 			set: values
 		});
+}
+
+/** Replaces the link set wholesale — the form submits the complete list, the
+ * same contract `setControlEvidence` has. */
+export async function setUpdateSubprocessors(
+	db: Db,
+	postId: string,
+	subprocessorIds: readonly string[]
+): Promise<void> {
+	// Deduped here rather than in the editor's form schema, for the same reason
+	// `replaceTopics` dedupes: the join table has a composite primary key, so a
+	// repeated id raises a violation the caller cannot see coming.
+	const unique = [...new Set(subprocessorIds)];
+	await db.transaction(async (tx) => {
+		await tx.delete(updatePostSubprocessor).where(eq(updatePostSubprocessor.postId, postId));
+		if (unique.length > 0) {
+			await tx
+				.insert(updatePostSubprocessor)
+				.values(unique.map((subprocessorId) => ({ postId, subprocessorId })));
+		}
+	});
 }

@@ -109,18 +109,16 @@
 	translated={(locale) => translationFor(locale) !== null}
 >
 	{#snippet children(locale)}
-		<form
-			method="POST"
-			action="?/saveTranslation"
-			use:enhance
-			class="mb-8 grid gap-3 rounded border bg-white p-4"
-		>
-			<input type="hidden" name="locale" value={locale} />
-
+		<!-- Associated with the translation form by id rather than nested in it.
+		     This pane also carries the upload and delete forms, and a <form>
+		     inside a <form> is dropped by the parser — wrapping the tab strip
+		     would silently disable uploading. -->
+		<div class="mb-8 grid gap-3 rounded border bg-white p-4">
 			<FormField label={m.admin_title()}>
 				<input
 					data-testid="translation-title-{locale}"
-					name="title"
+					form="document-translations"
+					name="title.{locale}"
 					value={translationFor(locale)?.title ?? ''}
 					class="rounded border px-2 py-1"
 				/>
@@ -129,7 +127,8 @@
 			<FormField label={m.admin_summary()}>
 				<textarea
 					data-testid="translation-summary-{locale}"
-					name="summary"
+					form="document-translations"
+					name="summary.{locale}"
 					rows="3"
 					class="rounded border px-2 py-1">{translationFor(locale)?.summary ?? ''}</textarea
 				>
@@ -138,14 +137,7 @@
 			{#if form?.field === 'title' && form?.locale === locale}
 				<p class="text-sm text-red-700">{m.admin_error_required()}</p>
 			{/if}
-
-			<button
-				data-testid="translation-save-{locale}"
-				class="justify-self-start rounded bg-neutral-900 px-3 py-1.5 text-white"
-			>
-				{m.admin_save()}
-			</button>
-		</form>
+		</div>
 
 		<section class="rounded border bg-white p-4">
 			<h2 class="mb-3 font-medium">{m.admin_file()} ({locale})</h2>
@@ -202,7 +194,7 @@
 					<input type="date" name="validUntil" class="rounded border px-2 py-1" />
 				</FormField>
 
-				{#if form?.field === 'file'}
+				{#if form?.field === 'file' && form?.locale === locale}
 					<p class="text-sm text-red-700 sm:col-span-4">{form.message}</p>
 				{/if}
 
@@ -216,6 +208,12 @@
 		</section>
 	{/snippet}
 </LocaleTabs>
+
+<form id="document-translations" method="POST" action="?/saveTranslations" use:enhance class="mb-8">
+	<button data-testid="translation-save" class="rounded bg-neutral-900 px-3 py-1.5 text-white">
+		{m.admin_save()}
+	</button>
+</form>
 
 <form method="POST" action="?/remove" use:enhance class="mt-10">
 	<button

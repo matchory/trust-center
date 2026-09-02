@@ -218,7 +218,7 @@ Take a database backup before upgrading. Migrations are not reversible.
 
 ## 7a. Background jobs
 
-The server runs five jobs in-process on a timer. There is nothing to install and
+The server runs six jobs in-process on a timer. There is nothing to install and
 no scheduler to configure.
 
 | Job | Every | What it does |
@@ -227,7 +227,8 @@ no scheduler to configure.
 | `sessions:cleanup` | 1h | Deletes expired staff and requester sessions. |
 | `requests:sweep` | 15m | Deletes access requests whose verification link expired unused. |
 | `grants:remind` | 6h | Mails a requester once shortly before their access expires; nudges once before an outstanding agreement's deadline; and closes approvals whose deadline has passed. |
-| `retention:sweep` | 6h | Drops spent rate-limit counters and strips settled notifications of their address and payload. |
+| `retention:sweep` | 6h | Drops spent rate-limit counters, strips settled notifications of their address and payload, and deletes unconfirmed subscriptions whose confirmation token has expired. |
+| `subscriptions:notify` | 15m | Mails confirmed subscribers about update posts published since they were last notified, and advances each subscription's cursor. |
 
 Every tick takes a Postgres advisory lock named for its job, so running more
 than one replica is safe: a second instance whose tick overlaps skips that round
@@ -240,6 +241,30 @@ queue accepts work and never drains it — correct for a build or a test run, an
 silent in production. If mail is not arriving, look at `outbound_email`:
 `status` is `pending`, `sent`, or `failed`, and `last_error` records why the
 most recent attempt failed.
+
+### Update notifications
+
+Subscribers are mailed about update posts every 15 minutes. Two consequences of
+how "published" is decided are worth knowing before they surprise you.
+
+**A back-dated post notifies nobody.** Each subscription remembers when it was
+last notified, and a post is sent if it went live after that. Setting
+`published_at` to a date in the past means "this was already announced", so the
+post appears on the updates page and no mail goes out. That is intended — the
+alternative is mailing people about a change they were told about last week.
+
+**Re-dating a live post forward notifies again.** The mirror of the above: moving
+an already-published post's date to a later time steps it back over the cursors
+that had passed it, so it is sent a second time. Edit the date of a post that has
+already gone out only if you mean to.
+
+**Management links do not expire, and they appear in URLs.** Every notification
+carries a link that lets its recipient change topics or unsubscribe without
+signing in. It is valid indefinitely, by design — a dead unsubscribe link is a
+compliance problem. It follows that if your reverse proxy logs full request
+lines, those logs accumulate working management tokens. Treat them accordingly:
+either do not log query strings for `/*/subscribe/*`, or hold those logs to the
+same retention and access rules as the database.
 
 ## 7b. Access governance
 

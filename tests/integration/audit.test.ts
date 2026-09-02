@@ -3,6 +3,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createDb, type Db } from '../../src/lib/server/db';
 import { auditEvent } from '../../src/lib/server/db/schema';
 import { queryEvents, recordEvent } from '../../src/lib/server/audit';
+import { rejectionCause } from '../helpers/db';
 
 let db: Db;
 let close: () => Promise<void>;
@@ -16,22 +17,6 @@ beforeAll(() => {
 afterAll(async () => {
 	await close();
 });
-
-/**
- * Drizzle wraps driver errors: `message` is only `Failed query: <sql> params: …`,
- * so asserting on it matches the statement text rather than the database's
- * complaint — and passes whenever the phrase happens to appear in the SQL or a
- * bound parameter. The Postgres message is on `cause`.
- */
-async function rejectionCause(query: PromiseLike<unknown>): Promise<string> {
-	try {
-		await query;
-	} catch (error) {
-		const wrapped = error as Error & { cause?: Error };
-		return wrapped.cause?.message ?? wrapped.message;
-	}
-	throw new Error('expected the query to be rejected, but it succeeded');
-}
 
 describe('audit log', () => {
 	it('records an event and reads it back by subject', async () => {
@@ -186,7 +171,7 @@ describe('audit log', () => {
 		);
 	});
 
-	it('rejects an actor_type outside the four the application defines', async () => {
+	it('rejects an actor_type outside the five the application defines', async () => {
 		expect(
 			await rejectionCause(
 				db.execute(

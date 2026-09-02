@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { DOCUMENT_STATUSES, DOCUMENT_TIERS } from '$lib/content-types';
 import { localizePath } from '$lib/i18n/locale';
 import { documentGroupIds, listGroups, setDocumentGroups } from '$lib/server/access/groups';
-import { saveMetaAction, saveTranslationAction } from '$lib/server/admin/actions';
+import { saveMetaAction, saveTranslationsAction } from '$lib/server/admin/actions';
 import type { AdminActionFailure } from '$lib/server/admin/actions';
 import { recordEvent } from '$lib/server/audit';
 import { getConfig } from '$lib/server/config';
@@ -74,7 +74,7 @@ export const actions: Actions = {
 		fallbackField: 'slug'
 	}),
 
-	saveTranslation: saveTranslationAction({
+	saveTranslations: saveTranslationsAction({
 		type: 'document',
 		required: ['title'],
 		optional: ['summary'],
@@ -126,8 +126,11 @@ export const actions: Actions = {
 			// to serve never reaches storage in the first place.
 			await assertPdfPages(upload.bytes, getConfig().maxPdfPages);
 		} catch (cause) {
+			// Carries the locale so the notice renders in the pane the operator
+			// uploaded from. Every pane is mounted now, so an unscoped notice
+			// appears once per locale.
 			if (cause instanceof UploadRejected)
-				return fail<AdminActionFailure>(400, { field: 'file', message: cause.message });
+				return fail<AdminActionFailure>(400, { field: 'file', locale, message: cause.message });
 			throw cause;
 		}
 

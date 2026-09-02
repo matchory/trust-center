@@ -50,13 +50,22 @@
 		"vitest": "^4.1.11"
 	},
 	"dependencies": {
+		"@milkdown/core": "^7.22.1",
+		"@milkdown/plugin-listener": "^7.22.1",
+		"@milkdown/preset-commonmark": "^7.22.1",
+		"@milkdown/theme-nord": "^7.22.1",
 		"@pdf-lib/fontkit": "^1.1.1",
 		"drizzle-orm": "^0.45.2",
+		"mammoth": "^1.12.2",
 		"nodemailer": "^9.0.6",
 		"openid-client": "^6.8.7",
 		"pdf-lib": "^1.17.1",
+		"pdfjs-dist": "^6.3.289",
 		"postgres": "^3.4.9",
+		"rehype-parse": "^9.0.1",
+		"rehype-remark": "^10.0.1",
 		"remark-parse": "^11.0.0",
+		"remark-stringify": "^11.0.0",
 		"unified": "^11.0.5",
 		"zod": "^4.4.3"
 	}

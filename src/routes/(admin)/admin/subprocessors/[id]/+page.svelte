@@ -116,51 +116,44 @@
 	>
 </form>
 
-<LocaleTabs
-	locales={data.locales}
-	initial={data.locale}
-	translated={(locale) => translationFor(locale) !== null}
->
-	{#snippet children(locale)}
-		<form
-			method="POST"
-			action="?/saveTranslation"
-			use:enhance
-			class="mb-8 grid gap-3 rounded border bg-white p-4"
-		>
-			<input type="hidden" name="locale" value={locale} />
+<form method="POST" action="?/saveTranslations" use:enhance class="mb-8">
+	<LocaleTabs
+		locales={data.locales}
+		initial={data.locale}
+		translated={(locale) => translationFor(locale) !== null}
+	>
+		{#snippet children(locale)}
+			<div class="grid gap-3 rounded border bg-white p-4">
+				<FormField label={m.subprocessors_purpose()}>
+					<textarea
+						data-testid="translation-purpose-{locale}"
+						name="purpose.{locale}"
+						rows="2"
+						class="rounded border px-2 py-1">{translationFor(locale)?.purpose ?? ''}</textarea
+					>
+				</FormField>
 
-			<FormField label={m.subprocessors_purpose()}>
-				<textarea
-					data-testid="translation-purpose-{locale}"
-					name="purpose"
-					rows="2"
-					class="rounded border px-2 py-1">{translationFor(locale)?.purpose ?? ''}</textarea
-				>
-			</FormField>
+				<FormField label={m.subprocessors_data()}>
+					<textarea
+						data-testid="translation-datacategories-{locale}"
+						name="dataCategories.{locale}"
+						rows="2"
+						class="rounded border px-2 py-1"
+						>{translationFor(locale)?.dataCategories ?? ''}</textarea
+					>
+				</FormField>
 
-			<FormField label={m.subprocessors_data()}>
-				<textarea
-					data-testid="translation-datacategories-{locale}"
-					name="dataCategories"
-					rows="2"
-					class="rounded border px-2 py-1">{translationFor(locale)?.dataCategories ?? ''}</textarea
-				>
-			</FormField>
+				{#if (form?.field === 'purpose' || form?.field === 'dataCategories') && form?.locale === locale}
+					<p class="text-sm text-red-700">{m.admin_error_required()}</p>
+				{/if}
+			</div>
+		{/snippet}
+	</LocaleTabs>
 
-			{#if (form?.field === 'purpose' || form?.field === 'dataCategories') && form?.locale === locale}
-				<p class="text-sm text-red-700">{m.admin_error_required()}</p>
-			{/if}
-
-			<button
-				data-testid="translation-save-{locale}"
-				class="justify-self-start rounded bg-neutral-900 px-3 py-1.5 text-white"
-			>
-				{m.admin_save()}
-			</button>
-		</form>
-	{/snippet}
-</LocaleTabs>
+	<button data-testid="translation-save" class="mt-3 rounded bg-neutral-900 px-3 py-1.5 text-white">
+		{m.admin_save()}
+	</button>
+</form>
 
 <form method="POST" action="?/remove" use:enhance class="mt-10">
 	<button

@@ -1,7 +1,11 @@
 import { randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { createGrant, grantedDocuments } from '../../src/lib/server/access/grants';
+import {
+	countGrantDocuments,
+	createGrant,
+	grantedDocuments
+} from '../../src/lib/server/access/grants';
 import { createGroup, setDocumentGroups } from '../../src/lib/server/access/groups';
 import { decideRequest } from '../../src/lib/server/access/requests';
 import { createDb, type Db } from '../../src/lib/server/db';
@@ -26,6 +30,7 @@ import {
 } from '../../src/lib/server/nda/requirements';
 import { recordAcceptance } from '../../src/lib/server/nda/acceptance';
 import { activateGrants } from '../../src/lib/server/nda/activation';
+import { setDefaultTemplateId } from '../../src/lib/server/nda/settings';
 import { createTemplate } from '../../src/lib/server/nda/templates';
 import {
 	seedAgreement,
@@ -329,6 +334,53 @@ describe('recording what a grant is waiting on', () => {
 		expect(row?.acceptanceDueAt).not.toBeNull();
 		// The frozen set travels with the grant, waivers and all.
 		expect(await grantRequirements(db, grantId!)).toHaveLength(1);
+	});
+});
+
+describe('counting what a grant confers', () => {
+	it('counts a grant that touches no agreement without narrowing it', async () => {
+		// The aggregate path. A document in two groups, neither carrying an
+		// agreement: the left joins multiply the row, so a plain count(*) would
+		// report two documents where there is one.
+		const documentId = await seedDocument(db, { slug: 'handbook', tier: 'request' });
+		const first = await createGroup(db, { slug: 'acme', position: 0, ndaTemplateId: null });
+		const second = await createGroup(db, { slug: 'bosch', position: 1, ndaTemplateId: null });
+		await setDocumentGroups(db, documentId, [first, second]);
+
+		const requesterId = await seedRequester(db);
+		const { grantId } = await createGrant(db, {
+			requesterId,
+			requestId: null,
+			documentIds: [documentId],
+			tiers: [],
+			groupIds: [],
+			expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+			acceptanceDueAt: null,
+			termDays: 30
+		});
+
+		expect(await countGrantDocuments(db, grantId, { locales: LOCALES })).toBe(1);
+	});
+
+	it('counts a grant behind an unaccepted agreement as delivering nothing', async () => {
+		// The narrowing path, which the aggregate must not short-circuit.
+		const { templateId } = await seedAgreement(db, { slug: 'mutual', locales: LOCALES });
+		await setDefaultTemplateId(db, templateId);
+		const documentId = await seedDocument(db, { slug: 'soc2', tier: 'nda' });
+
+		const requesterId = await seedRequester(db);
+		const { grantId } = await createGrant(db, {
+			requesterId,
+			requestId: null,
+			documentIds: [documentId],
+			tiers: [],
+			groupIds: [],
+			expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+			acceptanceDueAt: null,
+			termDays: 30
+		});
+
+		expect(await countGrantDocuments(db, grantId, { locales: LOCALES })).toBe(0);
 	});
 });
 

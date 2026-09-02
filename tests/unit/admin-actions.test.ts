@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+	readTranslations,
 	resolveMetaAction,
 	translationAction,
 	uniqueViolationField
@@ -57,5 +58,58 @@ describe('uniqueViolationField', () => {
 		expect(uniqueViolationField(new Error('connection lost'), 'slug')).toBeNull();
 		expect(uniqueViolationField(null, 'slug')).toBeNull();
 		expect(uniqueViolationField('23505', 'slug')).toBeNull();
+	});
+});
+
+describe('readTranslations', () => {
+	const opts = { required: ['question', 'answer'], optional: ['note'] };
+
+	function formOf(entries: Record<string, string>): FormData {
+		const form = new FormData();
+		for (const [key, value] of Object.entries(entries)) form.append(key, value);
+		return form;
+	}
+
+	it('reads one locale per field suffix', () => {
+		const result = readTranslations(
+			formOf({ 'question.de': 'Frage', 'answer.de': 'Antwort' }),
+			['de', 'en'],
+			opts
+		);
+
+		expect('values' in result && result.values.get('de')).toEqual({
+			question: 'Frage',
+			answer: 'Antwort',
+			note: null
+		});
+	});
+
+	it('skips a locale nobody translated rather than failing on it', () => {
+		// The "not translated" state is normal and visible in the tab strip; a
+		// form that refused to save because one locale is blank would make
+		// translating a document a single transaction across every language.
+		const result = readTranslations(
+			formOf({ 'question.de': 'Frage', 'answer.de': 'Antwort' }),
+			['de', 'en'],
+			opts
+		);
+
+		expect('values' in result && result.values.has('en')).toBe(false);
+	});
+
+	it('reports a locale filled in only halfway, naming the field and the locale', () => {
+		const result = readTranslations(formOf({ 'question.de': 'Frage' }), ['de'], opts);
+
+		expect(result).toEqual({ missing: { field: 'answer', locale: 'de' } });
+	});
+
+	it('stores an empty optional field as null', () => {
+		const result = readTranslations(
+			formOf({ 'question.de': 'F', 'answer.de': 'A', 'note.de': '  ' }),
+			['de'],
+			opts
+		);
+
+		expect('values' in result && result.values.get('de')?.note).toBeNull();
 	});
 });

@@ -13,6 +13,11 @@ what prompted it.
 had not settled, three of which change behaviour and are recorded as P3.18–P3.20. §19 lists all
 five and the reasoning; §2, §5.6, §6.4, §8, §9 and §15 carry the amendments themselves.
 
+**Amended 2026-08-31, before Phase 3c.** 3b's carry-over and a scoping pass settled what 3c
+actually contains and how import and the editor behave; four decisions change behaviour and are
+recorded as P3.21–P3.24. §20 lists them and the reasoning; §3, §5.1, §5.4, §5.5, §13, §14, §15 and
+§16 carry the amendments themselves.
+
 Supplements `2026-08-28-trust-center-design.md`. Where the two disagree, this document wins for
 Phase 3 and the main spec carries an amendment note pointing here. Everything below is a decision
 with the reasoning that produced it, because the reasoning is what the implementation plan needs and
@@ -95,6 +100,22 @@ Reviewed against a scope model already landed and tested.
 ### Phase 3c — authoring ergonomics
 
 PDF and DOCX import into the same canonical body, and the Milkdown editor. **No schema changes.**
+
+3b's carry-over added three more subjects, so the phase carries **four themes rather than one**:
+import (§5.5), the editor (§5.1), the translation-shape consolidation §19 deferred here, and a
+read-path pass over three costs 3b measured and left standing. That departs from §11's
+one-reviewable-theme convention deliberately.
+
+Splitting into 3c and 3d was considered and refused. The convention exists because a phase's themes
+usually stack — 3a's scope model is what made 3b's agreement expressible — and a split is worth its
+cost when the second half cannot be reviewed until the first lands. None of these four makes another
+reachable: they share no code and no schema. A split would buy separate review passes at the price
+of two plans, two branches and two carry-overs.
+
+Instead the four are **sequenced as task groups with the phase gate after each**, in the order
+above, so a theme that runs long is dropped whole rather than half-landed. The consolidation is the
+first candidate to drop, because nothing depends on it and it is the only theme that touches code
+this phase is not otherwise in.
 
 ### Why the seam moved
 
@@ -204,6 +225,10 @@ The subset is validated **server-side on save**, rejecting at the form rather th
 ProseMirror schema enforces the same subset in the editor, but a client-side schema is a convenience
 and never the control.
 
+The editor loads the commonmark preset and **no GFM preset**, mirroring the deliberate absence of
+`remark-gfm` this section already relies on: an editor offering a table the server is going to
+refuse is a worse failure than one that never offered it (P3.24).
+
 Everything renders from the parsed AST, never from raw passthrough. The click-through page emits
 only nodes we understand, so there is no HTML sanitisation step because there is no untrusted HTML —
 a property worth preserving deliberately.
@@ -254,6 +279,13 @@ Publishing is a deliberate, separate, all-or-nothing act, and the preview is wha
 bad body and a signed agreement: **draft → edit → preview exactly what the requester will see →
 publish.** It renders through the same AST path as the click-through, so it cannot drift from it.
 
+**It survives 3c** (P3.24). Milkdown replaces the textarea, not the preview. The editor draws its
+own ProseMirror document; the preview draws the AST `parseAgreementBody` returned from the server.
+They are two renderings of different trees on purpose, and keeping both on the page is what shows
+that the client schema and the actual control still agree — which §5.1 says a client-side schema can
+never be trusted to establish alone. A WYSIWYG surface also cannot show what the server *refused*,
+and that is the case the preview exists for.
+
 ### 5.5 Import (3c)
 
 Every authoring path imports **into** the canonical body; nothing is stored as an opaque blob.
@@ -266,6 +298,40 @@ Every authoring path imports **into** the canonical body; nothing is stored as a
 
 Imports normalise through the same parser on the way in, so the stored body is canonical from the
 start and every later version diff shows semantic change rather than formatting churn.
+
+#### What import produces, and what it must not
+
+**Import returns a draft; it never writes** (P3.22). The extractor hands its Markdown back to the
+editor as unsaved content and `?/saveBody` remains the only writer. Two reasons, and the second is
+the load-bearing one. Heuristic output should be read by a human before it becomes a version
+somebody can be asked to sign — the same argument §5.4 makes for the preview. And a writing import
+action would need an audit action name of its own; **action names are permanent once written**, and
+3b's carry-over records what it costs to discover a naming decision after the first row exists.
+Import writing through `?/saveBody` mints no name at all.
+
+**PDF reconstructs paragraphs and headings, and nothing else** (P3.21). Positioned runs group into
+lines by baseline, lines into paragraphs by vertical gap, and a run promotes to a heading when its
+font size clearly exceeds the body size. Enumerators — `1.`, `1.1`, `(a)` — stay **literal paragraph
+text** and are never turned into `list` nodes.
+
+This is a correctness rule, not a fidelity budget. Our renderer generates its own numbering from
+list position, so a clause imported as a list item can render under a *different* number than the
+contract it was copied from — and §6.1 renders the accepted body into a record PDF that is evidence
+of what was agreed. A mis-numbered clause is a defect in a legal instrument, and it is silent:
+nothing downstream can detect that clause 4.2 used to be 4.3. Detecting enumerators is exactly where
+a heuristic over positioned runs guesses wrong, so the feature that would guess is not built.
+
+**DOCX ends in a downgrade pass, and says what it dropped** (P3.23). `mammoth` yields semantic HTML,
+which converts through `rehype-parse` → `rehype-remark` → `remark-stringify` rather than through a
+string-based converter such as turndown — §13's argument for a shared AST applies to the import path
+as much as to the render path.
+
+A real contract in DOCX will carry nodes outside §5.1's subset, so refusing the document because it
+contains one table would make the feature useless on its intended input. Conversion therefore ends
+with an explicit downgrade: a link becomes its text, an image is dropped, a table becomes one
+paragraph per row. The result is **named back to the author** as a list of what was removed, at the
+moment they can still fix it. `parseAgreementBody` still asserts afterwards, as this section
+requires — but after the downgrade pass a throw is a bug in the pass, not an expected rejection.
 
 ### 5.6 The template's name
 
@@ -716,6 +782,10 @@ Requester personal data still appears in `audit_event` only in `ip`, `ua` and `a
 | P3.18 | **A rule's tier set bounds its auto-approval: the grant gets `ruleTiers ∩ requestTiers`** | Computing a permitted set and then ignoring it means a rule permitting nothing still hands out a blanket |
 | P3.19 | Templates carry a translated name; groups still have no public surface | A signatory facing two required agreements must tell them apart, and the name they read is the instrument's, not the bundle's |
 | P3.20 | Source Sans 3, four faces, `NDA_PDF_FONT_PATH` overriding | OFL, covers every locale this product serves, and the subset admits nested emphasis |
+| P3.21 | **PDF import reconstructs paragraphs and headings; enumerators stay literal text** | Our renderer numbers list items itself, so an imported clause can render under a different number than the contract it came from — silently, inside evidence |
+| P3.22 | Import returns a draft to the editor; `?/saveBody` stays the only writer | Heuristic output must be read before it is signable, and a writing action would mint a permanent audit action name for nothing |
+| P3.23 | DOCX converts through the unified/rehype family and ends in a downgrade pass that names what it dropped | A shared AST over a second string-based opinion; and a contract containing one table must import, not be refused |
+| P3.24 | Milkdown replaces the textarea, not the preview, and loads no GFM preset | Two renderings of different trees are what show the client schema and the server control still agree; an editor cannot show what the server refused |
 
 ---
 
@@ -749,7 +819,10 @@ returns `{subject, text}`; mailing a record PDF needs attachments through the ad
 row's payload contract, the drain loop, and the Mailpit assertions. It is small, but it is a port
 change and it was missed on the first pass.
 
-**3c:** `pdfjs-dist`, `mammoth`, `@milkdown/*`. Admin bundle only.
+**3c:** `pdfjs-dist`, `mammoth`, `@milkdown/*`, and `rehype-parse` / `rehype-remark` /
+`remark-stringify` for the DOCX leg (P3.23) — the unified family `remark-parse` is already part of,
+rather than turndown. Admin bundle only, and Milkdown loads through a dynamic `import()` so it
+lands in an admin chunk rather than a shared one (§10.4).
 
 ---
 
@@ -785,6 +858,18 @@ An **end-to-end test of the admin file upload** is folded into 3b. It predates t
 one gap where a page-count cap and a size cap are unit-tested but the route applying them has never
 been driven by a browser — and 3c adds a second upload route, which would otherwise inherit it.
 
+**3c adds the following.** *Unit:* the downgrade pass, one case per node type it removes, asserting
+both the output and the reported list; the PDF grouper against a fixture PDF with two heading sizes;
+`PdfHasNoText` against a text-free PDF; and — the case P3.21 exists for — an enumerated clause
+surviving import as paragraph text rather than as a list item. *Integration:* `?/import` refused on
+a version past `first_accepted_at`, and the §20 read-path changes asserted against the existing
+grant fixtures, including the case where narrowing removes nothing and `countGrantDocuments` is
+allowed to aggregate again. *End-to-end:* a DOCX imported through the browser into a draft version,
+edited, previewed and published; and the admin-upload test above, now driving both upload routes.
+
+The rate-limit fixture fix is not a new test but a change to an existing one, and its success
+criterion is the full suite passing repeatedly rather than a new assertion — see §20.
+
 ---
 
 ## 15. Carry-over folded in
@@ -794,8 +879,11 @@ been driven by a browser — and 3c adds a second upload route, which would othe
 | No end-to-end test covers the admin file upload | 3b |
 | The return-visit fast path has no entry point (spec §9.9) | 3b |
 | `toWinAnsi()` mangles non-WinAnsi names in watermarks | 3b (§6.4) |
-| `saveTranslationAction` (singular) unused for three phases | 3b (§19) |
+| `saveTranslationAction` (singular) unused for three phases | 3b (§19) — **the premise was false; see §20** |
 | Duplicate-slug creation 500s; the group routes catch `23503` but not `23505` | 3b (§19) |
+| Six single-locale editors and the multi-locale shape coexist | 3c (§20) |
+| `narrowByAgreements`, `countGrantDocuments` and `effectiveVersion` each pay for data they do not use | 3c (§20) |
+| `request.spec.ts`'s flood case fails intermittently on a shared rate-limit bucket | 3c (§20) |
 
 Deliberately **not** folded in, because they touch unrelated code and folding them is how a phase
 quietly doubles: the e2e suite starting two application servers against one database; requester
@@ -820,6 +908,18 @@ Named rather than solved, so the plan can budget for them.
   — *"an e2e step that interacts before hydration does not fail, it lies"* — applies hardest to the
   accept button, where a lost interaction produces a **passing** test over a missing record.
 
+**3c:**
+
+- **The PDF grouper's thresholds are the unknown, not the extraction.** `getTextContent()` is
+  reliable; deciding that a 6pt vertical gap ends a paragraph and a 14pt run is a heading is
+  tuning against documents we do not have. Budget for the thresholds being wrong on the first real
+  contract, and keep them named constants rather than inlined numbers so that being wrong is cheap.
+- **Milkdown is a ProseMirror integration inside Svelte 5 runes**, which is a lifecycle boundary
+  rather than a rendering one: the editor owns its DOM, so it must not be re-created by a
+  reactive re-render, and its content must reach the hidden textarea before the form submits. The
+  suite's four hydration-race sightings are the precedent for how this fails — a lost keystroke
+  produces a **passing** test over a body that was never written.
+
 ---
 
 ## 17. Deferred
@@ -831,6 +931,9 @@ Named rather than solved, so the plan can budget for them.
 - An acceptance expiring on its own. It is valid until a new version supersedes it.
 - An explicit "this group's agreement supersedes the default" flag. §4.4 takes the union; if an
   operator genuinely needs supersession it becomes a boolean somebody sets deliberately.
+- Reconstructing enumerated clauses as lists on PDF import (P3.21). It becomes safe if the renderer
+  ever preserves a literal enumerator instead of generating one, which is a change to §5.1's subset
+  and to the PDF layout engine, not to the importer.
 
 ---
 
@@ -898,3 +1001,60 @@ typing an existing slug returns a 500.
 decomposition be justified by the diff it produces rather than by a rollback nobody performs, and
 the seams available here — instrument, record, gate — each ship something only the next one makes
 reachable, which is the arrangement Phase 2's rule against shipping unreachable code refuses.
+
+---
+
+## 20. What Phase 3b's carry-over changed
+
+Phase 3b landed on `main` at `938eb0e`. Its carry-over
+(`docs/superpowers/phase-3c-carryover.md`) and a scoping pass over it settled four things this
+document had specified only in outline, and corrected one thing §19 asserted that was not true.
+
+**§19 was wrong about `saveTranslationAction`, and the correction matters more than the item.** §19
+recorded it as "unused for three phases" and folded its deletion into 3b. It has six callers — FAQ,
+subprocessors, updates, controls, certifications and documents all post to `?/saveTranslation` one
+locale at a time, and five e2e cases drive them. 3b found this and skipped the deletion rather than
+break working features. What is actually true is narrower: the helper **does not fit content types
+whose editor is a single multi-locale form**, which is every content type added since Phase 1. Two
+shapes coexist, and 3c consolidates onto the multi-locale one before deleting anything.
+
+The lesson the carry-over draws is the one worth keeping: *"no caller" and "no caller among the
+things I have been looking at" are different claims*, and a spec is exactly where the second gets
+promoted into the first.
+
+**Import returns a draft rather than writing** (P3.22, §5.5). §5.5 described what import produces
+and never said where it lands. Making it a writer would have minted a permanent audit action name
+for a step whose whole purpose is to be reviewed before it counts.
+
+**PDF import stops at paragraphs and headings** (P3.21, §5.5). §5.5 called reconstruction "heuristic
+and often wrong" and left the ambition open. It is now bounded by a correctness argument rather than
+by effort: our renderer numbers list items itself, so importing a clause as a list item can change
+the number it renders under, inside a document §6.1 turns into evidence.
+
+**DOCX ends in a downgrade pass** (P3.23, §5.5). §5.5 said DOCX converts "to semantic HTML, then to
+Markdown" and did not say what happens to the nodes §5.1 forbids. Refusing a contract for containing
+a table would have made the feature useless on exactly its intended input.
+
+**Milkdown replaces the textarea, not the preview** (P3.24, §5.1, §5.4). §5.1 established that a
+client-side schema is never the control and §5.4 established that the preview is; neither said what
+that means once the editor is a WYSIWYG surface that looks like a preview.
+
+**The phase carries four themes and is not split** (§3). Two more subjects come from the carry-over
+directly: the translation-shape consolidation above, and a read-path pass over three costs 3b
+measured — `narrowByAgreements` paying a round trip to learn nothing is gated, `countGrantDocuments`
+shipping a whole catalogue to produce an integer, and `effectiveVersion` fetching every candidate's
+full `bodyMd` on the download path. They are one problem in sequence: making the first probe free is
+what lets the second aggregate again. A third, `request.spec.ts`'s flood case failing intermittently
+because specs share one client-address rate-limit bucket, is folded in because 3b widened its window
+by calling `seedRequestForAgreement` twice more; the fix belongs to the fixture, not the limiter.
+
+§3 records why these four ship as one phase rather than as 3c and 3d, and how the phase is gated so
+that a theme running long is dropped whole.
+
+**Left open deliberately.** The carry-over's remaining items stay out: a name outside the loaded
+font's coverage failing the download rather than degrading visibly, which §6.4 asks for and neither
+implementation provides; `createSmtpMailer`'s attachment pass-through being unexercised;
+`AdminRequestDetail` carrying both `tiers` and `requestedTiers`; the e2e suite starting two servers
+against one database; requester retention being manual only; invite-driven requests remaining
+unreachable; and `document_file.page_count` still unstored. None is in 3c's path, and §15's rule
+against a phase quietly doubling applies to a fourth theme as much as to a second.

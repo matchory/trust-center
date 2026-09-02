@@ -6,13 +6,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Setup: `cp .env.example .env`, then `pnpm dev:up` (Postgres, Mailpit, dev OIDC provider), `pnpm install`, `pnpm db:migrate`, `pnpm dev`.
 
-| Command | Notes |
-| --- | --- |
-| `pnpm lint` / `pnpm format` | prettier + eslint |
-| `pnpm check` | compiles Paraglide messages, then `svelte-check` |
-| `pnpm test:unit` | Node environment, no database, `tests/unit/**` |
-| `pnpm test:integration` | Testcontainers Postgres, `tests/integration/**` |
-| `pnpm test:e2e` | Playwright against a production preview build |
+| Command                                | Notes                                                                             |
+| -------------------------------------- | --------------------------------------------------------------------------------- |
+| `pnpm lint` / `pnpm format`            | prettier + eslint                                                                 |
+| `pnpm check`                           | compiles Paraglide messages, then `svelte-check`                                  |
+| `pnpm test:unit`                       | Node environment, no database, `tests/unit/**`                                    |
+| `pnpm test:integration`                | Testcontainers Postgres, `tests/integration/**`                                   |
+| `pnpm test:e2e`                        | Playwright against a production preview build                                     |
 | `pnpm db:generate` / `pnpm db:migrate` | drizzle-kit; there is no `push` script, and none should be added (see Migrations) |
 
 Running one test:
@@ -23,7 +23,7 @@ pnpm test:integration tests/integration/audit.test.ts -t 'append-only'
 pnpm test:e2e tests/e2e/portal.spec.ts --project=app  # --project=origin runs origin.spec.ts only
 ```
 
-Locally `pnpm test:e2e` rebuilds first (`pnpm build && pnpm preview`); under `CI=1` it assumes the build already happened. It also needs `pnpm dev:up` running — it mints its own throwaway database *inside* the dev Postgres and signs in against the dev IdP.
+Locally `pnpm test:e2e` rebuilds first (`pnpm build && pnpm preview`); under `CI=1` it assumes the build already happened. It also needs `pnpm dev:up` running — it mints its own throwaway database _inside_ the dev Postgres and signs in against the dev IdP.
 
 CI (`.github/workflows/ci.yml`) runs lint → check → build → unit → integration → e2e → Docker image smoke test. `pnpm check` and `pnpm build` deliberately run with **no `.env`**, proving the build needs neither secrets nor a database.
 
@@ -46,7 +46,7 @@ SvelteKit (Svelte 5 runes, adapter-node) + Postgres via Drizzle + postgres-js. S
 
 This is the single most cross-cutting concern; touching it means reading `src/hooks.ts`, `src/hooks.server.ts`, `src/lib/i18n/locale.ts`, and `src/lib/i18n/compiled.ts` together.
 
-- **`COMPILED_LOCALES`** is a build input — the catalogs Paraglide compiled. Prefix routing is *structural* and uses this list, so `/en/avv` 404s when English is disabled instead of degrading into a lookup for a document slugged `en`.
+- **`COMPILED_LOCALES`** is a build input — the catalogs Paraglide compiled. Prefix routing is _structural_ and uses this list, so `/en/avv` 404s when English is disabled instead of degrading into a lookup for a document slugged `en`.
 - **`getConfig().locales`** is the runtime subset an operator enabled via `LOCALES`, always a subset of the compiled set.
 - `hooks.ts`'s `reroute` strips the prefix, so **`/de/documents` is not a route id**. Build page hrefs with `localizePath()`, never `resolve()`; eslint's `svelte/no-navigation-without-resolve` is relaxed for links for exactly this reason.
 - Every page URL is locale-prefixed. The root layout load 302s unprefixed requests after negotiating `Accept-Language`, and only those responses get `Vary: Accept-Language`.
@@ -55,7 +55,7 @@ This is the single most cross-cutting concern; touching it means reading `src/ho
 
 ### Audit log
 
-Append-only, enforced by Postgres triggers (`drizzle/0003`, `drizzle/0004`), not by convention: DELETE and TRUNCATE are blocked, and UPDATE may only *clear* `ip`, `ua`, and `actor_id` — the requester-erasure path. This rests on a companion invariant: **requester personal data appears in `audit_event` only in those three columns**, never in `meta` and never in `subject_id`. Keep it that way when adding events.
+Append-only, enforced by Postgres triggers (`drizzle/0003`, `drizzle/0004`), not by convention: DELETE and TRUNCATE are blocked, and UPDATE may only _clear_ `ip`, `ua`, and `actor_id` — the requester-erasure path. This rests on a companion invariant: **requester personal data appears in `audit_event` only in those three columns**, never in `meta` and never in `subject_id`. Keep it that way when adding events.
 
 `recordEvent()` has no update or delete counterpart. `AuditActor` is a discriminated union so a `staff` actor's id is always a `staff_user.id` and never a raw OIDC `sub`. Action names are permanent once written — `translationAction()` and `resolveMetaAction()` in `src/lib/server/admin/actions.ts` own the naming convention. Reads are keyset-paginated on `seq`, never OFFSET.
 
@@ -64,7 +64,7 @@ Append-only, enforced by Postgres triggers (`drizzle/0003`, `drizzle/0004`), not
 Two independent identities on `event.locals`:
 
 - `staff` — OIDC, role derived from IdP groups (`mapRole`), cookie is `__Host-`-prefixed at `Path=/`.
-- `requester` — magic-link verified prospect, cookie is `__Secure-` and **scoped to `/{locale}/access`**, so no public route ever sets a cookie (asserted permanently in `tests/e2e/security.spec.ts`). Switching locale therefore goes through `access/switch` under the locale being *left*, which re-issues the cookie at the target path.
+- `requester` — magic-link verified prospect, cookie is `__Secure-` and **scoped to `/{locale}/access`**, so no public route ever sets a cookie (asserted permanently in `tests/e2e/security.spec.ts`). Switching locale therefore goes through `access/switch` under the locale being _left_, which re-issues the cookie at the target path.
 
 Set and delete options must match attribute for attribute or the deletion silently does nothing. `requesterCookieOptions(locale)` and `STAFF_COOKIE_OPTIONS` are the single source for both — do not inline cookie options at a call site.
 
@@ -87,7 +87,7 @@ Rate limits live in Postgres (`src/lib/server/ratelimit.ts`) as a single upsert 
 
 ### Admin content editors
 
-`saveMetaAction` / `saveTranslationAction` in `src/lib/server/admin/actions.ts` cover *translatable content types* (parse → update → `recordEvent`) and nothing more. Decision, revocation, erasure, and settings surfaces are not content editors and correctly bypass the helper — see `docs/superpowers/phase-3-carryover.md` before generalising it further.
+`saveMetaAction` / `saveTranslationAction` in `src/lib/server/admin/actions.ts` cover _translatable content types_ (parse → update → `recordEvent`) and nothing more. Decision, revocation, erasure, and settings surfaces are not content editors and correctly bypass the helper — see `docs/superpowers/phase-3-carryover.md` before generalising it further.
 
 ## Migrations
 
@@ -96,5 +96,5 @@ Rate limits live in Postgres (`src/lib/server/ratelimit.ts`) as a single upsert 
 ## Conventions
 
 - Tabs, single quotes, no trailing commas, 100-column print width (`.prettierrc`).
-- Comments in this codebase explain *why a decision was made*, often naming the failure mode it prevents or a spec section. Match that: prefer a comment recording the reason over one restating the code.
+- Comments in this codebase explain _why a decision was made_, often naming the failure mode it prevents or a spec section. Match that: prefer a comment recording the reason over one restating the code.
 - CSP is configured in `vite.config.ts` in `auto` mode with no third-party origins — the public portal makes no external requests and sets no cookies. Keep it that way; the e2e security spec enforces it.

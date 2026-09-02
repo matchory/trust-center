@@ -68,3 +68,53 @@ describe('renderTemplate', () => {
 		}
 	});
 });
+
+describe('subscription templates', () => {
+	it('renders the confirmation mail with its link in both locales', () => {
+		for (const locale of ['de', 'en']) {
+			const mail = renderTemplate('subscription_confirm', locale, {
+				url: 'https://trust.example/de/subscribe/confirm?token=abc'
+			});
+			expect(mail.subject).toBeTruthy();
+			expect(mail.text).toContain('https://trust.example/de/subscribe/confirm?token=abc');
+		}
+	});
+
+	it('renders the notice from its structured items and the manage link', () => {
+		const mail = renderTemplate('subscription_notice', 'de', {
+			url: 'https://trust.example/de/subscribe/manage?token=xyz',
+			items: [
+				{
+					title: 'Neue Unterauftragsverarbeiter',
+					url: 'https://trust.example/de/updates#sub-1',
+					isFallback: false
+				}
+			]
+		});
+		expect(mail.text).toContain('Neue Unterauftragsverarbeiter');
+		expect(mail.text).toContain('https://trust.example/de/updates#sub-1');
+		expect(mail.text).toContain('https://trust.example/de/subscribe/manage?token=xyz');
+	});
+
+	// The label is chosen here rather than by the notify job, so it renders in
+	// the row's locale at send time — and a correction to the wording reaches
+	// mail that is already queued.
+	it('labels an item that fell back to another language', () => {
+		const mail = renderTemplate('subscription_notice', 'de', {
+			url: 'https://trust.example/de/subscribe/manage?token=xyz',
+			items: [{ title: 'Nur Deutsch', url: 'https://trust.example/de/updates#a', isFallback: true }]
+		});
+		expect(mail.text).toMatch(/anderen Sprache|another language/);
+	});
+
+	// P4.4: this template exists so the confirmed case is indistinguishable from
+	// the other two, and it carries the manage link because that is the recovery
+	// path for a subscriber who has lost every mail we sent.
+	it('renders the already-subscribed mail with the manage link', () => {
+		const mail = renderTemplate('subscription_already', 'de', {
+			url: 'https://trust.example/de/subscribe/manage?token=xyz'
+		});
+		expect(mail.subject).toBeTruthy();
+		expect(mail.text).toContain('https://trust.example/de/subscribe/manage?token=xyz');
+	});
+});

@@ -1,3 +1,4 @@
+import { eq } from 'drizzle-orm';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { createDb, type Db } from '../../src/lib/server/db';
 import {
@@ -5,7 +6,8 @@ import {
 	certification,
 	documentCategory,
 	subprocessor,
-	updatePost
+	updatePost,
+	updatePostSubprocessor
 } from '../../src/lib/server/db/schema';
 import {
 	createCertification,
@@ -26,12 +28,17 @@ import {
 } from '../../src/lib/server/content/answers';
 import {
 	createUpdate,
+	deleteUpdate,
+	getUpdateForAdmin,
 	listPublicUpdates,
+	setUpdateSubprocessors,
 	setUpdateTranslation,
 	updateUpdate
 } from '../../src/lib/server/content/updates';
 import {
 	createSubprocessor,
+	deleteSubprocessor,
+	getSubprocessorForAdmin,
 	listPublicSubprocessors,
 	setSubprocessorTranslation,
 	updateSubprocessor
@@ -239,5 +246,115 @@ describe('updates', () => {
 		await updateUpdate(db, scheduled, { publishedAt: new Date(Date.now() + 86_400_000) });
 
 		expect(await listPublicUpdates(db, { locale: 'de', defaultLocale: 'de' })).toHaveLength(0);
+	});
+});
+
+describe('update post subprocessor links', () => {
+	it('replaces the set wholesale and reads it back', async () => {
+		const stamp = `${Date.now()}`;
+		const postId = await createUpdate(db, { slug: `link-${stamp}`, kind: 'subprocessor' });
+		const first = await createSubprocessor(db, {
+			slug: `sub-a-${stamp}`,
+			name: 'A',
+			legalEntity: 'A GmbH',
+			country: 'DE',
+			region: 'EU',
+			hostingProvider: null,
+			dpaUrl: null,
+			startedAt: null,
+			endedAt: null
+		});
+		const second = await createSubprocessor(db, {
+			slug: `sub-b-${stamp}`,
+			name: 'B',
+			legalEntity: 'B GmbH',
+			country: 'DE',
+			region: 'EU',
+			hostingProvider: null,
+			dpaUrl: null,
+			startedAt: null,
+			endedAt: null
+		});
+
+		await setUpdateSubprocessors(db, postId, [first, second]);
+		expect((await getUpdateForAdmin(db, postId))?.subprocessorIds.sort()).toEqual(
+			[first, second].sort()
+		);
+
+		// The form submits the complete set every time, so an empty selection
+		// clears it — the same contract `setControlEvidence` already has.
+		await setUpdateSubprocessors(db, postId, []);
+		expect((await getUpdateForAdmin(db, postId))?.subprocessorIds).toEqual([]);
+
+		await deleteUpdate(db, postId);
+		await deleteSubprocessor(db, first);
+		await deleteSubprocessor(db, second);
+	});
+
+	it('drops the link when the post is deleted', async () => {
+		const stamp = `${Date.now()}-cascade`;
+		const postId = await createUpdate(db, { slug: `link-${stamp}`, kind: 'subprocessor' });
+		const subId = await createSubprocessor(db, {
+			slug: `sub-${stamp}`,
+			name: 'C',
+			legalEntity: 'C GmbH',
+			country: 'DE',
+			region: 'EU',
+			hostingProvider: null,
+			dpaUrl: null,
+			startedAt: null,
+			endedAt: null
+		});
+		await setUpdateSubprocessors(db, postId, [subId]);
+
+		await deleteUpdate(db, postId);
+
+		const rows = await db
+			.select()
+			.from(updatePostSubprocessor)
+			.where(eq(updatePostSubprocessor.subprocessorId, subId));
+		expect(rows).toHaveLength(0);
+
+		await deleteSubprocessor(db, subId);
+	});
+});
+
+describe('notice coverage', () => {
+	// Rule 4 lives entirely in the covering-post query, not in `noticeCoverage`
+	// itself — the predicate trusts whatever dates it's handed. If someone
+	// later drops the query's live filter, only a test that goes through the
+	// database (draft, then scheduled, then actually live) can catch it; a
+	// unit test on the pure predicate never touches the query at all.
+	it('clears the addition warning only once the covering post is live', async () => {
+		const stamp = `${Date.now()}-coverage`;
+		const subId = await createSubprocessor(db, {
+			slug: `sub-${stamp}`,
+			name: 'D',
+			legalEntity: 'D GmbH',
+			country: 'DE',
+			region: 'EU',
+			hostingProvider: null,
+			dpaUrl: null,
+			startedAt: new Date('2026-01-01T00:00:00Z'),
+			endedAt: null
+		});
+		await updateSubprocessor(db, subId, { published: true });
+
+		const postId = await createUpdate(db, { slug: `link-${stamp}`, kind: 'subprocessor' });
+		await setUpdateSubprocessors(db, postId, [subId]);
+
+		// Draft: publishedAt is null, so nobody has been told anything yet.
+		expect((await getSubprocessorForAdmin(db, subId))?.coverage).toBe('addition-unannounced');
+
+		// Scheduled: publishedAt is set but in the future — still not live.
+		await updateUpdate(db, postId, { publishedAt: new Date(Date.now() + 86_400_000) });
+		expect((await getSubprocessorForAdmin(db, subId))?.coverage).toBe('addition-unannounced');
+
+		// Live: publishedAt in the past, on/after the subprocessor's startedAt.
+		await updateUpdate(db, postId, { publishedAt: new Date('2026-02-01T00:00:00Z') });
+		expect((await getSubprocessorForAdmin(db, subId))?.coverage).toBeNull();
+
+		await deleteUpdate(db, postId);
+		await deleteSubprocessor(db, subId);
 	});
 });

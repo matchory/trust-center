@@ -21,7 +21,7 @@ test('an admin can publish a control and see it on the portal', async ({ page })
 	await expect(page).toHaveURL(/\/admin\/controls\/[0-9a-f-]{36}$/);
 
 	await page.getByTestId('translation-title-de').fill('Mehr-Faktor-Authentifizierung');
-	await submitAndWait(page, 'translation-save-de', '?/saveTranslation');
+	await submitAndWait(page, 'translation-save', '?/saveTranslations');
 
 	await page.getByTestId('control-status').selectOption('implemented');
 	await page.getByTestId('control-published').check();
@@ -45,7 +45,7 @@ test('an admin can publish a certification and see its badge on the landing page
 	await expect(page).toHaveURL(/\/admin\/certifications\/[0-9a-f-]{36}$/);
 
 	await page.getByTestId('translation-scope-de').fill('Betrieb der Plattform');
-	await submitAndWait(page, 'translation-save-de', '?/saveTranslation');
+	await submitAndWait(page, 'translation-save', '?/saveTranslations');
 
 	await page.getByTestId('certification-published').check();
 	await submitAndWait(page, 'certification-save-meta', '?/saveMeta');
@@ -71,7 +71,7 @@ test('an admin can publish a subprocessor and see it on the portal', async ({ pa
 
 	await page.getByTestId('translation-purpose-de').fill('Hosting der Anwendung');
 	await page.getByTestId('translation-datacategories-de').fill('Sämtliche Kundendaten');
-	await submitAndWait(page, 'translation-save-de', '?/saveTranslation');
+	await submitAndWait(page, 'translation-save', '?/saveTranslations');
 
 	await page.getByTestId('subprocessor-published').check();
 	await submitAndWait(page, 'subprocessor-save-meta', '?/saveMeta');
@@ -95,7 +95,7 @@ test('an answer stays off the FAQ until it is made public', async ({ page }) => 
 
 	await page.getByTestId('translation-question-de').fill('Wo werden die Daten gehostet?');
 	await page.getByTestId('translation-answer-de').fill('In Deutschland, bei Hetzner.');
-	await submitAndWait(page, 'translation-save-de', '?/saveTranslation');
+	await submitAndWait(page, 'translation-save', '?/saveTranslations');
 
 	// Answers start internal, so a translated answer is still not on the portal.
 	await page.goto('/de/faq');
@@ -122,7 +122,7 @@ test('an update reaches the feed only once it carries a publication date', async
 
 	await page.getByTestId('translation-title-de').fill('Neuer Unterauftragsverarbeiter');
 	await page.getByTestId('translation-body-de').fill('Wir haben Hetzner aufgenommen.');
-	await submitAndWait(page, 'translation-save-de', '?/saveTranslation');
+	await submitAndWait(page, 'translation-save', '?/saveTranslations');
 
 	// A translated post with no date is still a draft.
 	await page.goto('/de/updates');

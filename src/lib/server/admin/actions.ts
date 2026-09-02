@@ -142,16 +142,12 @@ export function saveMetaAction<S extends z.ZodType>(opts: SaveMetaOptions<S>) {
 	};
 }
 
-interface SaveTranslationOptions {
+interface SaveTranslationsOptions {
 	type: string;
 	subjectType?: string;
 	/** Trimmed and required. Order defines which is reported first on failure. */
 	required: readonly string[];
-	/**
-	 * Trimmed, and empty means `null` rather than a validation failure — a
-	 * document's summary and a control's description are genuinely optional, and
-	 * requiring every field would have forced those two pages to fork.
-	 */
+	/** Trimmed, and empty means `null` rather than a validation failure. */
 	optional?: readonly string[];
 	set: (
 		db: Db,
@@ -162,32 +158,72 @@ interface SaveTranslationOptions {
 }
 
 /**
- * The locale is validated against the *enabled* set, not the compiled set: a
- * compiled-but-disabled locale is not a locale on this deployment (spec §7).
+ * Reads `field.<locale>` out of a multi-locale form, for every enabled locale.
+ *
+ * A locale with none of its required fields filled in is **skipped**, not
+ * refused: "not translated" is a normal state the tab strip already marks, and
+ * refusing the save would make translating one page a single transaction across
+ * every language. A locale filled in halfway is refused, naming both the field
+ * and the locale, because that one is a mistake rather than a state.
+ *
+ * Pure, and separate from the action, so it is testable without a database.
  */
-export function saveTranslationAction(opts: SaveTranslationOptions) {
-	return async (event: AdminEvent) => {
-		const form = await event.request.formData();
-		const locale = String(form.get('locale') ?? '');
+export function readTranslations(
+	form: FormData,
+	locales: readonly string[],
+	opts: { required: readonly string[]; optional?: readonly string[] }
+): { values: Map<string, Record<string, string | null>> } | { missing: AdminActionFailure } {
+	const values = new Map<string, Record<string, string | null>>();
 
-		if (!getConfig().locales.includes(locale)) {
-			return fail<AdminActionFailure>(400, { field: 'locale' });
-		}
+	for (const locale of locales) {
+		const read = (field: string): string => String(form.get(`${field}.${locale}`) ?? '').trim();
 
-		const values: Record<string, string | null> = {};
+		if (opts.required.every((field) => read(field).length === 0)) continue;
+
+		const entry: Record<string, string | null> = {};
 
 		for (const field of opts.required) {
-			const value = String(form.get(field) ?? '').trim();
-			if (!value) return fail<AdminActionFailure>(400, { field, locale });
-			values[field] = value;
+			const value = read(field);
+			if (!value) return { missing: { field, locale } };
+			entry[field] = value;
 		}
 
-		for (const field of opts.optional ?? []) {
-			values[field] = String(form.get(field) ?? '').trim() || null;
-		}
+		for (const field of opts.optional ?? []) entry[field] = read(field) || null;
+
+		values.set(locale, entry);
+	}
+
+	return { values };
+}
+
+/**
+ * The plural counterpart to `saveMetaAction`, for editors whose form submits
+ * every locale at once — which is every content type added since Phase 1.
+ *
+ * A singular counterpart writing one locale per POST used to sit beside this
+ * one, and the six Phase 1 editors used it; §20 records why the two shapes
+ * coexisted and why this one won. One audit event per save, carrying the
+ * locales written, which is the shape the group and agreement editors already
+ * record.
+ */
+export function saveTranslationsAction(opts: SaveTranslationsOptions) {
+	return async (event: AdminEvent) => {
+		const form = await event.request.formData();
+		const read = readTranslations(form, getConfig().locales, opts);
+
+		if ('missing' in read) return fail<AdminActionFailure>(400, read.missing);
 
 		const db = getDb();
-		await opts.set(db, event.params.id, locale, values);
+
+		// One upsert per locale, on a different row each — independent, so they go
+		// together rather than one round trip at a time.
+		await Promise.all(
+			[...read.values].map(([locale, values]) => opts.set(db, event.params.id, locale, values))
+		);
+
+		// Insertion order, which is `getConfig().locales` order — the same list the
+		// sequential write recorded.
+		const written = [...read.values.keys()];
 
 		await recordEvent(db, {
 			action: translationAction(opts.type),
@@ -195,7 +231,7 @@ export function saveTranslationAction(opts: SaveTranslationOptions) {
 			subjectType: opts.subjectType ?? opts.type,
 			subjectId: event.params.id,
 			ip: clientIp(event) ?? undefined,
-			meta: { locale }
+			meta: { locales: written }
 		});
 
 		return { saved: true };

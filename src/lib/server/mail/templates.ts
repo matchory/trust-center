@@ -20,7 +20,10 @@ export const MAIL_TEMPLATES = [
 	// Carries the acceptance record as an attachment. The mail is a convenience:
 	// the record itself is the stored object and the portal view, so a
 	// deployment with no SMTP at all still produces the evidence.
-	'nda_record'
+	'nda_record',
+	'subscription_confirm',
+	'subscription_notice',
+	'subscription_already'
 ] as const;
 export type MailTemplate = (typeof MAIL_TEMPLATES)[number];
 
@@ -29,7 +32,18 @@ export interface RenderedMail {
 	text: string;
 }
 
-export type MailPayload = Record<string, string | number | readonly MailAttachment[]>;
+/** One line of a subscription notice, carried structured so the wording around
+ * it is chosen at send time rather than baked in when the mail was queued. */
+export interface MailNoticeItem {
+	title: string;
+	url: string;
+	isFallback: boolean;
+}
+
+export type MailPayload = Record<
+	string,
+	string | number | readonly MailAttachment[] | readonly MailNoticeItem[]
+>;
 
 /**
  * Every message function is called with an explicit `locale` option, so these
@@ -103,6 +117,37 @@ export function renderTemplate(
 			return {
 				subject: m.mail_nda_record_subject({ agreement }, options),
 				text: m.mail_nda_record_body({ agreement }, options)
+			};
+		case 'subscription_confirm':
+			return {
+				subject: m.mail_subscription_confirm_subject({}, options),
+				text: m.mail_subscription_confirm_body({ url }, options)
+			};
+		case 'subscription_notice': {
+			// Composed here rather than by the notify job, so the payload column
+			// keeps the promise its comment makes: a correction to the fallback
+			// wording or the item layout reaches mail that has not gone out yet,
+			// and the text is produced in the row's locale rather than in the one
+			// the tick happened to plan under.
+			const items = (payload.items ?? []) as readonly MailNoticeItem[];
+			const lines = items.map((item) => {
+				const label = item.isFallback
+					? ` (${m.mail_subscription_notice_fallback({}, options)})`
+					: '';
+				return `${item.title}${label}\n${item.url}`;
+			});
+			return {
+				subject: m.mail_subscription_notice_subject({}, options),
+				text: m.mail_subscription_notice_body(
+					{ url, items: lines.join('\n\n'), count: String(items.length) },
+					options
+				)
+			};
+		}
+		case 'subscription_already':
+			return {
+				subject: m.mail_subscription_already_subject({}, options),
+				text: m.mail_subscription_already_body({ url }, options)
 			};
 	}
 }

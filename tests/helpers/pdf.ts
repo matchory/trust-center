@@ -5,6 +5,7 @@ import {
 	PDFDocument,
 	PDFName,
 	PDFRawStream,
+	StandardFonts,
 	type PDFPageLeaf
 } from 'pdf-lib';
 
@@ -13,6 +14,28 @@ export async function blankPdf(pages = 1): Promise<Uint8Array> {
 	const pdf = await PDFDocument.create();
 	for (let index = 0; index < pages; index++) pdf.addPage([595, 842]);
 	pdf.setTitle('fixture');
+	return pdf.save();
+}
+
+/**
+ * A PDF whose pages actually carry text, laid out top-down so the import
+ * extractor sees the vertical gaps it groups on. `size` is what makes a line a
+ * heading: the grouper decides on size relative to the body text, so a fixture
+ * has to vary it or every line reads as body.
+ */
+export async function textPdf(
+	lines: readonly { text: string; size: number }[]
+): Promise<Uint8Array> {
+	const pdf = await PDFDocument.create();
+	const font = await pdf.embedFont(StandardFonts.Helvetica);
+	const page = pdf.addPage([595, 842]);
+
+	let y = 800;
+	for (const line of lines) {
+		page.drawText(line.text, { x: 50, y, size: line.size, font });
+		y -= line.size * 1.6;
+	}
+
 	return pdf.save();
 }
 

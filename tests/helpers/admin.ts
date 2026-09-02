@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { expect, test, type Page } from '@playwright/test';
-import { eq } from 'drizzle-orm';
+import { eq, like, not } from 'drizzle-orm';
 import { accessRequest, outboundEmail, rateLimit } from '../../src/lib/server/db/schema';
 import { awaitHydration } from './hydration';
 import type { Db } from '../../src/lib/server/db';
@@ -130,8 +130,8 @@ export async function seedRequestForAgreement(
 	// makes it renderable, and an unrenderable agreement cannot be required.
 	await submitAndWait(page, 'agreement-new-version', '?/createVersion');
 	await page.getByTestId('version-1').click();
-	await page.getByTestId('body-de').fill('# Vertrag\n\nGeheimhaltung.');
-	await page.getByTestId('body-en').fill('# Agreement\n\nConfidentiality.');
+	await fillBody(page, 'de', '# Vertrag\n\nGeheimhaltung.');
+	await fillBody(page, 'en', '# Agreement\n\nConfidentiality.');
 	await submitAndWait(page, 'version-save', '?/saveBody');
 	await submitAndWait(page, 'version-publish', '?/publish');
 	await gotoAdmin(page, agreementUrl);
@@ -174,7 +174,13 @@ export async function seedRequestForAgreement(
 	// as per email, and every spec in a run shares one. Reset it the way
 	// `request.spec.ts` and `access-journey.spec.ts` already do — without this
 	// the helper passes alone and fails in a full run.
-	await db.delete(rateLimit);
+	//
+	// Every address bucket, and nothing else. A full run submits far more than
+	// the five-per-hour the address limiter allows, so specs must clear it. The
+	// email buckets are spared because the flood case below asserts one of
+	// them, and a delete landing mid-flood is what made that case fail only in
+	// full runs.
+	await db.delete(rateLimit).where(not(like(rateLimit.key, 'request:email:%')));
 
 	await page.goto('/de/request');
 	await awaitHydration(page);
@@ -217,4 +223,55 @@ export async function seedRequestForAgreement(
 	}
 
 	return { requestId: submitted.id, documentId, documentSlug, agreementSlug, email };
+}
+
+/**
+ * Writes a body straight into the locale's hidden field.
+ *
+ * Since Phase 3c the visible surface is Milkdown, and `fill` refuses a hidden
+ * element — so a case whose subject is the server (validation, publication,
+ * persistence) writes the field the form actually posts, which is also what a
+ * paste of raw Markdown or a client with the editor disabled produces. The
+ * editor's own keystroke path is proven separately, in the case that types.
+ */
+export async function fillBody(page: Page, locale: string, markdown: string) {
+	await page.getByTestId(`body-${locale}`).evaluate((node, value) => {
+		const field = node as HTMLTextAreaElement;
+		field.value = value;
+		field.dispatchEvent(new Event('input', { bubbles: true }));
+	}, markdown);
+}
+
+/**
+ * Signs in, creates an agreement, adds a version, and returns the version
+ * editor's URL.
+ *
+ * Extracted rather than copied: it is a nine-step setup that four cases in
+ * `admin-agreements.spec.ts` and two in `admin-upload.spec.ts` need, and a
+ * second copy is how two specs come to disagree about what a draft version is.
+ * Here rather than in a spec for the same reason as `signInAs`: Playwright
+ * refuses to let one test file import another.
+ */
+export async function draftVersion(page: Page): Promise<string> {
+	await signInAsAdmin(page);
+
+	await gotoAdmin(page, '/admin/agreements/new');
+	await page.getByTestId('agreement-slug').fill(`draft-${Date.now()}-${randomUUID().slice(0, 8)}`);
+	await submitAndWait(page, 'agreement-create', '/admin/agreements/new');
+
+	// `submitAndWait` only waits for the POST response, not the client-side
+	// redirect `use:enhance` follows after it — reading `page.url()` right after
+	// would race that navigation and capture the "new" page's URL.
+	await expect(page).toHaveURL(/\/admin\/agreements\/[0-9a-f-]{36}$/);
+
+	await submitAndWait(page, 'agreement-new-version', '?/createVersion');
+	await page.getByTestId('version-1').click();
+
+	// The click is a client-side navigation, and `networkidle` can be satisfied
+	// before the router has swapped the URL — reading `page.url()` then returns
+	// the agreement page and every caller loads the wrong page.
+	await expect(page).toHaveURL(/\/versions\/[0-9a-f-]{36}$/);
+	await awaitHydration(page);
+
+	return page.url();
 }

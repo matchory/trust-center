@@ -223,11 +223,41 @@ test('no public route sets a cookie', async ({ page, context }) => {
 	//
 	// Do not weaken this. A public page that starts setting a cookie is a
 	// defect, not a test to update.
-	for (const path of ['/de', '/de/documents', '/de/faq', '/de/request', '/de/access/verify']) {
+	for (const path of [
+		'/de',
+		'/de/documents',
+		'/de/faq',
+		'/de/request',
+		'/de/subscribe',
+		'/de/subscribe/confirm',
+		'/de/access/verify'
+	]) {
 		const response = await page.goto(path);
 		// Asserted so a route that 500s cannot pass this test by setting no
 		// cookie on its error page.
 		expect(response?.status(), `${path} must render`).toBe(200);
 		expect(await context.cookies(), `${path} must set no cookie`).toHaveLength(0);
 	}
+});
+
+// Spec §10.3: cookie-free and cacheable are not the same property, and this is
+// the first place in the portal where they come apart. The manage token never
+// expires, so a shared cache holding this page would hand over a credential
+// with no expiry and no revocation.
+test('the token-bearing pages are not cacheable, and the subscribe form still is', async ({
+	request
+}) => {
+	for (const path of ['/de/subscribe/confirm?token=x', '/de/subscribe/manage?token=x']) {
+		const response = await request.get(path);
+		expect(response.headers()['cache-control'], `${path} must be no-store`).toContain('no-store');
+		expect(response.headers()['referrer-policy'], `${path} must send no referrer`).toBe(
+			'no-referrer'
+		);
+	}
+
+	// The negative half, and the reason it is here: without it the fix for the
+	// above is "make the whole subtree no-store", which quietly costs the portal
+	// its cacheability — a property this product is partly about.
+	const form = await request.get('/de/subscribe');
+	expect(form.headers()['cache-control']).toContain('s-maxage=60');
 });

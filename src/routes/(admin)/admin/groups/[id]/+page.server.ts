@@ -40,9 +40,12 @@ export const actions: Actions = {
 		fallbackField: 'slug'
 	}),
 
-	// Not `saveTranslationAction`: that helper writes one locale per POST, and
-	// this form submits every locale at once the way the categories page does.
-	// Forcing one POST per locale here would be the helper dictating the form.
+	// Not `saveTranslationsAction`: this predates it and reads through
+	// `saveTranslationsFromForm`, which two other admin surfaces still use. With
+	// a single required field the two are equivalent — the helper only refuses a
+	// locale that is *partly* filled, which one field cannot be — so the split is
+	// historical rather than semantic, and moving these two would leave both
+	// mechanisms standing anyway.
 	saveTranslations: async (event) => {
 		const form = await event.request.formData();
 		const db = getDb();
