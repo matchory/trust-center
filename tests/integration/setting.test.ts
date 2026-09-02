@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { createDb, schema, type Db } from '../../src/lib/server/db';
 import { ndaTemplate, setting } from '../../src/lib/server/db/schema';
@@ -24,6 +24,20 @@ beforeAll(() => {
 
 afterAll(async () => {
 	await close();
+});
+
+// Half the cases here assert on the *absence* of a key — the state a fresh
+// deployment is in — and `setting` is a single global table with no per-test
+// axis to scope by. `nda-grants.test.ts` leaves `nda.default_template_id`
+// behind, and Vitest's sequencer does not order files alphabetically, so
+// whether that row is present when this file runs is a property of file
+// ordering rather than of anything this file does. That is the whole of the
+// intermittency: run after nda-grants and "has no default template" fails;
+// run before it, or behind a file that clears the table, and it passes.
+// Establish the precondition instead of inheriting it, the same clean slate
+// subscription-notify.test.ts takes for the same reason.
+beforeEach(async () => {
+	await db.delete(schema.setting);
 });
 
 describe('setting table', () => {
