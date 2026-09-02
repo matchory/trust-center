@@ -218,7 +218,7 @@ Take a database backup before upgrading. Migrations are not reversible.
 
 ## 7a. Background jobs
 
-The server runs five jobs in-process on a timer. There is nothing to install and
+The server runs six jobs in-process on a timer. There is nothing to install and
 no scheduler to configure.
 
 | Job | Every | What it does |
@@ -227,7 +227,8 @@ no scheduler to configure.
 | `sessions:cleanup` | 1h | Deletes expired staff and requester sessions. |
 | `requests:sweep` | 15m | Deletes access requests whose verification link expired unused. |
 | `grants:remind` | 6h | Mails a requester once shortly before their access expires; nudges once before an outstanding agreement's deadline; and closes approvals whose deadline has passed. |
-| `retention:sweep` | 6h | Drops spent rate-limit counters and strips settled notifications of their address and payload. |
+| `retention:sweep` | 6h | Drops spent rate-limit counters, strips settled notifications of their address and payload, and deletes unconfirmed subscriptions whose confirmation token has expired. |
+| `subscriptions:notify` | 15m | Mails confirmed subscribers about update posts published since they were last notified, and advances each subscription's cursor. |
 
 Every tick takes a Postgres advisory lock named for its job, so running more
 than one replica is safe: a second instance whose tick overlaps skips that round
