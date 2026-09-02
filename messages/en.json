@@ -48,6 +48,7 @@
 	"admin_agreement_version_immutable": "This version has already been accepted and can no longer be edited. Publish a new version instead.",
 	"admin_agreement_version_incomplete": "Cannot publish: at least one enabled locale has no body yet.",
 	"admin_agreement_versions": "Versions",
+	"admin_announced_subprocessors": "Announced subprocessors",
 	"admin_answer": "Answer",
 	"admin_archive": "Archive",
 	"admin_audit_action": "Action",

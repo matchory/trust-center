@@ -48,6 +48,7 @@
 	"admin_agreement_version_immutable": "Diese Version wurde bereits akzeptiert und kann nicht mehr bearbeitet werden. Veröffentlichen Sie stattdessen eine neue Version.",
 	"admin_agreement_version_incomplete": "Veröffentlichung nicht möglich: Für mindestens eine aktivierte Sprache fehlt noch ein Text.",
 	"admin_agreement_versions": "Versionen",
+	"admin_announced_subprocessors": "Angekündigte Unterauftragsverarbeiter",
 	"admin_answer": "Antwort",
 	"admin_archive": "Archivieren",
 	"admin_audit_action": "Aktion",

@@ -1,3 +1,4 @@
+import { eq } from 'drizzle-orm';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { createDb, type Db } from '../../src/lib/server/db';
 import {
@@ -5,7 +6,8 @@ import {
 	certification,
 	documentCategory,
 	subprocessor,
-	updatePost
+	updatePost,
+	updatePostSubprocessor
 } from '../../src/lib/server/db/schema';
 import {
 	createCertification,
@@ -26,12 +28,16 @@ import {
 } from '../../src/lib/server/content/answers';
 import {
 	createUpdate,
+	deleteUpdate,
+	getUpdateForAdmin,
 	listPublicUpdates,
+	setUpdateSubprocessors,
 	setUpdateTranslation,
 	updateUpdate
 } from '../../src/lib/server/content/updates';
 import {
 	createSubprocessor,
+	deleteSubprocessor,
 	listPublicSubprocessors,
 	setSubprocessorTranslation,
 	updateSubprocessor
@@ -239,5 +245,75 @@ describe('updates', () => {
 		await updateUpdate(db, scheduled, { publishedAt: new Date(Date.now() + 86_400_000) });
 
 		expect(await listPublicUpdates(db, { locale: 'de', defaultLocale: 'de' })).toHaveLength(0);
+	});
+});
+
+describe('update post subprocessor links', () => {
+	it('replaces the set wholesale and reads it back', async () => {
+		const stamp = `${Date.now()}`;
+		const postId = await createUpdate(db, { slug: `link-${stamp}`, kind: 'subprocessor' });
+		const first = await createSubprocessor(db, {
+			slug: `sub-a-${stamp}`,
+			name: 'A',
+			legalEntity: 'A GmbH',
+			country: 'DE',
+			region: 'EU',
+			hostingProvider: null,
+			dpaUrl: null,
+			startedAt: null,
+			endedAt: null
+		});
+		const second = await createSubprocessor(db, {
+			slug: `sub-b-${stamp}`,
+			name: 'B',
+			legalEntity: 'B GmbH',
+			country: 'DE',
+			region: 'EU',
+			hostingProvider: null,
+			dpaUrl: null,
+			startedAt: null,
+			endedAt: null
+		});
+
+		await setUpdateSubprocessors(db, postId, [first, second]);
+		expect((await getUpdateForAdmin(db, postId))?.subprocessorIds.sort()).toEqual(
+			[first, second].sort()
+		);
+
+		// The form submits the complete set every time, so an empty selection
+		// clears it — the same contract `setControlEvidence` already has.
+		await setUpdateSubprocessors(db, postId, []);
+		expect((await getUpdateForAdmin(db, postId))?.subprocessorIds).toEqual([]);
+
+		await deleteUpdate(db, postId);
+		await deleteSubprocessor(db, first);
+		await deleteSubprocessor(db, second);
+	});
+
+	it('drops the link when the post is deleted', async () => {
+		const stamp = `${Date.now()}-cascade`;
+		const postId = await createUpdate(db, { slug: `link-${stamp}`, kind: 'subprocessor' });
+		const subId = await createSubprocessor(db, {
+			slug: `sub-${stamp}`,
+			name: 'C',
+			legalEntity: 'C GmbH',
+			country: 'DE',
+			region: 'EU',
+			hostingProvider: null,
+			dpaUrl: null,
+			startedAt: null,
+			endedAt: null
+		});
+		await setUpdateSubprocessors(db, postId, [subId]);
+
+		await deleteUpdate(db, postId);
+
+		const rows = await db
+			.select()
+			.from(updatePostSubprocessor)
+			.where(eq(updatePostSubprocessor.subprocessorId, subId));
+		expect(rows).toHaveLength(0);
+
+		await deleteSubprocessor(db, subId);
 	});
 });

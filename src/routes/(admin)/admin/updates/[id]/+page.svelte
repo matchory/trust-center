@@ -50,6 +50,23 @@
 		/>
 	</FormField>
 
+	<FormField label={m.admin_announced_subprocessors()}>
+		<div class="grid gap-1">
+			{#each data.subprocessors as item (item.id)}
+				<label class="flex items-center gap-2">
+					<input
+						type="checkbox"
+						name="subprocessorIds"
+						value={item.id}
+						data-testid="update-subprocessor-{item.slug}"
+						checked={data.post.subprocessorIds.includes(item.id)}
+					/>
+					<span>{item.name}</span>
+				</label>
+			{/each}
+		</div>
+	</FormField>
+
 	<button
 		data-testid="update-save-meta"
 		class="justify-self-start rounded bg-neutral-900 px-3 py-1.5 text-white"

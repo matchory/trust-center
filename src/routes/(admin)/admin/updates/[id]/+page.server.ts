@@ -4,9 +4,11 @@ import { UPDATE_KINDS } from '$lib/content-types';
 import { localizePath } from '$lib/i18n/locale';
 import { saveMetaAction, saveTranslationsAction } from '$lib/server/admin/actions';
 import { recordEvent } from '$lib/server/audit';
+import { listSubprocessorsForAdmin } from '$lib/server/content/subprocessors';
 import {
 	deleteUpdate,
 	getUpdateForAdmin,
+	setUpdateSubprocessors,
 	setUpdateTranslation,
 	updateUpdate
 } from '$lib/server/content/updates';
@@ -17,7 +19,7 @@ import type { Actions, PageServerLoad } from './$types';
 export const load: PageServerLoad = async ({ params }) => {
 	const item = await getUpdateForAdmin(getDb(), params.id);
 	if (!item) error(404, 'Update not found');
-	return { post: item };
+	return { post: item, subprocessors: await listSubprocessorsForAdmin(getDb()) };
 };
 
 export const actions: Actions = {
@@ -39,19 +41,31 @@ export const actions: Actions = {
 				.transform((raw) => (raw ? new Date(raw) : null))
 				.refine((date) => date === null || !Number.isNaN(date.getTime()), {
 					message: 'invalid date'
-				})
+				}),
+			subprocessorIds: z.array(z.string().uuid())
 		}),
 		read: (form) => ({
 			slug: form.get('slug'),
 			kind: form.get('kind'),
-			publishedAt: form.get('publishedAt') ?? ''
+			publishedAt: form.get('publishedAt') ?? '',
+			subprocessorIds: form.getAll('subprocessorIds').map(String).filter(Boolean)
 		}),
-		update: (db, id, data) => updateUpdate(db, id, data),
+		update: async (db, id, data) => {
+			const { subprocessorIds, ...meta } = data;
+			await updateUpdate(db, id, meta);
+			// A set-valued field beside scalar metadata, exactly as the control
+			// editor's evidence set is. `update` receives `db` so a call site
+			// needing two statements does both here rather than forking the helper.
+			await setUpdateSubprocessors(db, id, subprocessorIds);
+		},
 		isPublished: (data) => data.publishedAt !== null && data.publishedAt.getTime() <= Date.now(),
-		meta: (data) => ({
-			slug: data.slug,
-			kind: data.kind,
-			publishedAt: data.publishedAt?.toISOString() ?? null
+		// Ids are references, not post metadata — the control editor made the same
+		// call, and the audit log must not accumulate id lists it cannot query on.
+		meta: ({ subprocessorIds, ...rest }) => ({
+			slug: rest.slug,
+			kind: rest.kind,
+			publishedAt: rest.publishedAt?.toISOString() ?? null,
+			subprocessorCount: subprocessorIds.length
 		}),
 		fallbackField: 'slug'
 	}),

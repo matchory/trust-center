@@ -2,7 +2,7 @@ import { and, asc, desc, eq, inArray, isNotNull, lte } from 'drizzle-orm';
 import type { UpdateKind } from '../../content-types';
 import { pickTranslation } from '../../i18n/locale';
 import type { Db } from '../db';
-import { updatePost, updatePostTranslation } from '../db/schema';
+import { updatePost, updatePostSubprocessor, updatePostTranslation } from '../db/schema';
 
 export interface PublicUpdate {
 	id: string;
@@ -81,6 +81,7 @@ export interface AdminUpdate {
 	publishedAt: Date | null;
 	translations: { locale: string; title: string; body: string }[];
 	titles: Record<string, string>;
+	subprocessorIds: string[];
 }
 
 export async function listUpdatesForAdmin(db: Db): Promise<AdminUpdate[]> {
@@ -100,6 +101,16 @@ export async function listUpdatesForAdmin(db: Db): Promise<AdminUpdate[]> {
 			)
 		);
 
+	const links = await db
+		.select()
+		.from(updatePostSubprocessor)
+		.where(
+			inArray(
+				updatePostSubprocessor.postId,
+				rows.map((row) => row.id)
+			)
+		);
+
 	return rows.map((row) => {
 		const mine = translations.filter((item) => item.postId === row.id);
 		return {
@@ -112,7 +123,10 @@ export async function listUpdatesForAdmin(db: Db): Promise<AdminUpdate[]> {
 				title: item.title,
 				body: item.body
 			})),
-			titles: Object.fromEntries(mine.map((item) => [item.locale, item.title]))
+			titles: Object.fromEntries(mine.map((item) => [item.locale, item.title])),
+			subprocessorIds: links
+				.filter((item) => item.postId === row.id)
+				.map((item) => item.subprocessorId)
 		};
 	});
 }
@@ -162,4 +176,21 @@ export async function setUpdateTranslation(
 			target: [updatePostTranslation.postId, updatePostTranslation.locale],
 			set: values
 		});
+}
+
+/** Replaces the link set wholesale — the form submits the complete list, the
+ * same contract `setControlEvidence` has. */
+export async function setUpdateSubprocessors(
+	db: Db,
+	postId: string,
+	subprocessorIds: readonly string[]
+): Promise<void> {
+	await db.transaction(async (tx) => {
+		await tx.delete(updatePostSubprocessor).where(eq(updatePostSubprocessor.postId, postId));
+		if (subprocessorIds.length > 0) {
+			await tx
+				.insert(updatePostSubprocessor)
+				.values(subprocessorIds.map((subprocessorId) => ({ postId, subprocessorId })));
+		}
+	});
 }
