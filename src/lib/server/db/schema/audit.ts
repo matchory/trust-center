@@ -34,9 +34,12 @@ export const auditEvent = pgTable(
 		index('audit_event_subject_idx').on(table.subjectType, table.subjectId),
 		index('audit_event_at_idx').on(table.at),
 		index('audit_event_actor_idx').on(table.actorType, table.actorId),
+		// Widened by hand in drizzle/0025 for the 'subscriber' actor (spec §10.1):
+		// Drizzle regenerates check constraints rather than altering them, so this
+		// text is kept in sync with that migration's hand-written ALTER by hand too.
 		check(
 			'audit_event_actor_type_check',
-			sql`${table.actorType} IN ('staff', 'staff-unresolved', 'requester', 'system')`
+			sql`${table.actorType} IN ('staff', 'staff-unresolved', 'requester', 'subscriber', 'system')`
 		)
 	]
 );
