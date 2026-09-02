@@ -4,10 +4,11 @@ import {
 	InMemoryMetricExporter,
 	MeterProvider,
 	PeriodicExportingMetricReader,
-	type DataPoint
+	type DataPoint,
+	type Histogram
 } from '@opentelemetry/sdk-metrics';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { recordRequestDuration } from '../../src/lib/server/telemetry';
+import { recordJobTick, recordRequestDuration } from '../../src/lib/server/telemetry';
 import { resetInstruments } from '../../src/lib/server/telemetry/metrics';
 
 // Delta, not cumulative: a cumulative reader re-exports every attribute
@@ -88,5 +89,56 @@ describe('recordRequestDuration', () => {
 			.flatMap((metric) => metric.dataPoints as DataPoint<unknown>[]);
 
 		expect(points.some((point) => 'http.route' in point.attributes)).toBe(false);
+	});
+});
+
+/**
+ * Both instruments record **seconds**, and the SDK's default explicit bucket
+ * boundaries are shaped for milliseconds — so a histogram that does not declare
+ * its own reports every request under five seconds in one bucket and makes p50,
+ * p95 and p99 indistinguishable. The attribute tests above pass either way,
+ * which is how that shipped once; these read the boundaries off an exported
+ * data point, which is the only assertion that can tell the two apart.
+ */
+async function histogramBoundaries(name: string): Promise<number[] | undefined> {
+	await reader.forceFlush();
+
+	const point = exporter
+		.getMetrics()
+		.flatMap((resource) => resource.scopeMetrics)
+		.flatMap((scope) => scope.metrics)
+		.filter((metric) => metric.descriptor.name === name)
+		.flatMap((metric) => metric.dataPoints as DataPoint<Histogram>[])
+		.at(0);
+
+	return point?.value.buckets.boundaries;
+}
+
+describe('histogram bucket boundaries', () => {
+	it('gives http.server.request.duration the second-shaped semconv boundaries', async () => {
+		exporter.reset();
+		recordRequestDuration({
+			method: 'GET',
+			routeId: '/(portal)/[locale]',
+			status: 200,
+			seconds: 0.4
+		});
+
+		expect(await histogramBoundaries('http.server.request.duration')).toEqual([
+			0.005, 0.01, 0.025, 0.05, 0.075, 0.1, 0.25, 0.5, 0.75, 1, 2.5, 5, 7.5, 10
+		]);
+	});
+
+	// Wider tail than the request histogram on purpose: a job tick legitimately
+	// runs for tens of seconds, and the request boundaries would put every real
+	// mail drain in the overflow bucket.
+	it('gives trustcenter.job.tick.duration a tail that reaches minutes', async () => {
+		exporter.reset();
+		recordJobTick({ name: 'mail:drain', outcome: 'ok', seconds: 12 });
+
+		const boundaries = await histogramBoundaries('trustcenter.job.tick.duration');
+
+		expect(boundaries).toEqual([0.01, 0.05, 0.1, 0.5, 1, 2.5, 5, 10, 30, 60, 120, 300]);
+		expect(boundaries?.at(-1)).toBeGreaterThan(10);
 	});
 });

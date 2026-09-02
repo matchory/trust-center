@@ -11,17 +11,42 @@ const METER_NAME = 'trust-center';
  */
 let instruments: ReturnType<typeof build> | undefined;
 
+/**
+ * The semantic-convention boundaries for `http.server.request.duration`. Both
+ * histograms here declare their own, because the SDK's default set —
+ * `[0, 5, 10, 25, …, 10000]` — is shaped for milliseconds. Recording seconds
+ * against it puts every request faster than five seconds in the first bucket,
+ * so p50, p95 and p99 all report as "≤ 5s" for essentially all traffic and
+ * "which routes are slow" becomes unanswerable, which is one of the three
+ * questions this subsystem exists to answer (spec §1).
+ */
+const REQUEST_DURATION_BUCKETS = [
+	0.005, 0.01, 0.025, 0.05, 0.075, 0.1, 0.25, 0.5, 0.75, 1, 2.5, 5, 7.5, 10
+];
+
+/**
+ * Wider than the request set, and deliberately so: a request over ten seconds
+ * is already a defect, but a job tick legitimately runs for tens of seconds —
+ * `mail:drain` sends up to 25 messages through a remote SMTP server, and the
+ * retention sweep scans. Sharing the request boundaries would pile every real
+ * drain into the overflow bucket and hide exactly the growth an operator wants
+ * to see coming.
+ */
+const JOB_TICK_DURATION_BUCKETS = [0.01, 0.05, 0.1, 0.5, 1, 2.5, 5, 10, 30, 60, 120, 300];
+
 function build() {
 	const meter = metrics.getMeter(METER_NAME);
 
 	return {
 		requestDuration: meter.createHistogram('http.server.request.duration', {
 			description: 'Duration of inbound HTTP requests',
-			unit: 's'
+			unit: 's',
+			advice: { explicitBucketBoundaries: REQUEST_DURATION_BUCKETS }
 		}),
 		jobTickDuration: meter.createHistogram('trustcenter.job.tick.duration', {
 			description: 'Duration of one background job tick',
-			unit: 's'
+			unit: 's',
+			advice: { explicitBucketBoundaries: JOB_TICK_DURATION_BUCKETS }
 		}),
 		jobTick: meter.createCounter('trustcenter.job.tick', {
 			description: 'Background job ticks by outcome'
