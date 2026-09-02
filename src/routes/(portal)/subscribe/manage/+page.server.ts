@@ -18,6 +18,15 @@ export const load: PageServerLoad = async ({ setHeaders, url }) => {
 	// permanent credential sitting in a shared cache (spec §10.3, P4.21).
 	setHeaders({ 'cache-control': 'no-store', 'referrer-policy': 'no-referrer' });
 
+	// Reached only via the `unsubscribe` action's redirect below, never by a
+	// link anyone holds: the row is already gone by the time this runs, so it
+	// has to be checked before any token lookup — otherwise every visit here
+	// would re-run a lookup against a token that no longer resolves and 404
+	// instead of confirming.
+	if (url.searchParams.get('gone') === '1' && !url.searchParams.has('token')) {
+		return { gone: true as const };
+	}
+
 	const token = url.searchParams.get('token') ?? '';
 	const found = await subscriptionByManageToken(getDb(), token);
 	// 404 rather than a message: an unknown token is indistinguishable from a
@@ -25,6 +34,7 @@ export const load: PageServerLoad = async ({ setHeaders, url }) => {
 	if (!found) error(404, 'Not found');
 
 	return {
+		gone: false as const,
 		token,
 		topics: found.topics,
 		subscriptionLocale: found.locale,
@@ -38,7 +48,16 @@ const saveSchema = z.object({
 	// quietly an unsubscribe: that button is right there, and a save that
 	// silently deleted the record being edited would be a destructive action
 	// behind a non-destructive control.
-	topics: z.array(z.enum(UPDATE_KINDS)).min(1),
+	topics: z
+		.array(z.enum(UPDATE_KINDS))
+		.min(1)
+		// Deduped for the same reason as the subscribe form: subscription_topic
+		// has a composite primary key, so a repeated value raises 23505 and
+		// 500s. There it was an enumeration oracle (P4.4); here the token
+		// already identifies the subscriber, so a duplicate is "only" an
+		// unhandled 500 and an inflated topicCount in the audit meta — same
+		// fix, smaller blast radius.
+		.transform((topics) => [...new Set(topics)]),
 	locale: z.string()
 });
 
@@ -105,6 +124,14 @@ export const actions: Actions = {
 			ua: event.request.headers.get('user-agent') ?? undefined
 		});
 
-		return { gone: true };
+		// The row `load` would look up by token is now gone, so returning here
+		// and letting SvelteKit re-run `load` (which it always does after an
+		// action, with or without JS) would 404 a deletion that succeeded — the
+		// confirmation and the load's "unknown token" 404 would be
+		// indistinguishable to whoever just clicked the button. Redirect to a
+		// tokenless confirmation instead: the same delete-then-redirect pattern
+		// `admin/faq`'s `remove` action uses when a page's load depends on the
+		// row an action just deleted.
+		redirect(303, localizePath('/subscribe/manage?gone=1', event.locals.locale));
 	}
 };

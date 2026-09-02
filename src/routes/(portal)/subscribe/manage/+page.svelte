@@ -14,6 +14,13 @@
 		certification: () => m.update_kind_certification(),
 		advisory: () => m.update_kind_advisory()
 	};
+
+	// Intl.DisplayNames rather than a hand-maintained map, matching
+	// LocaleSwitcher: it names any locale the deployment compiles, in that
+	// locale's own language, and it is built into the platform.
+	function endonym(locale: string): string {
+		return new Intl.DisplayNames([locale], { type: 'language' }).of(locale) ?? locale;
+	}
 </script>
 
 <!-- Same reasoning as the confirm page: the layout emits no default robots
@@ -30,10 +37,13 @@
 	noindex
 />
 
-{#if form?.gone}
+{#if data.gone}
 	<SectionHeading title={m.manage_gone_title()} />
 	<p data-testid="manage-gone" class="max-w-prose text-neutral-700">{m.manage_gone_body()}</p>
 {:else}
+	{@const selectedLocale = data.availableLocales.includes(data.subscriptionLocale)
+		? data.subscriptionLocale
+		: data.defaultLocale}
 	<SectionHeading title={m.manage_title()} description={m.manage_intro()} />
 
 	<form method="POST" action="?/save" use:enhance class="max-w-xl space-y-4">
@@ -62,7 +72,7 @@
 			<span class="mb-1 block text-sm font-medium">{m.manage_language()}</span>
 			<select name="locale" data-testid="manage-locale" class="rounded border px-2 py-1">
 				{#each data.availableLocales as locale (locale)}
-					<option value={locale} selected={locale === data.subscriptionLocale}>{locale}</option>
+					<option value={locale} selected={locale === selectedLocale}>{endonym(locale)}</option>
 				{/each}
 			</select>
 		</label>
