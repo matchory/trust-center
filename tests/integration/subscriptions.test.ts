@@ -1,7 +1,8 @@
-import { eq } from 'drizzle-orm';
+import { asc, eq } from 'drizzle-orm';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createDb, type Db } from '../../src/lib/server/db';
-import { subscription } from '../../src/lib/server/db/schema';
+import { subscription, subscriptionTopic } from '../../src/lib/server/db/schema';
+import { subscribe } from '../../src/lib/server/subscriptions';
 
 let db: Db;
 let close: () => Promise<void>;
@@ -124,5 +125,128 @@ describe('subscription check constraints', () => {
 			})
 		);
 		expect(cause).toContain('subscription_manage_token_check');
+	});
+});
+
+async function topicsOf(id: string): Promise<string[]> {
+	const rows = await db
+		.select({ topic: subscriptionTopic.topic })
+		.from(subscriptionTopic)
+		.where(eq(subscriptionTopic.subscriptionId, id))
+		.orderBy(asc(subscriptionTopic.topic));
+	return rows.map((row) => row.topic);
+}
+
+describe('subscribe', () => {
+	it('creates an unconfirmed row with its topics', async () => {
+		const email = `create-${Date.now()}@example.test`;
+		const result = await subscribe(db, {
+			email,
+			locale: 'de',
+			topics: ['advisory', 'document'],
+			ttlMinutes: 60
+		});
+
+		expect(result.kind).toBe('created');
+		expect(await topicsOf(result.subscriptionId)).toEqual(['advisory', 'document']);
+		await db.delete(subscription).where(eq(subscription.id, result.subscriptionId));
+	});
+
+	it('lowercases the address so the unique constraint is the real one', async () => {
+		const stamp = Date.now();
+		const first = await subscribe(db, {
+			email: `Mixed-${stamp}@Example.Test`,
+			locale: 'de',
+			topics: ['advisory'],
+			ttlMinutes: 60
+		});
+		const second = await subscribe(db, {
+			email: `mixed-${stamp}@example.test`,
+			locale: 'de',
+			topics: ['document'],
+			ttlMinutes: 60
+		});
+
+		expect(second.subscriptionId).toBe(first.subscriptionId);
+		expect(second.kind).toBe('resent');
+		await db.delete(subscription).where(eq(subscription.id, first.subscriptionId));
+	});
+
+	it('replaces the topics and reissues the token on an unconfirmed row', async () => {
+		const email = `resend-${Date.now()}@example.test`;
+		const first = await subscribe(db, {
+			email,
+			locale: 'de',
+			topics: ['advisory'],
+			ttlMinutes: 60
+		});
+		const second = await subscribe(db, {
+			email,
+			locale: 'en',
+			topics: ['certification', 'document'],
+			ttlMinutes: 60
+		});
+
+		if (first.kind === 'already' || second.kind === 'already') {
+			throw new Error('fixture produced the wrong outcome');
+		}
+		expect(second.kind).toBe('resent');
+		expect(second.subscriptionId).toBe(first.subscriptionId);
+		// The regenerated token kills the link the first mail carried. That is
+		// the accepted trade of §4.3 — nobody has proven control of the mailbox,
+		// so the row is indistinguishable from one created fresh.
+		expect(second.confirmToken).not.toBe(first.confirmToken);
+		expect(await topicsOf(first.subscriptionId)).toEqual(['certification', 'document']);
+
+		const [row] = await db
+			.select({ locale: subscription.locale })
+			.from(subscription)
+			.where(eq(subscription.id, first.subscriptionId));
+		expect(row?.locale).toBe('en');
+
+		await db.delete(subscription).where(eq(subscription.id, first.subscriptionId));
+	});
+
+	// P4.4: an unauthenticated endpoint must not let a stranger edit — or
+	// detect — someone else's subscription. This is the case that matters.
+	it('changes nothing when the address is already confirmed', async () => {
+		const email = `already-${Date.now()}@example.test`;
+		const created = await subscribe(db, {
+			email,
+			locale: 'de',
+			topics: ['advisory'],
+			ttlMinutes: 60
+		});
+
+		await db
+			.update(subscription)
+			.set({
+				confirmedAt: new Date(),
+				confirmTokenHash: null,
+				confirmExpiresAt: null,
+				manageToken: `manage-${Date.now()}`,
+				lastNotifiedAt: new Date()
+			})
+			.where(eq(subscription.id, created.subscriptionId));
+
+		const again = await subscribe(db, {
+			email,
+			locale: 'en',
+			topics: ['document', 'subprocessor'],
+			ttlMinutes: 60
+		});
+
+		expect(again.kind).toBe('already');
+		expect(again.subscriptionId).toBe(created.subscriptionId);
+		expect(await topicsOf(created.subscriptionId)).toEqual(['advisory']);
+
+		const [row] = await db
+			.select({ locale: subscription.locale, hash: subscription.confirmTokenHash })
+			.from(subscription)
+			.where(eq(subscription.id, created.subscriptionId));
+		expect(row?.locale).toBe('de');
+		expect(row?.hash).toBeNull();
+
+		await db.delete(subscription).where(eq(subscription.id, created.subscriptionId));
 	});
 });
