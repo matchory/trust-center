@@ -17,7 +17,16 @@ export const BACKPRESSURE_THRESHOLD = 1000;
  * The oldest transaction id still running. Everything inserted by a
  * transaction below it has completed.
  *
- * The 64-bit `xid8` forms, not the 32-bit `xid` ones, which wrap around.
+ * `pg_snapshot_xmin` is epoch-extended `xid8`, but the row side of the
+ * comparison in fanOut is a bare 32-bit `xid` widened by `::text::bigint`:
+ * Postgres exposes no way to recover a tuple's epoch. The comparison is
+ * therefore valid within one xid epoch and not across a rollover, and past one
+ * it does not degrade, it breaks two ways — `xmin < horizon` becomes
+ * universally true, so the visibility predicate stops excluding anything; and
+ * an endpoint seeded with a horizon above 2^32 holds a cursor no raw `xmin`
+ * can ever exceed, so it delivers nothing at all rather than a stranded row.
+ * Centuries away at this system's write rate, and recorded as a residual
+ * rather than engineered around (spec §16).
  */
 export async function currentHorizon(db: Db): Promise<bigint> {
 	const rows = (await db.execute(
