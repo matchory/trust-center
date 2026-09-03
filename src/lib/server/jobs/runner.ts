@@ -57,6 +57,9 @@ export async function runJob(db: Db, name: string, fn: () => Promise<void>): Pro
 
 			return result;
 		} catch (cause) {
+			// No `job.lock_acquired` here, deliberately: the throw can come from the
+			// lock query itself, so on this path the lock state is genuinely
+			// unknown and any value would be a guess recorded as a fact.
 			recordJobTick({ name, outcome: 'error', seconds: (performance.now() - started) / 1000 });
 			throw cause;
 		}

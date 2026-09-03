@@ -24,10 +24,22 @@ const exporter = new InMemorySpanExporter();
 const provider = new BasicTracerProvider({
 	spanProcessors: [new SimpleSpanProcessor(exporter)]
 });
+// `registerGlobal` silently refuses a second registration (returns false, no
+// throw) once a provider is on globalThis, so without this the file's own
+// provider would never take effect when it shares a worker with another that
+// registered one. Every other telemetry test file takes this guard against
+// *this* file by name; this file has to take it too.
+trace.disable();
 trace.setGlobalTracerProvider(provider);
 
 beforeEach(() => exporter.reset());
-afterAll(async () => provider.shutdown());
+afterAll(async () => {
+	await provider.shutdown();
+	// Shutting the provider down does not unregister it: left as it was, the
+	// API's global delegate still points at a dead recording provider for
+	// whichever test file runs next in this worker.
+	trace.disable();
+});
 
 describe('requestAttributes', () => {
 	it('carries route, method and status', () => {
@@ -83,7 +95,10 @@ describe('withSpan', () => {
 	it('carries the failing address nowhere when the callback throws with one in its message', async () => {
 		await expect(
 			withSpan('mail send', {}, async () => {
-				throw new Error('550 no such user <person@acme.example>');
+				// All three of the shapes the request-path case screens for, in one
+				// message: an address, a token, and an IP. A real SMTP failure can
+				// carry any of them.
+				throw new Error('550 no such user <person@acme.example> token=SECRET from 10.0.0.4');
 			})
 		).rejects.toThrow();
 
@@ -94,9 +109,14 @@ describe('withSpan', () => {
 			spans[0]?.name,
 			spans[0]?.status.message,
 			...Object.values(spans[0]?.attributes ?? {}).map(String)
-		];
+		].filter((value): value is string => typeof value === 'string');
 
-		expect(values.some((value) => typeof value === 'string' && value.includes('@'))).toBe(false);
+		// Non-vacuous: the span name is always here, so an empty span could not
+		// satisfy these by emitting nothing.
+		expect(values).not.toHaveLength(0);
+		expect(values.some((value) => value.includes('@'))).toBe(false);
+		expect(values.some((value) => value.includes('token='))).toBe(false);
+		expect(values.some((value) => /\d+\.\d+\.\d+\.\d+/.test(value))).toBe(false);
 	});
 
 	it('exposes the active trace id inside the span and nothing outside it', async () => {

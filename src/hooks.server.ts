@@ -54,9 +54,15 @@ export const init: ServerInit = async () => {
 	}
 
 	// Before migrations, so a slow migration is itself a span — which is the
-	// observation an operator wants when a deploy is slow to come up. Imported
-	// dynamically for the same reason the migrator below is: `pnpm build` must
-	// need neither configuration nor a database.
+	// observation an operator wants when a deploy is slow to come up.
+	//
+	// This dynamic import is *not* what keeps `pnpm build` working with an empty
+	// environment, unlike the migrator's below: this file already imports the
+	// same barrel statically for `handle`, so the module is in the graph either
+	// way. What protects the build is inside `startTelemetry` — the SDK packages
+	// are behind an `await Promise.all([import(…)])` that only runs when an
+	// endpoint is configured. Do not turn those into static imports in
+	// provider.ts on the strength of this line.
 	const { startTelemetry, shutdownTelemetry } = await import('$lib/server/telemetry');
 	await startTelemetry(getConfig().telemetry);
 

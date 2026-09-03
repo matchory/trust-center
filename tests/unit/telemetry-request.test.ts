@@ -131,9 +131,17 @@ describe('no span attribute carries a secret or an identity', () => {
 			resolve
 		});
 
-		const values = exporter
-			.getFinishedSpans()
-			.flatMap((span) => [span.name, ...Object.values(span.attributes).map(String)]);
+		const spans = exporter.getFinishedSpans();
+		// The branch's permanent security regression test, so it must not be
+		// satisfiable by emitting nothing: every `.some(...) === false` below is
+		// trivially true over an empty array, and a `withSpan` that stopped
+		// producing a span at all would have passed this file unchanged.
+		expect(spans).toHaveLength(1);
+
+		const values = spans.flatMap((span) => [
+			span.name,
+			...Object.values(span.attributes).map(String)
+		]);
 
 		expect(values.some((value) => value.includes('SUPERSECRETTOKENVALUE'))).toBe(false);
 		expect(values.some((value) => value.includes('token='))).toBe(false);
