@@ -108,6 +108,40 @@ describe('postEvent', () => {
 		expect(JSON.stringify(outcome)).not.toContain('xxxx');
 	});
 
+	/**
+	 * The other delivery tests above pin to `127.0.0.1`, and the fixture's own
+	 * URL is also `127.0.0.1` — so those tests pass even if the `lookup` option
+	 * in `postEvent` were deleted entirely, because Node's own resolution of a
+	 * literal IP address is a no-op that lands on the same address anyway. That
+	 * proves nothing about pinning, which is the subsystem's central security
+	 * property (closing the DNS-rebinding window, spec §6.3). This test makes
+	 * the hostname and the pinned address genuinely differ: `hooks.example.test`
+	 * (RFC 2606, guaranteed not to resolve to anything) is what Node would try
+	 * to look up, while `pinnedAddress` is the fixture's real loopback address.
+	 * If `lookup` is honoured, the request reaches the fixture; if it is
+	 * ignored, Node tries to resolve `hooks.example.test`, fails, and the
+	 * outcome is a network failure with no request recorded. Do not "simplify"
+	 * this back to `127.0.0.1` — that would silently re-vacuum the test.
+	 */
+	it('connects to the pinned address rather than resolving the hostname', async () => {
+		const server = await serve((_request, response) => {
+			response.writeHead(200).end('ok');
+		});
+
+		const allow = parseAllowList(`hooks.example.test:${server.port}`);
+		const outcome = await postEvent({
+			url: validateEndpointUrl(`http://hooks.example.test:${server.port}/webhook`, allow),
+			allow,
+			pinnedAddress: { address: '127.0.0.1', family: 4, port: server.port },
+			body: '{}',
+			contentType: 'application/json',
+			headers: {}
+		});
+
+		expect(outcome).toEqual({ kind: 'delivered', statusCode: 200 });
+		expect(server.requests).toHaveLength(1);
+	});
+
 	it('reports a refused destination without making a request', async () => {
 		const outcome = await postEvent({
 			url: validateEndpointUrl('https://hooks.example.test/a'),
