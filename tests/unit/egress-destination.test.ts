@@ -4,7 +4,8 @@ import {
 	EgressDestinationRejected,
 	parseAllowList,
 	resolveDestination,
-	validateEndpointUrl
+	validateEndpointUrl,
+	type AllowEntry
 } from '../../src/lib/server/egress/destination';
 
 /** A stub resolver, so this whole table stays in the unit suite. */
@@ -188,6 +189,24 @@ describe('resolveDestination', () => {
 	});
 
 	/**
+	 * A BigInt `<<` by a negative amount right-shifts instead of throwing, so
+	 * an out-of-range bits component (`/40` for an IPv4 base) collapses the
+	 * mask to a single bit no address can ever have set: every comparison
+	 * then reduces to `0n === 0n`, true for every address regardless of base
+	 * — fail-open in the one module whose purpose is fail-closed destination
+	 * control. `parseAllowList` rejects a CIDR this malformed before it ever
+	 * reaches here (see the `parseAllowList` tests below), but this
+	 * constructs the `AllowEntry` directly, bypassing that gate, to prove
+	 * `resolveDestination`/`inCidr` also refuse to use it.
+	 */
+	it('does not let an out-of-range CIDR bit count allowlist an unrelated address', async () => {
+		const allow: AllowEntry[] = [{ kind: 'cidr', cidr: '10.1.0.0/40' }];
+		await expect(resolveDestination(url, allow, resolver('10.2.2.3'))).rejects.toThrow(
+			EgressDestinationRejected
+		);
+	});
+
+	/**
 	 * The allowlist names destinations that may resolve into otherwise-denied
 	 * space. It does not — and must not — reach the unconditional denials:
 	 * no legitimate webhook lives at a metadata endpoint, and no configuration
@@ -228,5 +247,17 @@ describe('parseAllowList', () => {
 			{ kind: 'cidr', cidr: '10.1.0.0/16' },
 			{ kind: 'host', host: 'hooks.internal', port: undefined }
 		]);
+	});
+
+	/**
+	 * A malformed allowlist must halt delivery loudly rather than quietly
+	 * widen or narrow it: a missing, non-numeric, or out-of-range bits
+	 * component (0-32 for an IPv4 base, 0-128 for IPv6) is rejected here,
+	 * before it can reach `inCidr`'s mask arithmetic.
+	 */
+	it('rejects a CIDR with a missing, non-numeric or out-of-range bits component', () => {
+		for (const raw of ['10.1.0.0/', '10.1.0.0/abc', '10.1.0.0/40', 'fc00::/abc', 'fc00::/200']) {
+			expect(() => parseAllowList(raw), raw).toThrow(EgressDestinationRejected);
+		}
 	});
 });

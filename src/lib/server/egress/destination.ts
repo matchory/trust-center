@@ -17,6 +17,29 @@ export class EgressDestinationRejected extends Error {
 	}
 }
 
+/**
+ * A CIDR's bits component must be a plain integer within range for its
+ * address family (0-32 for an IPv4 base, 0-128 for IPv6). Left unchecked, a
+ * BigInt `<<` by a negative amount right-shifts instead of throwing, so an
+ * out-of-range value (e.g. `/40` on an IPv4 base) collapses `inCidr`'s mask
+ * to a single bit no address can ever have set — every comparison then
+ * reduces to `0n === 0n`, matching every address regardless of base. A
+ * malformed allowlist entry must halt delivery loudly rather than silently
+ * widen it, so this throws instead of dropping the entry.
+ */
+function validateCidr(cidr: string): void {
+	const [base, bitsRaw] = cidr.split('/');
+	const bits =
+		base !== undefined && bitsRaw !== undefined && /^\d+$/.test(bitsRaw)
+			? Number(bitsRaw)
+			: undefined;
+	const max = base !== undefined && isIPv4(base) ? 32 : 128;
+
+	if (bits === undefined || bits > max) {
+		throw new EgressDestinationRejected(`${cidr} is not a valid CIDR`, 'url');
+	}
+}
+
 /** `n8n:5678, 10.1.0.0/16, hooks.internal` — hosts, host:port, or CIDRs. */
 export function parseAllowList(raw: string | undefined): AllowEntry[] {
 	if (!raw) return [];
@@ -26,7 +49,10 @@ export function parseAllowList(raw: string | undefined): AllowEntry[] {
 		.map((entry) => entry.trim())
 		.filter((entry) => entry.length > 0)
 		.map((entry): AllowEntry => {
-			if (entry.includes('/')) return { kind: 'cidr', cidr: entry };
+			if (entry.includes('/')) {
+				validateCidr(entry);
+				return { kind: 'cidr', cidr: entry };
+			}
 
 			const colon = entry.lastIndexOf(':');
 			// A bare IPv6 literal has colons too, so only a trailing all-digit
@@ -266,17 +292,22 @@ export async function resolveDestination(
 
 function inCidr(address: string, cidr: string): boolean {
 	const [base, bitsRaw] = cidr.split('/');
-	if (!base || !bitsRaw) return false;
+	if (!base || !bitsRaw || !/^\d+$/.test(bitsRaw)) return false;
 
 	const normalised = unmap(address);
-	const bits = BigInt(bitsRaw);
+	const bits = Number(bitsRaw);
 
+	// Defence in depth for a caller that builds an `AllowEntry` directly
+	// rather than through `parseAllowList` — see `validateCidr` for why an
+	// unranged bit count must never reach the mask arithmetic below.
 	if (isIPv4(normalised) && isIPv4(base)) {
-		const mask = (1n << 32n) - (1n << (32n - bits));
+		if (bits > 32) return false;
+		const mask = (1n << 32n) - (1n << (32n - BigInt(bits)));
 		return (ipv4ToInt(normalised) & mask) === (ipv4ToInt(base) & mask);
 	}
 	if (!isIPv4(normalised) && !isIPv4(base)) {
-		const mask = (1n << 128n) - (1n << (128n - bits));
+		if (bits > 128) return false;
+		const mask = (1n << 128n) - (1n << (128n - BigInt(bits)));
 		return (ipv6ToInt(normalised) & mask) === (ipv6ToInt(base) & mask);
 	}
 
