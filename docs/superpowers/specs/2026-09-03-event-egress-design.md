@@ -1,14 +1,17 @@
 # Integrations subsystem A — Event egress — Design
 
 **Date:** 2026-09-03
-**Status:** Approved design. Governs subsystem A where it and
-`2026-08-31-integrations-decomposition.md` differ.
+**Status:** Approved design, revised 2026-09-03 after adversarial review (§17 records what changed).
+Governs subsystem A where it and `2026-08-31-integrations-decomposition.md` differ.
 **Author:** Moritz Friedrich (CISO, Matchory), with Claude
 **Scoping note:** `docs/superpowers/specs/2026-08-31-integrations-decomposition.md`, §9 A
 **Governing design:** `docs/superpowers/specs/2026-08-28-trust-center-design.md`
 
 Section references of the form "§6.6" are to the governing design unless a document is named.
 References of the form "note §6" are to the decomposition note.
+
+**This document corrects note §5.** "A consumer is a cursor holding one bigint. No deduplication, no
+ordering problem" is false as stated, and §5.2 below says why. B inherits the correction.
 
 ---
 
@@ -27,11 +30,32 @@ Salesforce code, and no vendor SDK.
 It is the first subsystem to make the application an HTTP *client*. That is a new security boundary
 rather than only a new feature, and §6 is the largest section of this document for that reason.
 
-### 1.1 How A differs from B, which will look similar
+### 1.1 Why endpoints are rows rather than environment variables
 
-A and B share the spine note §5 describes — a consumer is a cursor over `audit_event.seq` — and §4's
-free-form filter means an operator *can* point A at most of the log. The subsystems remain distinct
-in delivery semantics, and the distinction is what each is allowed to assume:
+An env-var-only design — one URL, one action list, one formatter — meets the requirement as stated
+in one paragraph and deletes most of this document. It was considered and rejected, and the reason
+belongs here rather than in a reviewer's head, because everything expensive below follows from it:
+
+- **More than one destination is a near-term need, not a hypothetical.** Teams and n8n are two
+  destinations with two payload shapes on day one, and Slack is expected. A single-URL design
+  answers the first requirement and is rewritten by the second.
+- **Endpoints are reconfigured by people who do not deploy.** Changing which events reach which
+  channel should not be a container restart, and the person who owns that decision is not
+  necessarily the person with shell access.
+
+The cost is real and is not waved away: a runtime-mutable egress destination makes "does this
+deployment call out, and to where?" a database fact rather than an environment fact, and the product
+is sold partly on that question being answerable from `docker inspect`. §12's `EVENT_EGRESS_ENABLED`
+is the answer — a deploy-time switch, default off, without which no endpoint delivers anything. The
+environment therefore still answers "does this deployment call out at all", which is the question a
+procurement reviewer actually asks; the database answers "to where", which is the question an
+operator needs to change on a Tuesday.
+
+### 1.2 How A differs from B, which will look similar
+
+A and B share a spine, and §4.1's free-form filter means an operator *can* point A at most of the
+log. The subsystems remain distinct in delivery semantics, and the distinction is what each is
+allowed to assume:
 
 |  | A — event egress | B — audit sink |
 | --- | --- | --- |
@@ -41,8 +65,13 @@ in delivery semantics, and the distinction is what each is allowed to assume:
 | Latency | Seconds | Minutes to hours |
 | On loss | Retried, then the endpoint disables | Must not lose anything, ever |
 
-A is allowed to drop an event after five attempts and say so. B is not. Nothing in this document
-should be read as B's design, and B should not be built by widening this one.
+A is allowed to drop an event after five attempts and say so. B is not.
+
+**What is genuinely shared, and what is A-only.** The shared spine is §5.2's watermark — the rule for
+deciding which audit events are safe to consume and how far a cursor may advance. That is the part B
+must inherit, and the part note §5 got wrong. Everything else here — per-endpoint filtering,
+enrichment, formatters, retry, auto-disable — is A-only. **B must not be built by widening this
+document**; it should take §5.2 and nothing else.
 
 ---
 
@@ -57,13 +86,13 @@ and two unrelated concepts sharing a name in one schema is how a later reader jo
 | Column | Type | Notes |
 | --- | --- | --- |
 | `id` | uuid pk | Also an input to the signing secret (§7) |
-| `name` | text not null | The operator's label. Appears in telemetry (§10) |
+| `name` | text not null | The operator's label. **Not** a telemetry attribute (§10) |
 | `url` | text not null | Validated on save, re-checked at delivery (§6.3) |
 | `format` | text not null | Check-constrained to the formatter registry (§3.3) |
 | `secret_version` | integer not null default 1 | Bumping it re-keys this endpoint alone (§7) |
 | `enabled` | boolean not null default true | |
-| `cursor_seq` | bigint not null | Initialised to `max(audit_event.seq)` at creation |
-| `consecutive_failures` | integer not null default 0 | Zeroed by any delivery (§5.3) |
+| `cursor_seq` | bigint not null | Initialised to `max(audit_event.seq)` at creation. Advanced per §5.2 |
+| `last_success_at` | timestamptz | Drives auto-disable (§5.3) |
 | `disabled_at` | timestamptz | |
 | `disabled_reason` | text | |
 | `created_at` | timestamptz not null default now() | |
@@ -94,13 +123,15 @@ An endpoint with no filter rows receives nothing. Silence is the safe reading of
 
 | Column | Type | Notes |
 | --- | --- | --- |
-| `id` | uuid pk | The idempotency key handed to the consumer (§7) |
+| `id` | uuid pk | The idempotency key handed to the consumer (§7.2) |
 | `endpoint_id` | uuid not null | Cascades |
 | `audit_seq` | bigint not null | **A reference. Never a payload.** |
+| `audit_id` | uuid not null | Travels in the payload so gaps are detectable (§4.4) |
 | `status` | text not null default `'pending'` | `pending \| delivered \| failed \| skipped` |
 | `attempts` | integer not null default 0 | |
 | `next_attempt_at` | timestamptz not null default now() | |
-| `last_error` | text | At most 2 KB (§6.4) |
+| `last_status_code` | integer | |
+| `last_error` | text | **A fixed reason phrase. Never a response body** (§6.4) |
 | `delivered_at` | timestamptz | |
 | `created_at` | timestamptz not null default now() | |
 
@@ -108,12 +139,18 @@ Unique on `(endpoint_id, audit_seq)`, which makes fan-out idempotent, and a part
 `next_attempt_at where status = 'pending'` — the same shape and the same reason as
 `outbound_email_claim_idx`: the index stays small as delivered rows accumulate.
 
-**The row holds a reference to an audit event, not a rendered body.** This is the whole of note §6's
-erasure story and the reason it is structural rather than maintained. `purgeRequester` needs no new
-path: a purge landing between fan-out and delivery means the payload renders blank, which is the
-correct outcome and not a special case. Had we enriched at fan-out time, `outbound_email`'s purge
-path — which matches on `to` — would become the first of two such paths rather than the only one,
-and a second one is the kind that rots silently when somebody adds a field.
+**The row holds a reference to an audit event, not a rendered body.** This is the core of note §6's
+erasure story and the reason it is structural rather than maintained. Had we enriched at fan-out
+time, `outbound_email`'s purge path — which matches on `to` — would become the first of two such
+paths rather than the only one, and a second one is the kind that rots silently when somebody adds a
+field.
+
+That property is only preserved if **nothing else on this row holds personal data**, which is why
+`last_error` is a fixed reason phrase (§6.4) rather than the captured response body an earlier draft
+of this document specified. A receiver that echoes its input — n8n's "respond with incoming items",
+most webhook debuggers — would otherwise write the requester's name and address into a column
+`purgeRequester` does not know about and does not clear, creating exactly the second purge path this
+design exists to avoid.
 
 ---
 
@@ -135,9 +172,13 @@ model is the thing this subsystem promises not to break, and the wire shapes are
 interface EventModel {
 	action: string;                    // the audit action, verbatim
 	at: Date;
+	eventId: string;                   // audit_event.id
+	seq: string;                       // audit_event.seq, as a string (§4.4)
 	deliveryId: string;
 	subject: { type: string; id: string } | null;
 	actor: { type: string; id: string | null };
+	/** True when the payload's subject data was never identity-verified (§4.3). */
+	verified: boolean;
 	/** Enriched, or the audit row's meta as a fallback (§4.2). */
 	data: Record<string, unknown>;
 	/** Human-readable one-liner. Formatters that render prose use this. */
@@ -170,12 +211,15 @@ Two ship now:
 
 ```json
 {
-  "event": "access_request.approved",
+  "event": "access_request.pending",
   "at": "2026-09-03T10:12:00.000Z",
+  "event_id": "8c1e…",
+  "seq": "48213",
   "delivery_id": "0f3c…",
+  "verified": true,
   "subject": { "type": "access_request", "id": "…" },
-  "actor": { "type": "staff", "id": "…" },
-  "summary": "Access request from Acme GmbH approved",
+  "actor": { "type": "requester", "id": "…" },
+  "summary": "Access request from Acme GmbH needs review",
   "link": "https://trust.example.com/en/admin/requests/…",
   "data": { … }
 }
@@ -206,6 +250,13 @@ everywhere Workflows posts.
 The card carries the summary, a fact set from `data`, and an `Action.OpenUrl` to `link`. It carries
 no images and no external references: nothing in a Teams channel should fetch from us.
 
+**Every string a formatter renders is escaped for its target.** Adaptive Card `TextBlock` renders
+markdown, and §4.3's data is in part supplied by whoever filled in a public form — so a company name
+of `[Password reset required](https://evil.example)` would otherwise become a clickable link in the
+security team's own channel, delivered by the trust center. Escaping is a property of the formatter,
+tested per formatter, and not a property of the enricher: a second formatter with a different escape
+rule must not be able to inherit the first one's assumption.
+
 Since `format` is a check-constrained column, note the caveat `audit_event`'s own check already
 records — Drizzle regenerates check constraints rather than altering them, so the constraint text in
 the schema file and the hand-written `ALTER` in the migration are kept in sync by hand.
@@ -223,31 +274,31 @@ field: an operator who wants `control.*` in a channel should not have to wait fo
 **Matching is `starts_with()`, not `LIKE`.** `LIKE` treats `_` as a single-character wildcard, and
 this log contains `staff.login_failed` and `staff.login.denied` — so a `LIKE 'staff.login_failed'`
 filter also matches a hypothetical `staff.loginXfailed`. That is a subtle, silent widening of an
-egress filter, which is exactly the class of bug this subsystem cannot afford. The fan-out predicate
-is therefore:
-
-```sql
-WHERE seq > $cursor
-  AND (action = ANY($exact) OR EXISTS (
-        SELECT 1 FROM unnest($prefixes) p WHERE starts_with(action, p || '.')))
-ORDER BY seq
-LIMIT 500
-```
+egress filter, which is exactly the class of bug this subsystem cannot afford.
 
 ### 4.2 Enrichment: a registry, with a fallback
 
 Actions with a registered enricher get an `EventModel` whose `data` is read from **live domain
-state at delivery time** — note §6's settled rule. Registered at first ship:
+state at delivery time** — note §6's settled rule.
 
-| Action | `data` carries |
-| --- | --- |
-| `access_request.submitted` | requester name, email, company, domain; requested tiers and document count |
-| `access_request.approved` | the above, plus grant id, term days, expiry, outstanding agreements |
-| `access_request.denied` | the above, plus the reason |
-| `access_request.info_requested` | the above |
-| `access_grant.revoked` | requester identity, grant id, what it covered |
-| `nda_acceptance.recorded` | requester identity, template and version |
-| `document.downloaded` | requester identity, document title and tier |
+The registry below was walked against `grep -rhoE "action: '[a-z0-9._-]+'" src/` plus the two
+template-literal sites (`verify.ts` and `admin/requests/[id]/+page.server.ts`, both
+`access_request.${status}`), not against memory. That matters: an earlier draft of this table omitted
+`access_request.pending` entirely, which is *the* event the stated requirement is about.
+
+| Action | Written by | `data` carries |
+| --- | --- | --- |
+| `access_request.pending` | `verify.ts` (auto-approval declined or blocked) | requester name, email, company, domain; requested tiers, document count; matched rule |
+| `access_request.approved` | `verify.ts`, admin decision | the above, plus grant id, term days, expiry, outstanding agreements |
+| `access_request.denied` | `verify.ts`, admin decision | the above, plus the reason |
+| `access_request.info_requested` | admin decision | the above |
+| `access_grant.revoked` | admin | requester identity, grant id, what it covered |
+| `nda_acceptance.recorded` | acceptance | requester identity, template and version |
+| `nda_record.downloaded` | delivery | requester identity, template and version |
+| `document.downloaded` | delivery | requester identity, document title and tier |
+
+`access_request.pending` is the one an operator wants in Teams: it is written when a verified request
+needs a human. `access_request.submitted` is deliberately **absent** — see §4.3.
 
 Anything else falls back to the audit row: `action`, `at`, `subject`, `actor`, and `meta` verbatim,
 with a `summary` derived from the action name. §6.6 already guarantees `meta` holds no requester
@@ -265,39 +316,152 @@ shipping them would put an address in an n8n execution history for *every* event
 ones an operator chose. Enriched payloads carry name, company and email precisely because those *are*
 what the consumer acts on — that is settled and not in tension with this rule.
 
-### 4.3 A purged requester renders blank
+### 4.3 `access_request.submitted` is not enriched, because its data is unverified
 
-`purgeRequester` clears the domain columns the enrichers read. An event delivered after a purge
-therefore carries empty identity fields, and this is the intended behaviour, not a degradation to
-handle. It is asserted by an integration test (§11) because it is the load-bearing claim of note §6.
+At the moment that event is written (`src/routes/(portal)/request/+page.server.ts`, actor `system`,
+with the comment *"Not `requester`: nobody has proven they control that address yet"*) there is no
+requester row. The name, company and address live in `access_request.submitted_*`, which is free
+text from a **public, unauthenticated form**. The limiter allows five submissions per hour per
+address and per IP, and is not a bound across IPs.
+
+Enriching it would make a public form into a delivery mechanism aimed at the operator's own staff
+channel and CRM: arbitrary third-party names and addresses on demand, and — before §3.3's escaping
+rule — clickable links rendered by the trust center itself.
+
+It therefore takes the fallback path, whose `meta` is `{documentCount, tiers}` and carries nothing a
+submitter typed. `access_request.pending`, written after the magic link is consumed, is the enriched
+event, and it exists precisely because someone has by then proven they control the address.
+
+`EventModel.verified` states this on the wire rather than leaving it implicit, so a consumer branching
+on it does not have to know which of our action names implies verification.
+
+A second reason the same way: `sweepUnverifiedRequests` hard-deletes unverified rows after
+`4 × MAGIC_LINK_TTL`, so a backlogged endpoint would enrich from a row that no longer exists. §4.5
+defines what happens when a subject is gone, and this avoids the case entirely.
+
+### 4.4 The payload carries `event_id` and `seq`
+
+Neither is decoration. `seq` is what makes a gap detectable by a consumer — without it, an event lost
+to the visibility hazard §5.2 describes is invisible to everyone, since the delivery id is minted by
+us and is dense by construction. `event_id` is the audit row's own primary key, which is what lets a
+consumer correlate a payload back to the log it is a read model over.
+
+They also give B a real upgrade path: an operator who has wired A into object storage and later wants
+B has a stream whose rows are identifiable and whose gaps are visible, rather than one that merely
+looked like an audit sink.
+
+### 4.5 A purged or absent subject is `skipped`, not blank
+
+`purgeRequester` clears the domain columns the enrichers read. An earlier draft called the resulting
+blank payload "the correct outcome and not a special case". That was wrong, and the reason is worth
+recording because it is a privacy feature causing a data-integrity failure:
+
+a consumer receiving `access_request.approved` with `name: ""`, `email: ""`, `company: ""` cannot
+distinguish it from a person with no name. n8n → HubSpot will create a junk contact, or error, or —
+worst — upsert by an empty email and overwrite an unrelated record. Blanks are the one shape a
+consumer cannot branch on.
+
+So: **when the enricher finds the subject's requester purged or the subject row gone, the delivery is
+marked `skipped` and nothing is sent.** `skipped` already exists as a terminal status (§5.4), and this
+is the same thing `purgeRequester` already does to queued mail — it fails pending `outbound_email`
+rows rather than sending them blank, on the reasoning that "a purge that leaves one queued would mail
+a person who asked to be forgotten." Egress now has that step too, and it is the same step.
+
+The erasure property this preserves is stated precisely in §8, where it is also qualified honestly.
 
 ---
 
 ## 5. Delivery, retry and failure
 
-### 5.1 One job
+### 5.1 One job, and the lock is not held across the network
 
 `egress:deliver`, every 15 s — matching `mail:drain`, on the same reasoning: a magic link a minute
-late is a person waiting, and a Teams notice fifteen minutes late is a defect. Each tick, per enabled
-endpoint:
+late is a person waiting, and a Teams notice fifteen minutes late is a defect.
 
-1. **Fan out.** Scan `audit_event` from `cursor_seq` (§4.1, `LIMIT 500`), insert an `event_delivery`
-   row per matching event, and set `cursor_seq` to the highest seq **scanned** — not the highest
-   matched. Advancing only past matches would re-scan every unmatched event on every tick forever.
-2. **Deliver.** Claim due rows `FOR UPDATE SKIP LOCKED`, `LIMIT 25`, exactly as `drainOutbox` does,
-   then POST each and record the outcome.
+**The advisory lock is released before any HTTP request is made.** This is a deliberate deviation from
+how `mail:drain` uses `runJob`, and it is not optional. `runJob` (`src/lib/server/jobs/runner.ts`)
+wraps `fn()` inside `db.transaction`, while `startJobRunner` passes `() => job.run(getDb())` — so the
+job body runs on a *different* pooled connection and the lock connection sits `idle in transaction`
+for the whole tick. With a 25-row batch and a 10 s timeout that is up to 250 seconds, repeatedly,
+which:
 
-Overlapping ticks need no new machinery: a second tick takes a different pooled connection, so
-`pg_try_advisory_xact_lock` returns false and it skips. A slow tick makes the job less frequent, not
-concurrent.
+- pins the xmin horizon for minutes at a time on a system with high-churn tables (`ratelimit`,
+  `outbound_email`, `event_delivery`), so autovacuum reclaims nothing;
+- is killed outright by `idle_in_transaction_session_timeout`, which is standard hardening and the
+  default on several managed Postgres offerings;
+- occupies two of the pool's ten connections (`postgres(url, { max: 10 })`) for the duration, behind
+  which request-path queries queue.
 
-**Fan-out is skipped for an endpoint whose pending depth already exceeds 1000.** Without this the two
-limits fight: 500 fanned out per tick against 25 delivered per tick means a catch-up over a long
-backlog grows `event_delivery` twenty times faster than it drains it. The cursor is the backlog's
-durable record, so pausing fan-out loses nothing — it makes catch-up self-paced, and it bounds the
-table by a number rather than by however long the endpoint was down.
+Mail gets away with the same shape because it talks to one configured relay on a short timeout. This
+talks to arbitrary operator-supplied hosts, and the difference is the whole point.
 
-### 5.2 Retry classification
+Each tick therefore runs in two phases:
+
+1. **Under the lock, in one transaction:** fan out (§5.2), then claim due deliveries with
+   `FOR UPDATE SKIP LOCKED` and push their `next_attempt_at` forward, exactly as `drainOutbox` does.
+   Commit. The pushed-forward claim is what makes the next phase safe without the lock.
+2. **Outside any transaction:** render, POST, and record each outcome in its own short write.
+
+Deliveries are **round-robin across endpoints, at most 5 per endpoint per tick**, rather than draining
+one endpoint at a time. Without that, a single black-holing endpoint delays every other endpoint's
+deliveries by the full tick — and §5.1's own justification for a 15 s interval is that a late notice
+is a defect. Total tick wall-time is capped explicitly; work not done this tick is done next tick.
+
+The claim limit is **25 rows globally per tick**, subdivided by the per-endpoint cap. Stating which it
+is matters: per-endpoint multiplies tick time by the endpoint count, global starves by claim order —
+the round-robin cap is what makes the global limit fair.
+
+### 5.2 The watermark: which events are safe to consume
+
+**This is the part B inherits, and the part note §5 got wrong.**
+
+`audit_event.seq` is a `bigserial`. `nextval()` is consumed at INSERT, but a row becomes *visible* at
+COMMIT, and those two orders are not the same. `recordEvent` is routinely called inside a transaction
+that does other work first — `verify.ts` writes `access_request.${status}` after `createGrant` and
+several updates; `purge.ts` and `admin/actions.ts` do the same. So a concurrent autocommit insert
+(`document.downloaded`, say) can take a *higher* seq and commit *first*.
+
+A naive `WHERE seq > cursor` scan landing in that window sees seq 101, misses seq 100, and sets the
+cursor to 101. **Event 100 becomes visible a millisecond later and is never scanned again** — a
+silently dropped approval notification, indistinguishable from Teams having eaten it.
+
+The fan-out predicate therefore consumes only events whose inserting transaction has already
+completed, using the snapshot's xmin horizon:
+
+```sql
+SELECT id, seq, action, at, actor_type, actor_id, subject_type, subject_id, meta
+FROM audit_event
+WHERE seq > $cursor
+  AND xmin::text::xid8 < pg_snapshot_xmin(pg_current_snapshot())
+ORDER BY seq
+LIMIT 500
+```
+
+A row below the horizon was inserted by a transaction that can no longer commit anything beneath it,
+so no lower `seq` can still appear. The cursor advances to the highest `seq` **scanned under that
+predicate** — not the highest matched, since advancing only past matches would re-scan every
+unmatched event forever.
+
+The failure mode this trades into is **delay, not loss**: a long-running transaction holds the horizon
+back and events wait for it. That is the right direction, and it is bounded by the longest
+transaction in the system rather than unbounded.
+
+Implementation note, because the exact spelling is fiddly and version-dependent: use the 64-bit
+`xid8` forms (`pg_current_snapshot`, `pg_snapshot_xmin`) rather than comparing 32-bit `xid` values,
+which wrap around. The plan must verify the predicate against the project's Postgres version and
+assert it with the test named in §13 — a fan-out that runs while a slow transaction holds a lower
+`seq` open, which fails against a naive `seq > cursor` scan.
+
+**Backpressure.** Fan-out is skipped for an endpoint whose pending depth already exceeds 1000.
+Without this the two limits fight: 500 fanned out per tick against 25 delivered per tick means a
+catch-up grows `event_delivery` twenty times faster than it drains it. The cursor is the backlog's
+durable record, so pausing fan-out loses nothing.
+
+Fan-out and the cursor update are one transaction (phase 1 above). Even if they were not, the unique
+`(endpoint_id, audit_seq)` makes a replayed fan-out a no-op — worth writing down as the reason a crash
+between the two is safe.
+
+### 5.3 Retry classification
 
 | Outcome | Treatment |
 | --- | --- |
@@ -313,33 +477,38 @@ Attempts and backoff are `outbound_email`'s numbers verbatim — **5 attempts, 1
 the deployment has one retry story rather than two that differ for no reason. When they are exhausted
 the row goes `failed`.
 
-### 5.3 Auto-disable
+### 5.4 Auto-disable is time-based, not a failure count
 
-`consecutive_failures` increments on each terminal failure and is zeroed by any delivery. At **10**,
-the endpoint is disabled: `enabled = false`, `disabled_at`, `disabled_reason`, and one audit event
-(§9).
+An endpoint is disabled when **no delivery has succeeded for 24 hours and at least one has been
+attempted in that window** — `last_success_at` against `now()`, evaluated per tick.
 
-A counter on the endpoint rather than a query over `event_delivery`: the meaning wanted is "ten
-terminal failures with no success in between", which is what the counter states exactly, and it costs
-no scan.
+A consecutive-failure counter was specified first and is wrong in both directions. A low-volume
+deployment sending three events a day takes four days to reach ten failures, so a permanently dead
+endpoint stays "enabled" and silent for four days. And a high-volume one reaches ten inside a single
+25-row batch — so a routine `secret_version` rotation, which makes the consumer return 401, which
+§5.3 makes terminal on the first attempt, would **auto-disable the endpoint within one 15-second
+tick**. §7.2's overlap window closes that particular hole, but the counter would still be measuring
+the wrong thing. "No success in 24 h" states the intent directly.
 
-### 5.4 A disabled endpoint neither fans out nor delivers
+Disabling writes `enabled = false`, `disabled_at`, `disabled_reason`, and one audit event (§9).
 
-Its cursor stalls. The alternative — continuing to fan out while disabled — accumulates two days of
+### 5.5 A disabled endpoint neither fans out nor delivers
+
+Its cursor stalls. The alternative — continuing to fan out while disabled — accumulates a day of
 deliveries and floods the channel with stale cards the moment somebody re-enables it.
 
 Stalling makes re-enabling an explicit choice, with the backlog count in front of the operator:
 
-- **Enable and catch up** — resume from `cursor_seq`, bounded by the 500-row fan-out per tick.
+- **Enable and catch up** — resume from `cursor_seq`, bounded by §5.2's fan-out and backpressure.
 - **Enable, skipping the backlog** — jump `cursor_seq` to the current maximum; queued rows go
   terminal as `skipped`.
 
-Skipping is the option the UI presents first. A channel flooded with two days of stale notices is
-worse than a gap, and `audit_event` remains the record of record under either choice — nothing is
-lost, only un-notified. `skipped` exists as a status rather than being a delete so that the gap is
-visible afterwards.
+Skipping is the option the UI presents first. A channel flooded with a day of stale notices is worse
+than a gap, and `audit_event` remains the record of record under either choice — nothing is lost, only
+un-notified. `skipped` exists as a status rather than being a delete so that the gap is visible
+afterwards.
 
-### 5.5 Retention
+### 5.6 Retention
 
 Terminal `event_delivery` rows older than 30 days are swept by the existing `retention:sweep` tick.
 Folded in there rather than becoming an eighth timer, for the reason the subscription sweep was
@@ -353,50 +522,71 @@ Note §7: operator-configurable webhook URLs are server-side request forgery by 
 feature being admin-only bounds this but does not remove it. The delivery client is therefore not a
 general HTTP client and is not reusable as one.
 
+**The threat model is stated, because §6.3's design depends on which one it is:** this control exists
+against *a malicious or compromised admin account*, not only against operator accident. That is why
+the residual DNS-rebinding window an earlier draft accepted is closed here rather than documented —
+against an accident, a documented window is fine; against an actor who chooses the hostname, it is
+the whole attack.
+
 ### 6.1 No redirects
 
 `redirect: 'manual'`; any 3xx is a failure. A redirect is the cheapest way to launder a denied
 destination into an allowed one, and no legitimate webhook receiver needs one.
 
-### 6.2 Method and headers are fixed
+### 6.2 Method, scheme and headers are fixed
 
-`POST` only. The header set is closed (§7). No cookie jar, no credential is ever attached, and no
-operator-supplied header is forwarded.
+`POST` only, over `https://` — with `http://` permitted only when the resolved address is inside
+§6.3's allowlist, since an in-cluster n8n on a private address is the one case where TLS is
+reasonably absent.
 
-### 6.3 The destination check runs at delivery, not only on save
+The header set is closed (§7.2), no cookie jar is used, and no operator-supplied header is forwarded.
+**A URL containing userinfo (`https://user:pass@host/…`) is rejected at save**: it is a credential in
+a field that §9 deliberately keeps out of the audit log, and it contradicts "no credential is ever
+attached".
 
-`dns.lookup(host, { all: true })`, and the destination is refused if **any** resolved address is
-denied. Validation also happens on save, but only to give the operator an immediate error message:
-DNS changes after you save, and the delivery-time check is the authoritative one. An integration test
-asserts this at delivery time specifically (§11).
+Destination ports are restricted to 80, 443, and any port explicitly named in the allowlist.
 
-**Denied unconditionally:** loopback, link-local (`169.254.0.0/16`, `fe80::/10`), unspecified
-(`0.0.0.0`, `::`), and multicast. `169.254.169.254` is the cloud metadata endpoint; no legitimate
-webhook lives there, and there is no configuration under which reaching it is the operator's intent.
+### 6.3 The destination check runs at delivery, and the validated address is what gets connected
 
-**Denied by default, permitted by `EVENT_EGRESS_ALLOW_PRIVATE=true`:** RFC1918, unique-local
-(`fc00::/7`), and CGNAT (`100.64.0.0/10`).
+An allowlist, not a boolean. `EVENT_EGRESS_ALLOW` names the destinations that may resolve into
+otherwise-denied space — `n8n:5678`, or a CIDR — and is empty by default.
 
-That opt-out is not a weakening bolted on for convenience — it is the primary use case. An operator
-running n8n beside the container points at `http://n8n:5678/webhook/…`, and a blanket private-range
-denylist would break subsystem A's stated purpose on day one. Default-deny with a one-line opt-out
-puts the decision where note §7 wants it: made once, deliberately, by the operator.
+An earlier draft had a single `EVENT_EGRESS_ALLOW_PRIVATE=true`, which is worse than it looks. The
+spec itself said the opt-out "is the primary use case", so it would be on in most deployments — and it
+grants **all** of RFC1918, ULA and CGNAT to reach *one* host. That opens the Kubernetes API server on
+a ClusterIP, kubelet on :10250, every internal admin panel, and — because CGNAT is in scope — Alibaba
+Cloud's metadata service at `100.100.100.200`, which the unconditional denylist does not name. Same
+operator effort, three orders of magnitude more surface.
+
+**Denied unconditionally, allowlist or not:** loopback, link-local (`169.254.0.0/16`, `fe80::/10`),
+unspecified (`0.0.0.0`, `::`), and multicast. `169.254.169.254` is the cloud metadata endpoint; no
+legitimate webhook lives there, and no configuration makes reaching it the operator's intent.
+
+**Resolution and connection are bound together.** `dns.lookup(host, { all: true })` resolves, every
+returned address is classified, and then the **validated address is handed to the connection itself**
+via `node:https`'s `lookup` option — so the socket connects to the address that was checked, not to
+whatever a second resolution returns. This closes the DNS-rebinding window at the cost of not using
+`fetch`; it needs no new dependency, and it is also what gives §6.4 its bounded read. An earlier draft
+priced this at "a direct undici dependency" and accepted the window instead. That was wrong on the
+price and, given the threat model above, wrong on the acceptance.
 
 Address classification normalises before comparing. `::ffff:169.254.169.254`, decimal and octal IPv4
-literals, and a trailing dot on the hostname are all cases in the unit table (§11), because a
+literals, and a trailing dot on the hostname are all cases in the unit table (§13), because a
 classifier that is correct only for canonical input is not a classifier.
 
-**Residual risk, recorded rather than papered over.** A hostname can resolve differently between the
-lookup and the connect — DNS rebinding. Closing that window properly means an undici `Agent` with a
-`connect` hook validating the socket's actual peer address, which would make undici a direct
-dependency where it is currently only transitive. That trade is not worth taking for A alone; it
-should be revisited when B wants the same client, at which point one hardened client serves both.
+### 6.4 Bounds, and why no response body is kept
 
-### 6.4 Bounds
+A 10-second timeout. The response body is **read to a bound and discarded**: `event_delivery` records
+`last_status_code` and a fixed reason phrase, never bytes the receiver chose.
 
-A 10-second timeout via `AbortSignal.timeout`. At most 2 KB of the response body is read into
-`last_error` — otherwise a 500 that returns an HTML error page lands in Postgres, on every attempt,
-for every endpoint.
+Three reasons, any one sufficient. A receiver that echoes its input would put requester personal data
+into a column `purgeRequester` cannot reach (§2.3). A slowloris or a multi-gigabyte response defeats a
+`await res.text()`-then-`slice` bound, because that buffers first. And with §11's inline test send, a
+stored response body turns an admin-triggered request into an **SSRF read primitive** — 2 KB of any
+HTTP response reachable from the container, returned through the admin UI.
+
+Operators who need the body for debugging get it in a log line, which is not a table and is not
+subject to erasure guarantees.
 
 ---
 
@@ -411,33 +601,50 @@ live state and is not byte-identical. **Each attempt is signed over the body it 
 secret(endpoint) = HMAC-SHA256(EVENT_SIGNING_KEY, `${endpoint.id}:${endpoint.secret_version}`)
 ```
 
-`event_endpoint` has **no secret column**. This is the one place this codebase would otherwise need a
-secret it can read back: every other token here is hashed one-way (`magic_link`, both session tables,
-`subscription.confirm_token_hash`), and a signing secret cannot be, because the signer must reproduce
-it. Deriving it keeps that property — the database holds nothing that signs anything.
+`event_endpoint` has **no secret column**. What this buys is narrower than an earlier draft claimed,
+and worth stating accurately: it is *not* true that this would be the codebase's only readable-back
+secret — `subscription.manage_token` is stored unhashed today, with its own written rationale. What
+derivation actually buys is that **a database-only compromise yields no signing material**: a leaked
+backup, a read replica, or a SQL-injection read gives an attacker every endpoint row and still no
+ability to forge a signature. That threat is real and the property is worth the machinery.
 
 `secret_version` buys per-endpoint rotation without rotating the root: bumping one integer re-keys one
-endpoint, and the operator re-reads the new value from the admin UI. Rotating `EVENT_SIGNING_KEY`
-rotates every endpoint at once, which is the right behaviour for a compromised root and is documented
-as such.
+endpoint. Rotating `EVENT_SIGNING_KEY` rotates every endpoint at once, which is the right behaviour
+for a compromised root.
 
-**With `EVENT_SIGNING_KEY` unset, deliveries go unsigned** and the admin page says so plainly. Teams
-verifies nothing, so a Teams-only operator should not be made to manage a key they have no use for.
-The key is optional in the same sense `SMTP_URL` is: absent is a supported configuration, not an
-error to log every fifteen seconds.
+**A key-change canary.** `HMAC(EVENT_SIGNING_KEY, 'canary')` is stored in a `setting` row on first
+use. If it stops matching, delivery halts and the admin UI says why. Without it, restoring a backup
+into an environment with a different or absent key silently re-keys every endpoint and nothing
+detects it — which is the one property a stored secret gets for free and derivation otherwise loses.
+One row, and it converts a silent failure into a loud one.
 
-### 7.2 Headers
+**`EVENT_SIGNING_KEY` is required when any endpoint uses `format = 'generic'`**, validated at save
+time and at boot. It stays optional for `teams`, because Teams verifies nothing and a Teams-only
+operator should not manage a key they cannot use.
+
+An earlier draft made it globally optional "in the same sense `SMTP_URL` is". That analogy is wrong in
+the way that matters: `SMTP_URL` absent means *nothing happens*, while a missing signing key means
+*the thing happens without its security property* — a payload carrying a prospect's name and address,
+POSTed to an HTTP endpoint with no authentication. The correct in-repo analogue is
+`OIDC_CLIENT_SECRET`, which is required and refuses to boot.
+
+### 7.2 Headers, and the rotation overlap
 
 ```
 Content-Type:              application/json
-X-Trust-Center-Event:      access_request.approved
+X-Trust-Center-Event:      access_request.pending
 X-Trust-Center-Delivery:   <event_delivery.id>
-X-Trust-Center-Signature:  t=1756900000,v1=<hex>          (omitted when unsigned)
+X-Trust-Center-Signature:  t=1756900000,v1=<hex>[,v1=<hex-previous>]
 ```
 
 The signature covers `${t}.${body}`. `t` is seconds since epoch, and a consumer should reject a
 timestamp outside a tolerance of a few minutes. Our own retries span at most fifteen minutes but each
 attempt re-signs with a fresh `t`, so a tight consumer tolerance does not conflict with our backoff.
+
+**Rotation emits both signatures for a grace period** — the new secret and the one for
+`secret_version - 1` — which the comma-separated header format already accommodates and which is what
+consumer libraries expect. Without it a rotation makes every consumer return 401 until it is updated,
+and §5.3 makes 401 terminal on the first attempt.
 
 **`X-Trust-Center-Delivery` is load-bearing, not decoration.** Because retries re-render, a consumer
 *cannot* deduplicate on a body hash. The delivery id is stable across every attempt of the same
@@ -461,8 +668,16 @@ point: the claim in the README is about what the application holds and controls,
 unqualified, and bolting an asterisk onto a true statement to describe someone else's processor makes
 it read as weaker than it is.
 
-The application's side of that boundary stays exact: nothing is at rest (§2.3), and a purge before
-delivery renders blanks (§4.3).
+**What the application guarantees on its own side, stated with its actual precondition.** Nothing is
+at rest (§2.3), and a delivery whose subject is purged **before that delivery is first attempted** is
+`skipped` rather than sent (§4.5).
+
+The precondition is not decorative, and an earlier draft's unqualified "a purge renders blanks" was
+wrong. §7.2 makes the delivery id an idempotency key precisely because retries re-render — so a
+consumer that dedupes as instructed **keeps the first attempt**. If attempt 1 went out before the
+purge and attempt 2 after it, the consumer already holds the pre-purge payload and correctly discards
+the second. That is a consequence of at-least-once delivery, not a defect in the purge, and it is
+exactly the boundary the paragraph above describes: once it has been delivered, it is theirs.
 
 ---
 
@@ -474,10 +689,17 @@ An audit event written on delivery success or failure would match its own endpoi
 into a new `event_delivery`, deliver or fail, write another audit event, and recur — an unbounded
 loop whose first symptom is an operator's Teams channel filling at 15-second intervals.
 
-The single exception is `event_endpoint.disabled`, written once per disablement with actor `system`.
-It is safe because by the time it is written that endpoint is disabled and cannot deliver it. Another
-endpoint delivering it is desirable: "your Teams endpoint just went down" is exactly the notice an
-operator wants in the channel that still works.
+**Stated as a property of the table, because that is where the next contributor will break it:** no
+audit event is written for *any* mutation of `event_endpoint` or `event_delivery` performed by the
+egress job, with the single exception of `event_endpoint.disabled`. The job mutates the endpoint row
+routinely — `last_success_at`, `cursor_seq` — and a later contributor adding a generic "endpoint
+changed → record `event_endpoint.updated`" helper, or a trigger, reintroduces the loop without
+touching the delivery path. §13 asserts the counting version: a day of failures produces exactly one
+audit event, not one per failure.
+
+The `disabled` exception is safe because by the time it is written that endpoint is disabled and
+cannot deliver it. Another endpoint delivering it is desirable: "your Teams endpoint just went down"
+is exactly the notice an operator wants in the channel that still works.
 
 Admin management of endpoints is audited normally and is egress-eligible:
 
@@ -490,11 +712,22 @@ Action names are permanent once written — the convention `translationAction()`
 `resolveMetaAction()` own — so these four are decided here, before the first row exists. All four
 carry `subjectType: 'event_endpoint'` and the endpoint id as `subjectId`, so the endpoint is found by
 the existing `audit_event_subject_idx` rather than by digging through `meta`. `meta` carries the name
-and format, and — on `event_endpoint.disabled` — the failure count and last error.
+and format, and — on `event_endpoint.disabled` — the reason and the last status code.
 
-`meta` does **not** carry the URL. A URL has a query string, and a Teams Workflows URL carries its
-shared secret *in* that query string; writing it to an append-only table would put a credential
-somewhere nothing can delete it from.
+`meta` does **not** carry the URL. A URL has a query string, a Teams Workflows URL carries its shared
+secret *in* that query string, and §6.2 admits userinfo only to reject it — writing any of that to an
+append-only table would put a credential somewhere nothing can delete it from.
+
+### 9.1 High-frequency events are the operator's to choose, with the consequence stated
+
+`document.downloaded` is registered (§4.2) and is not throttled. One grant holder working through
+forty documents produces forty cards, which §5.5's own reasoning ("a channel flooded with stale cards
+is worse than a gap") suggests an operator will regret.
+
+Throttling it here would be this subsystem deciding what an operator's channel should contain, which
+is note §2's line. Instead the admin UI warns when a filter selects an action whose 7-day rate exceeds
+a threshold, and `docs/self-hosting.md` names the high-frequency actions. The operator chooses; they
+are told what they are choosing.
 
 ---
 
@@ -508,21 +741,23 @@ git blame survives.
 
 | Attribute | Notes |
 | --- | --- |
-| `egress.endpoint` | The operator's label. Bounded cardinality — one value per endpoint row |
+| `egress.endpoint_id` | The endpoint's UUID. Bounded, non-identifying, joinable to the admin UI |
 | `egress.action` | The audit action. A bounded vocabulary |
 | `egress.format` | |
 | `egress.attempt` | |
 | `http.response.status_code` | On `event deliver` |
 | `egress.enqueued` | On `event fanout` |
 
-**No URL and no host.** A host can be a literal IP address, and §8 bans IP addresses from telemetry
-outright — an attribute whose value is *sometimes* an IP cannot be sanitised into compliance. This is
-the same reasoning that dropped `server.address` from the request span (subsystem C carry-over §1.1),
-and it is why `egress.endpoint` carries the label rather than the destination.
+**The endpoint's `name` is not an attribute, and neither is the URL or its host.** A host can be a
+literal IP address, and §8 bans IP addresses from telemetry outright — an attribute whose value is
+*sometimes* an IP cannot be sanitised into compliance. That is C's carry-over §1.1 reasoning for
+dropping `server.address`, and it applies to `name` for the same reason: it is unvalidated operator
+free text, and an operator who names an endpoint after its URL or a contact address puts exactly that
+into a metric label. The UUID costs one lookup and is not a judgement call.
 
 **Metrics**, on the `trustcenter.*` convention already in `metrics.ts`:
 
-- `trustcenter.egress.delivery` — counter, by `outcome` and `egress.endpoint`
+- `trustcenter.egress.delivery` — counter, by `outcome` and `egress.endpoint_id`
 - `trustcenter.egress.delivery.duration` — histogram
 - `trustcenter.egress.queue.depth` — observable gauge, mirroring `trustcenter.mail.queue.depth`
 
@@ -540,8 +775,12 @@ outcome, and pending depth. The edit page covers name, URL, format, filter patte
 derived secret, bumping `secret_version`, enabling and disabling — and **send test event**.
 
 The test send renders a synthetic model and delivers it inline, bypassing the cursor, the filter and
-the queue. It is the only way an operator learns their URL is wrong before a real access request
-does, and it is worth the small amount of code that bypassing three things costs.
+the queue. It is the only way an operator learns their URL is wrong before a real access request does.
+
+**It does not bypass §6.3.** The destination check, the scheme and port restrictions, the redirect
+refusal and §6.4's discard-the-body rule all apply unchanged — an inline, admin-triggered request that
+skipped them would be a hand-built SSRF probe with a UI. The three things it bypasses are named
+exhaustively above; nothing else is bypassed.
 
 Its `action` is `egress.test`, which is deliberately **not** an audit action: nothing writes it to
 `audit_event`, no filter can match it, and it is therefore outside the permanent-name convention §9
@@ -550,8 +789,8 @@ records. It exists only on the wire, so a consumer can branch on it and discard 
 **These two routes gate on `role === 'admin'`.** This is a deviation worth naming: the admin layout
 gates on `locals.staff` only and no page below it checks `role` today. An endpoint URL is a
 consequential thing for an `approver` to be able to edit — it is where a prospect's name and address
-get sent — and it is a different kind of object from a FAQ entry. The deviation is confined to these
-two routes; nothing else changes.
+get sent, and §6's threat model is explicitly the compromised admin — so it is a different kind of
+object from a FAQ entry. The deviation is confined to these two routes; nothing else changes.
 
 ---
 
@@ -559,12 +798,17 @@ two routes; nothing else changes.
 
 | Variable | Default | Notes |
 | --- | --- | --- |
-| `EVENT_SIGNING_KEY` | unset | ≥32 characters. Unset means unsigned deliveries (§7.1) |
-| `EVENT_EGRESS_ALLOW_PRIVATE` | `false` | Permits RFC1918/ULA/CGNAT destinations (§6.3) |
+| `EVENT_EGRESS_ENABLED` | `false` | Deploy-time switch. With it off, no endpoint delivers anything (§1.1) |
+| `EVENT_SIGNING_KEY` | unset | ≥32 characters. Required when any endpoint uses `generic` (§7.1) |
+| `EVENT_EGRESS_ALLOW` | empty | Hosts or CIDRs permitted to resolve into otherwise-denied space (§6.3) |
 
-Two variables and no more. The timeout, the batch sizes, the attempt count and the backoff schedule
-are constants: none of them is a thing an operator has information to tune, and every knob is a
-support conversation.
+`EVENT_EGRESS_ENABLED` exists so the sovereignty claim stays verifiable from the environment even
+though endpoints live in the database (§1.1), and so there is a kill switch that is not `RUN_JOBS=false`
+— which would also stop mail.
+
+Three variables and no more. The timeout, the batch sizes, the attempt count, the backoff schedule and
+the 24-hour disable window are constants: none of them is a thing an operator has information to tune,
+and every knob is a support conversation.
 
 Parsed through `config/parse.ts` like everything else, which means `pnpm build` under `env -i`
 continues to work — this subsystem adds no import-time requirement and no eager connection.
@@ -578,14 +822,14 @@ continues to work — this subsystem adds no import-time requirement and no eage
 - Filter matching: `a.*` matches `a.b` and `a.b.c`; does not match `a`; does not match `ab.c`. The
   `staff.login_failed` case specifically, which is the `LIKE`-underscore trap (§4.1).
 - Secret derivation: deterministic for a given `(id, version)`; a version bump changes it; a
-  different id changes it.
-- Signature header format, and that the signed input is `${t}.${body}`.
+  different id changes it. The canary comparison (§7.1).
+- Signature header format, the signed input `${t}.${body}`, and the two-signature rotation header.
 - The SSRF address classification table, including `::ffff:169.254.169.254`, decimal and octal IPv4
-  literals, `0.0.0.0`, `::`, and a trailing-dot hostname — under both settings of
-  `EVENT_EGRESS_ALLOW_PRIVATE`.
-- Both formatters, including that the Teams envelope declares card version 1.4 and contains no
-  external references.
-- The backoff schedule, and the retry classification table (§5.2).
+  literals, `0.0.0.0`, `::`, `100.100.100.200`, and a trailing-dot hostname — with an empty allowlist
+  and with a populated one. URL rejection: userinfo, non-http(s) scheme, disallowed port.
+- Both formatters, including that the Teams envelope declares card version 1.4, contains no external
+  references, and **escapes markdown** in every rendered string (§3.3).
+- The backoff schedule, and the retry classification table (§5.3).
 
 **Integration** (Testcontainers Postgres, plus a new `tests/helpers/webhook-server.ts` fixture):
 
@@ -593,18 +837,24 @@ continues to work — this subsystem adds no import-time requirement and no eage
   the highest seq **scanned**.
 - A new endpoint's cursor starts at the current maximum and its first tick delivers nothing.
 - Each retry transition, and that a 404 fails on attempt one.
-- Auto-disable at ten consecutive failures, with the audit event written.
+- Auto-disable after 24 hours without a success, with the audit event written.
 - A disabled endpoint neither fans out nor delivers.
 - Both re-enable paths: catch-up delivers the backlog, skip marks it `skipped` and delivers nothing.
-- Fan-out pauses above a pending depth of 1000 and resumes as the queue drains (§5.1).
+- Fan-out pauses above a pending depth of 1000 and resumes as the queue drains (§5.2).
+- Round-robin: one black-holing endpoint does not prevent another endpoint's delivery in the same tick.
 
-Three of these carry the load-bearing claims of this document, and each is written as a guard that is
+Four of these carry the load-bearing claims of this document, and each is written as a guard that is
 deleted so the test can be watched failing before it is claimed to defend anything:
 
-1. **Enrichment after `purgeRequester` renders blanks** — §4.3, note §6's entire erasure story.
-2. **A failed delivery writes no audit event** — §9, the loop rule.
-3. **A hostname resolving to `169.254.169.254` is refused at delivery time**, not only on save —
-   §6.3.
+1. **The visibility watermark.** Fan out while a transaction holding a *lower* `seq` is still open,
+   then commit it. The event must be delivered, not skipped. Against a naive `seq > cursor` scan this
+   fails — that is the point (§5.2).
+2. **A purged subject is `skipped`, not blanked.** No request is made, and the delivery is terminal
+   (§4.5).
+3. **A failed delivery writes no audit event**, and a day of failures writes exactly one — the
+   counting version, which is what catches a reintroduced loop (§9).
+4. **A hostname resolving to `169.254.169.254` is refused at delivery time**, not only on save, and
+   the connection is made to the validated address (§6.3).
 
 Any assertion of the form `.some(…) === false` pins the collection's size first. This is a trap the
 OTel branch shipped three times before it was caught: an empty array satisfies such an assertion.
@@ -617,16 +867,17 @@ does not touch.
 
 ## 14. Documentation
 
-- **New section in `docs/self-hosting.md`**, beside the other operational sections: what an endpoint
-  is, the two environment variables, the payload shapes, a signature-verification recipe a consumer
-  can paste, the delivery id as the idempotency key, and the §8 boundary statement.
+- **New section in `docs/self-hosting.md`**: what an endpoint is, the three environment variables,
+  the payload shapes, a signature-verification recipe a consumer can paste, the rotation overlap, the
+  delivery id as the idempotency key, which actions are high-frequency (§9.1), the `skipped`-on-purge
+  contract (§4.5), and the §8 boundary statement.
 - **`docs/self-hosting.md` §9 ("What this deployment does not send anywhere") is amended.** It stops
   being unqualifiedly true the moment an endpoint exists. The amendment must say, in the same
-  paragraph, that the browser-side claim is unchanged and still enforced by
-  `tests/e2e/security.spec.ts` — otherwise a reader takes the amendment for a retreat from the whole
-  section rather than an addition to it.
-- **The decomposition note's §9 A** gets the same treatment §9 C got: a line pointing at this
-  document as governing.
+  paragraph, that egress is off unless `EVENT_EGRESS_ENABLED` is set, and that the browser-side claim
+  is unchanged and still enforced by `tests/e2e/security.spec.ts` — otherwise a reader takes the
+  amendment for a retreat from the whole section rather than an addition to it.
+- **The decomposition note's §5 and §9 A** get a line pointing at this document as governing, and §5
+  specifically is marked corrected by §5.2 here, since B would otherwise inherit the defect.
 
 ---
 
@@ -641,13 +892,57 @@ Recorded so the absences are decisions rather than oversights.
   for. A new formatter is a pull request, and that is the right size for the decision.
 - **No delivery ordering guarantee.** Fan-out is ordered by `seq` and retries are rare, so order is
   natural in practice — but a retried event can land after a later one, and nothing here promises
-  otherwise. A consumer that needs order has `at` and the audit log.
+  otherwise. A consumer that needs order has `at` and `seq` (§4.4).
 - **No `Retry-After` on 5xx.** Only on 429, where it is a rate-limit signal. On a 5xx it is a server
   guessing about its own recovery, and our backoff is already the right answer.
-- **No fan-out concurrency.** Deliveries within a tick are sequential. With a 10-second timeout and a
-  batch of 25, a pathological tick runs long — and that is safe, because the next tick skips on the
-  advisory lock rather than piling up. Concurrency is worth adding when an operator has enough
-  endpoints for it to matter, and not before.
+- **No response body capture** (§6.4), and therefore no "why did it fail" detail beyond a status code
+  in the UI. The log line has more.
+
+---
+
+## 16. Known residuals
+
+- **Delivery is delayed by a long-running transaction** (§5.2). Bounded by the longest transaction in
+  the system, and the correct direction to fail.
+- **A consumer deduplicating on the delivery id keeps a pre-purge payload** (§8). Inherent to
+  at-least-once delivery, and on the operator's side of the boundary.
+- **`EVENT_EGRESS_ALLOW` is trusted once set.** An operator who allowlists a broad CIDR gets what they
+  asked for; the design narrows the default, it does not second-guess an explicit choice.
+
+---
+
+## 17. Revision history
+
+**2026-09-03, after adversarial review.** The review is summarised here because several changes
+reverse things the first draft argued for at length, and a reader who finds only the new reasoning
+would not know a considered position was overturned.
+
+| Changed | Was | Now |
+| --- | --- | --- |
+| §5.2 | `WHERE seq > cursor` | xmin-horizon watermark. The naive scan **silently drops events** committed out of seq order, which `recordEvent(tx, …)` makes routine. Corrects note §5; B inherits the fix. |
+| §4.2 | `access_request.pending` absent | Registered. It is the event the stated requirement is about; the table is now walked against grep, not memory. |
+| §4.3 | `access_request.submitted` enriched | Not enriched. Its data is unverified public-form input, so enriching it aimed a public form at the operator's staff channel and CRM. |
+| §4.5, §8 | "A purge renders blanks, which is correct" | `skipped`. Blanks are indistinguishable from "a person with no name" and corrupt a consumer's records. §8 now states the erasure claim's real precondition. |
+| §6.4, §2.3 | Up to 2 KB of response body in `last_error` | Status code and a fixed phrase. The body would have been a second purge path, an unbounded read, and an SSRF read primitive via §11. |
+| §5.1 | Inherited `mail:drain`'s use of `runJob` | Lock released before any HTTP call; round-robin across endpoints. The lock connection would otherwise sit `idle in transaction` for minutes. |
+| §5.4 | 10 consecutive failures | No success in 24 h. The counter was simultaneously too slow (low volume) and too fast (one batch could disable on a key rotation). |
+| §6.3 | `EVENT_EGRESS_ALLOW_PRIVATE` boolean; rebinding accepted | Allowlist; rebinding closed via `node:https`'s `lookup`. The boolean granted three RFC ranges to reach one host, and closing rebinding needs no new dependency. |
+| §7.1 | Key globally optional; "the only readable-back secret" | Required for `generic`; premise corrected (`subscription.manage_token` already is one), with the real benefit — no signing material in a database compromise — stated instead. Canary added. |
+| §7.2 | Single signature | Overlap window during rotation, without which rotation trips §5.3 and §5.4. |
+| §1.1, §12 | Unstated | The rows-not-env choice is now justified in the document, and `EVENT_EGRESS_ENABLED` keeps the sovereignty claim environment-verifiable. |
+| §10 | `egress.endpoint` carried the name | `egress.endpoint_id`. Operator free text in a metric label is C's carry-over §1.1 problem again. |
+
+Two review findings were **not** adopted:
+
+- **Rebuild as env-vars-only, deleting ~70% of this document.** The argument is sound where its
+  premises hold, and §1.1 now states why they do not here: multiple destinations are a near-term
+  need, and reconfiguration by non-deployers is a requirement. `EVENT_EGRESS_ENABLED` addresses the
+  strongest part of the objection — that the sovereignty claim should stay verifiable from the
+  environment — without giving up the rest.
+- **Drop the first-party Teams formatter.** Microsoft's ingestion contract does churn, and that
+  maintenance is real. But Teams is a named day-one requirement, a formatter holds no credential and
+  calls no vendor API, and §3.3's registry makes it a contained cost. Revisit if the envelope changes
+  a second time.
 
 ---
 
