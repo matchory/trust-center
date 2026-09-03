@@ -106,12 +106,23 @@ describe('teams', () => {
 		const { body } = formatEvent('teams', {
 			...MODEL,
 			summary: hostile,
-			data: { company: hostile, note: `**bold** _under_ \`code\`` }
+			data: { company: hostile, note: `**bold** _under_ \`code\``, [hostile]: 'x' }
 		});
 
 		expect(body).not.toContain('](https://evil.example)');
 		const rendered = JSON.parse(body).attachments[0].content;
 		expect(JSON.stringify(rendered)).toContain('\\\\[Password reset required\\\\]');
+
+		// Titles come from `data` keys, not only values — a hostile fact *title*
+		// must be escaped independently of the value-side guard above, or a
+		// regression dropping title-escaping alone would reopen the injection
+		// path while every other assertion here stays green.
+		const factSet = rendered.body.find((block: { type: string }) => block.type === 'FactSet');
+		expect(factSet.facts).toEqual(
+			expect.arrayContaining([
+				{ title: '\\[Password reset required\\]\\(https://evil.example\\)', value: 'x' }
+			])
+		);
 	});
 
 	it('renders a fact set from data', () => {
