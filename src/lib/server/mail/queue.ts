@@ -1,3 +1,4 @@
+import { SpanKind } from '@opentelemetry/api';
 import { sql } from 'drizzle-orm';
 import { outboundEmail } from '../db/schema';
 import { renderTemplate } from './templates';
@@ -94,7 +95,11 @@ export async function drainOutbox(
 						subject: rendered.subject,
 						text: rendered.text,
 						attachments
-					})
+					}),
+				// CLIENT, because this is the application's only outbound egress
+				// (spec §4): a service map that does not show SMTP leaving this
+				// process shows nothing leaving it at all.
+				SpanKind.CLIENT
 			);
 
 			await db.execute(sql`

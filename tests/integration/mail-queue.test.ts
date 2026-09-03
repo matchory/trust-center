@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { trace } from '@opentelemetry/api';
+import { SpanKind, trace } from '@opentelemetry/api';
 import {
 	BasicTracerProvider,
 	InMemorySpanExporter,
@@ -282,6 +282,9 @@ describe('mail drain telemetry', () => {
 		const sendSpans = exporter.getFinishedSpans().filter((span) => span.name === 'mail send');
 		expect(sendSpans).toHaveLength(1);
 		expect(sendSpans[0]?.attributes['mail.template']).toBe('sign_in');
+		// CLIENT rather than the SDK's default INTERNAL: SMTP is the application's
+		// only outbound egress, and a service map keys on the span kind.
+		expect(sendSpans[0]?.kind).toBe(SpanKind.CLIENT);
 
 		// Spec §8: the recipient is personal data and telemetry leaves the
 		// boundary, so no attribute may carry it.

@@ -1,4 +1,4 @@
-import { trace } from '@opentelemetry/api';
+import { SpanKind, trace } from '@opentelemetry/api';
 import {
 	BasicTracerProvider,
 	InMemorySpanExporter,
@@ -64,6 +64,19 @@ describe('the request span', () => {
 		expect(spans[0]?.name).toBe('GET /(portal)/[locale]/documents');
 		expect(spans[0]?.attributes['http.route']).toBe('/(portal)/[locale]/documents');
 		expect(spans[0]?.attributes['http.response.status_code']).toBe(200);
+	});
+
+	// The SDK defaults to INTERNAL, and every trace backend plus the collector's
+	// spanmetrics connector keys entry-point detection, service maps and RED
+	// aggregation on the kind — so an INTERNAL root carrying http.route is the
+	// entry point of no trace anywhere. As permanent as the span name.
+	it('is a SERVER span, not the SDK default', async () => {
+		const { handle } = await import('../../src/hooks.server');
+		const resolve = vi.fn(async () => new Response(null, { status: 200, headers: new Headers() }));
+
+		await handle({ event: fakeEvent('/de', '', '/(portal)/[locale]'), resolve });
+
+		expect(exporter.getFinishedSpans()[0]?.kind).toBe(SpanKind.SERVER);
 	});
 });
 

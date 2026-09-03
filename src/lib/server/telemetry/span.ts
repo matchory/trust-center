@@ -1,4 +1,5 @@
 import {
+	SpanKind,
 	SpanStatusCode,
 	isSpanContextValid,
 	trace,
@@ -18,13 +19,23 @@ const TRACER_NAME = 'trust-center';
  * OTEL_EXPORTER_OTLP_ENDPOINT — the API returns a no-op tracer, so this costs
  * one function call and no allocation of anything exportable. That is what
  * lets the server carry instrumentation with no `if (enabled)` guards.
+ *
+ * `kind` is trailing and optional so every existing call site keeps its
+ * three-argument shape, and defaults to `INTERNAL` — right for in-process work
+ * like a job tick or watermarking. It is worth setting on the two spans that
+ * are not in-process work: Tempo, Jaeger, Grafana, Datadog and the collector's
+ * `spanmetrics` connector all key entry-point detection, service maps and RED
+ * aggregation on the span kind, so an `INTERNAL` root carrying HTTP attributes
+ * is an entry point in none of them. A span kind is as permanent as a span
+ * name once a dashboard is built on it.
  */
 export async function withSpan<T>(
 	name: string,
 	attributes: Attributes,
-	fn: (span: Span) => Promise<T>
+	fn: (span: Span) => Promise<T>,
+	kind: SpanKind = SpanKind.INTERNAL
 ): Promise<T> {
-	return trace.getTracer(TRACER_NAME).startActiveSpan(name, { attributes }, async (span) => {
+	return trace.getTracer(TRACER_NAME).startActiveSpan(name, { attributes, kind }, async (span) => {
 		try {
 			return await fn(span);
 		} catch (cause) {

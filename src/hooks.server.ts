@@ -1,4 +1,5 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
+import { SpanKind } from '@opentelemetry/api';
 import { error, type Handle, type HandleServerError, type ServerInit } from '@sveltejs/kit';
 import {
 	SESSION_COOKIE,
@@ -163,35 +164,44 @@ export const handle: Handle = async ({ event, resolve }) => {
 	// The span wraps outside `localeStorage.run`, which stays the immediate
 	// wrapper around `resolve` — the rule CLAUDE.md states, and whose breach
 	// shows up as SSR translations silently falling back to the base locale.
-	return withSpan(requestSpanName(method, routeId), {}, async (span) => {
-		const started = performance.now();
+	return withSpan(
+		requestSpanName(method, routeId),
+		{},
+		async (span) => {
+			const started = performance.now();
 
-		const response = await localeStorage.run(
-			{ locale: assertIsLocale(event.locals.locale) },
-			async () => {
-				const resolved = await resolve(event, {
-					transformPageChunk: ({ html }) => html.replace('%lang%', event.locals.locale)
-				});
+			const response = await localeStorage.run(
+				{ locale: assertIsLocale(event.locals.locale) },
+				async () => {
+					const resolved = await resolve(event, {
+						transformPageChunk: ({ html }) => html.replace('%lang%', event.locals.locale)
+					});
 
-				// Only the unprefixed responses vary by Accept-Language — and those
-				// are all redirects issued by the root layout. Every content URL
-				// carries its locale in the path and stays unconditionally cacheable.
-				if (route.kind === 'unprefixed') resolved.headers.append('Vary', 'Accept-Language');
+					// Only the unprefixed responses vary by Accept-Language — and those
+					// are all redirects issued by the root layout. Every content URL
+					// carries its locale in the path and stays unconditionally cacheable.
+					if (route.kind === 'unprefixed') resolved.headers.append('Vary', 'Accept-Language');
 
-				return resolved;
-			}
-		);
+					return resolved;
+				}
+			);
 
-		span.setAttributes(requestAttributes({ method, routeId, status: response.status }));
-		recordRequestDuration({
-			method,
-			routeId,
-			status: response.status,
-			seconds: (performance.now() - started) / 1000
-		});
+			span.setAttributes(requestAttributes({ method, routeId, status: response.status }));
+			recordRequestDuration({
+				method,
+				routeId,
+				status: response.status,
+				seconds: (performance.now() - started) / 1000
+			});
 
-		return response;
-	});
+			return response;
+		},
+		// SERVER, not the SDK's default INTERNAL: every trace backend and the
+		// collector's spanmetrics connector keys entry-point detection, service
+		// maps and RED aggregation on the span kind, so an INTERNAL root carrying
+		// http.route is the entry point of no trace anywhere.
+		SpanKind.SERVER
+	);
 };
 
 /**
