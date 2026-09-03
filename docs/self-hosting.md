@@ -601,6 +601,21 @@ queue grows. `trustcenter.mail.queue.depth` rising without falling is the
 signal. Note that a deployment with no `SMTP_URL` is a supported configuration
 in which that number grows forever by design.
 
+**Where export failures show up.** A malformed endpoint refuses to boot, but a
+well-formed one pointing somewhere unhelpful cannot be caught before the first
+export is attempted. Those failures — a 404 from a collector that does not
+serve `/v1/traces`, a 401 from a stale token in `OTEL_EXPORTER_OTLP_HEADERS`, a
+refused connection — are written to the container log as structured JSON with
+`"scope":"telemetry"`, the same shape a failing background job uses:
+
+```sh
+docker compose logs trust-center | grep '"scope":"telemetry"'
+```
+
+Nothing is logged when telemetry is off. A trailing slash on the endpoint is
+tolerated: it is stripped at startup, so `https://otel.example:4318/` and
+`https://otel.example:4318` behave identically.
+
 Only the four `OTEL_*` variables in §3 are read. Other standard OpenTelemetry
 environment variables are deliberately ignored, because every setting in this
 application is validated once at startup and a typo must refuse to boot rather

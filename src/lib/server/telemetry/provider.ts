@@ -1,4 +1,4 @@
-import { metrics, trace } from '@opentelemetry/api';
+import { diag, DiagLogLevel, metrics, trace } from '@opentelemetry/api';
 import type { AppConfig } from '../config';
 import { registerQueueDepthGauge, resetInstruments } from './metrics';
 
@@ -24,8 +24,47 @@ let started: { shutdown: () => Promise<void> }[] = [];
  * live export timer, and orphaning one of those on every restart is a leak,
  * not a curiosity.
  */
+/**
+ * Without a diag logger the OTLP exporter reports every export failure — a 404
+ * from an endpoint that is nearly right, a 401 from a stale bearer token, a
+ * refused connection — through the API's no-op, so a collector that accepts
+ * nothing is indistinguishable from one that accepts everything. Spec §6 reads
+ * these variables ourselves precisely so a typo refuses to boot rather than
+ * degrading to silence; boot validation only covers what is checkable before
+ * the first export, and this covers the rest.
+ *
+ * Installed only when telemetry is on: a deployment with no collector must stay
+ * silent. The line shape is the structured JSON the background jobs already
+ * write, so an operator's log pipeline needs no second parser. Only `error` can
+ * fire at DiagLogLevel.ERROR — the API filters the rest before calling — so the
+ * quieter levels are honestly no-ops rather than unreachable formatting.
+ */
+function installDiagLogger(): void {
+	const noop = () => {};
+
+	diag.setLogger(
+		{
+			error: (message, ...args) =>
+				console.error(
+					JSON.stringify({
+						level: 'error',
+						scope: 'telemetry',
+						message: [message, ...args.map(String)].join(' ')
+					})
+				),
+			warn: noop,
+			info: noop,
+			debug: noop,
+			verbose: noop
+		},
+		DiagLogLevel.ERROR
+	);
+}
+
 export async function startTelemetry(config: AppConfig['telemetry']): Promise<boolean> {
 	if (!config.endpoint || started.length > 0) return false;
+
+	installDiagLogger();
 
 	const [
 		{ resourceFromAttributes },
@@ -118,5 +157,11 @@ export async function shutdownTelemetry(): Promise<void> {
 		// this application is built to tolerate.
 		trace.disable();
 		metrics.disable();
+		diag.disable();
+		// The mirror of the rule `startTelemetry` follows above: an instrument
+		// built against a provider that is gone would keep recording into it
+		// instead of falling back to the no-op meter the rest of this application
+		// is built to tolerate.
+		resetInstruments();
 	}
 }
