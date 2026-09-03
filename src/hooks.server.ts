@@ -1,6 +1,12 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { SpanKind } from '@opentelemetry/api';
-import { error, type Handle, type HandleServerError, type ServerInit } from '@sveltejs/kit';
+import {
+	error,
+	isHttpError,
+	type Handle,
+	type HandleServerError,
+	type ServerInit
+} from '@sveltejs/kit';
 import {
 	SESSION_COOKIE,
 	STAFF_COOKIE_OPTIONS,
@@ -94,72 +100,17 @@ export const init: ServerInit = async () => {
 };
 
 export const handle: Handle = async ({ event, resolve }) => {
-	const { locales, defaultLocale } = getConfig();
-	const route = classifyPath(event.url.pathname, COMPILED_LOCALES, locales);
-
-	// A compiled-but-disabled locale is not a content path. Refusing it here
-	// keeps `/en/avv` from degrading into a lookup for a document slugged "en"
-	// the day an operator narrows LOCALES.
-	if (route.kind === 'unknown-locale') {
-		error(404, `Locale "${route.locale}" is not enabled on this deployment.`);
-	}
-
-	event.locals.pathLocale = route.kind === 'localized' ? route.locale : null;
-	event.locals.locale =
-		route.kind === 'localized'
-			? route.locale
-			: resolveLocale(
-					{
-						pathLocale: null,
-						acceptLanguage: event.request.headers.get('accept-language') ?? undefined
-					},
-					locales,
-					defaultLocale
-				);
-
-	event.locals.staff = null;
-	const token = event.cookies.get(SESSION_COOKIE);
-
-	if (token) {
-		const session = await validateStaffSession(getDb(), token);
-		const role = session?.user.role;
-
-		if (session && (role === 'admin' || role === 'approver')) {
-			event.locals.staff = {
-				id: session.user.id,
-				email: session.user.email,
-				name: session.user.name,
-				role
-			};
-		} else {
-			// As with the requester cookie below, every attribute must match the
-			// set or the deletion is rejected — see STAFF_COOKIE_OPTIONS.
-			event.cookies.delete(SESSION_COOKIE, STAFF_COOKIE_OPTIONS);
-		}
-	}
-
-	event.locals.requester = null;
-	const requesterToken = event.cookies.get(REQUESTER_SESSION_COOKIE);
-
-	if (requesterToken) {
-		const session = await validateRequesterSession(getDb(), requesterToken);
-
-		if (session) {
-			event.locals.requester = {
-				id: session.requester.id,
-				email: session.requester.email,
-				name: session.requester.name,
-				company: session.requester.company
-			};
-		} else {
-			// Every attribute must match how it was set, or the delete silently
-			// does nothing — see requesterCookieOptions.
-			event.cookies.delete(REQUESTER_SESSION_COOKIE, requesterCookieOptions(event.locals.locale));
-		}
-	}
-
+	// Opened at the very top of `handle`, ahead of locale classification and the
+	// two session lookups. `event.route.id` and the method are both populated
+	// before `handle` runs, so nothing is lost by starting here — and starting
+	// later cost two things: `http.server.request.duration` is a semantic
+	// convention name with a semantic convention meaning, and it under-reported
+	// by a database round trip on every authenticated request; and the 404 below
+	// for a compiled-but-disabled locale was thrown before the span existed, so
+	// that entire class of request was invisible in traces and metrics alike.
 	const routeId = event.route.id;
 	const method = event.request.method;
+	const started = performance.now();
 
 	// The span wraps outside `localeStorage.run`, which stays the immediate
 	// wrapper around `resolve` — the rule CLAUDE.md states, and whose breach
@@ -168,33 +119,114 @@ export const handle: Handle = async ({ event, resolve }) => {
 		requestSpanName(method, routeId),
 		{},
 		async (span) => {
-			const started = performance.now();
+			// Called on every exit path, a throw included, so no failure between
+			// here and `resolve` can drop a request out of both signals at once.
+			const record = (status: number) => {
+				span.setAttributes(requestAttributes({ method, routeId, status }));
+				recordRequestDuration({
+					method,
+					routeId,
+					status,
+					seconds: (performance.now() - started) / 1000
+				});
+			};
 
-			const response = await localeStorage.run(
-				{ locale: assertIsLocale(event.locals.locale) },
-				async () => {
-					const resolved = await resolve(event, {
-						transformPageChunk: ({ html }) => html.replace('%lang%', event.locals.locale)
-					});
+			try {
+				const { locales, defaultLocale } = getConfig();
+				const route = classifyPath(event.url.pathname, COMPILED_LOCALES, locales);
 
-					// Only the unprefixed responses vary by Accept-Language — and those
-					// are all redirects issued by the root layout. Every content URL
-					// carries its locale in the path and stays unconditionally cacheable.
-					if (route.kind === 'unprefixed') resolved.headers.append('Vary', 'Accept-Language');
-
-					return resolved;
+				// A compiled-but-disabled locale is not a content path. Refusing it
+				// here keeps `/en/avv` from degrading into a lookup for a document
+				// slugged "en" the day an operator narrows LOCALES.
+				if (route.kind === 'unknown-locale') {
+					error(404, `Locale "${route.locale}" is not enabled on this deployment.`);
 				}
-			);
 
-			span.setAttributes(requestAttributes({ method, routeId, status: response.status }));
-			recordRequestDuration({
-				method,
-				routeId,
-				status: response.status,
-				seconds: (performance.now() - started) / 1000
-			});
+				event.locals.pathLocale = route.kind === 'localized' ? route.locale : null;
+				event.locals.locale =
+					route.kind === 'localized'
+						? route.locale
+						: resolveLocale(
+								{
+									pathLocale: null,
+									acceptLanguage: event.request.headers.get('accept-language') ?? undefined
+								},
+								locales,
+								defaultLocale
+							);
 
-			return response;
+				event.locals.staff = null;
+				const token = event.cookies.get(SESSION_COOKIE);
+
+				if (token) {
+					const session = await validateStaffSession(getDb(), token);
+					const role = session?.user.role;
+
+					if (session && (role === 'admin' || role === 'approver')) {
+						event.locals.staff = {
+							id: session.user.id,
+							email: session.user.email,
+							name: session.user.name,
+							role
+						};
+					} else {
+						// As with the requester cookie below, every attribute must match
+						// the set or the deletion is rejected — see STAFF_COOKIE_OPTIONS.
+						event.cookies.delete(SESSION_COOKIE, STAFF_COOKIE_OPTIONS);
+					}
+				}
+
+				event.locals.requester = null;
+				const requesterToken = event.cookies.get(REQUESTER_SESSION_COOKIE);
+
+				if (requesterToken) {
+					const session = await validateRequesterSession(getDb(), requesterToken);
+
+					if (session) {
+						event.locals.requester = {
+							id: session.requester.id,
+							email: session.requester.email,
+							name: session.requester.name,
+							company: session.requester.company
+						};
+					} else {
+						// Every attribute must match how it was set, or the delete
+						// silently does nothing — see requesterCookieOptions.
+						event.cookies.delete(
+							REQUESTER_SESSION_COOKIE,
+							requesterCookieOptions(event.locals.locale)
+						);
+					}
+				}
+
+				const response = await localeStorage.run(
+					{ locale: assertIsLocale(event.locals.locale) },
+					async () => {
+						const resolved = await resolve(event, {
+							transformPageChunk: ({ html }) => html.replace('%lang%', event.locals.locale)
+						});
+
+						// Only the unprefixed responses vary by Accept-Language — and those
+						// are all redirects issued by the root layout. Every content URL
+						// carries its locale in the path and stays unconditionally cacheable.
+						if (route.kind === 'unprefixed') resolved.headers.append('Vary', 'Accept-Language');
+
+						return resolved;
+					}
+				);
+
+				record(response.status);
+				return response;
+			} catch (cause) {
+				// A SvelteKit `error()` carries the status the response will have;
+				// anything else SvelteKit renders as a 500, so that is the honest
+				// fallback. Approximate rather than observed — the response is built
+				// above us — but an approximate status beats the invisibility this
+				// replaces, where a throw produced no span attributes and no data
+				// point at all.
+				record(isHttpError(cause) ? cause.status : 500);
+				throw cause;
+			}
 		},
 		// SERVER, not the SDK's default INTERNAL: every trace backend and the
 		// collector's spanmetrics connector keys entry-point detection, service

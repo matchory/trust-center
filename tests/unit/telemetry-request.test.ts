@@ -1,18 +1,40 @@
-import { SpanKind, trace } from '@opentelemetry/api';
+import { metrics, SpanKind, trace } from '@opentelemetry/api';
+import {
+	AggregationTemporality,
+	InMemoryMetricExporter,
+	MeterProvider,
+	PeriodicExportingMetricReader,
+	type DataPoint
+} from '@opentelemetry/sdk-metrics';
 import {
 	BasicTracerProvider,
 	InMemorySpanExporter,
 	SimpleSpanProcessor
 } from '@opentelemetry/sdk-trace-base';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { resetInstruments } from '../../src/lib/server/telemetry/metrics';
 
 const exporter = new InMemorySpanExporter();
+
+// This file needs both signals from one request: the throw-path case below
+// asserts that a request `handle` never finishes still produces a span *and* a
+// duration data point. Delta temporality for the same reason
+// tests/unit/telemetry-metrics.test.ts uses it — a cumulative reader would
+// re-export an earlier case's point on every collect.
+const metricExporter = new InMemoryMetricExporter(AggregationTemporality.DELTA);
+const reader = new PeriodicExportingMetricReader({
+	exporter: metricExporter,
+	// Long enough that only an explicit forceFlush exports.
+	exportIntervalMillis: 600_000
+});
 
 beforeAll(async () => {
 	Object.assign(process.env, {
 		DATABASE_URL: 'postgres://tc:tc@localhost:5432/tc',
 		BASE_URL: 'https://trust.example.com',
-		LOCALES: 'de,en',
+		// `de` only, though `de,en` are compiled (project.inlang/settings.json):
+		// that gap is what makes the compiled-but-disabled 404 below reachable.
+		LOCALES: 'de',
 		DEFAULT_LOCALE: 'de',
 		OIDC_ISSUER: 'https://idp.example.com',
 		OIDC_CLIENT_ID: 'trust-center',
@@ -29,11 +51,21 @@ beforeAll(async () => {
 	trace.setGlobalTracerProvider(
 		new BasicTracerProvider({ spanProcessors: [new SimpleSpanProcessor(exporter)] })
 	);
+
+	// Same globalThis hazard, same guard — and `resetInstruments` after it,
+	// because an instrument built against the API's no-op meter stays a no-op
+	// forever, so anything recorded before this point would go nowhere.
+	metrics.disable();
+	metrics.setGlobalMeterProvider(new MeterProvider({ readers: [reader] }));
+	resetInstruments();
 });
 
 // Leaves the API as disabled as this file found it, so a real, recording
 // provider registered here does not leak into another test file's spans.
-afterAll(() => trace.disable());
+afterAll(() => {
+	trace.disable();
+	metrics.disable();
+});
 
 beforeEach(() => exporter.reset());
 
@@ -107,5 +139,48 @@ describe('no span attribute carries a secret or an identity', () => {
 		expect(values.some((value) => value.includes('token='))).toBe(false);
 		expect(values.some((value) => value.includes('@'))).toBe(false);
 		expect(values.some((value) => /\d+\.\d+\.\d+\.\d+/.test(value))).toBe(false);
+	});
+});
+
+describe('a request that throws before resolve', () => {
+	// `handle` itself throws the 404 for a compiled-but-disabled locale, and the
+	// span used to be created after that point — so this entire class of request
+	// was invisible in traces and in metrics at once. `resolve` throwing has the
+	// same shape and was equally invisible.
+	it('still emits a span and a duration data point, carrying the thrown status', async () => {
+		const { handle } = await import('../../src/hooks.server');
+		const resolve = vi.fn(async () => new Response(null, { status: 200, headers: new Headers() }));
+
+		// Drain whatever earlier cases recorded, so the flush below sees only
+		// this request's point.
+		await reader.forceFlush();
+		metricExporter.reset();
+
+		await expect(
+			handle({ event: fakeEvent('/en/documents', '', null), resolve })
+		).rejects.toMatchObject({ status: 404 });
+
+		// The throw is `handle`'s own, before the locale is even resolved.
+		expect(resolve).not.toHaveBeenCalled();
+
+		const spans = exporter.getFinishedSpans();
+		expect(spans).toHaveLength(1);
+		expect(spans[0]?.attributes['http.request.method']).toBe('GET');
+		expect(spans[0]?.attributes['http.response.status_code']).toBe(404);
+
+		await reader.forceFlush();
+		const points = metricExporter
+			.getMetrics()
+			.flatMap((resource) => resource.scopeMetrics)
+			.flatMap((scope) => scope.metrics)
+			.filter((metric) => metric.descriptor.name === 'http.server.request.duration')
+			// `MetricData` is a union over the four aggregation shapes, and TS can't
+			// unify their differently-typed `dataPoints` arrays through `flatMap` —
+			// but `attributes` has the same shape on every one, which is all this
+			// reads.
+			.flatMap((metric) => metric.dataPoints as DataPoint<unknown>[]);
+
+		expect(points).toHaveLength(1);
+		expect(points[0]?.attributes['http.response.status_code']).toBe(404);
 	});
 });
