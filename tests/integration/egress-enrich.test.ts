@@ -10,6 +10,9 @@ import {
 	documentCategory,
 	documentFile,
 	documentTranslation,
+	ndaAcceptance,
+	ndaTemplate,
+	ndaTemplateVersion,
 	requester
 } from '../../src/lib/server/db/schema';
 import { enrichEvent } from '../../src/lib/server/egress/enrich';
@@ -66,6 +69,19 @@ async function insertCategory(): Promise<string> {
 		.values({ slug: `cat-${crypto.randomUUID()}` })
 		.returning({ id: documentCategory.id });
 	return row!.id;
+}
+
+/** An effective version needs a template above it; the acceptance tests need both. */
+async function insertNdaVersion(): Promise<{ templateId: string; versionId: string }> {
+	const [template] = await db
+		.insert(ndaTemplate)
+		.values({ slug: `nda-${crypto.randomUUID()}` })
+		.returning({ id: ndaTemplate.id });
+	const [version] = await db
+		.insert(ndaTemplateVersion)
+		.values({ templateId: template!.id, version: 1 })
+		.returning({ id: ndaTemplateVersion.id });
+	return { templateId: template!.id, versionId: version!.id };
 }
 
 describe('enrichEvent', () => {
@@ -342,5 +358,104 @@ describe('enrichEvent', () => {
 		if (outcome.kind !== 'model') return;
 		expect(outcome.model.data).toMatchObject({ name: 'Lior Kaplan', grantId: grant!.id });
 		expect(outcome.model.link).toBe('https://trust.example.com/en/admin/grants');
+	});
+
+	it('skips an NDA acceptance whose subject row is gone', async () => {
+		await recordEvent(db, {
+			action: 'nda_record.downloaded',
+			actor: { type: 'requester', id: crypto.randomUUID() },
+			subjectType: 'nda_acceptance',
+			subjectId: crypto.randomUUID()
+		});
+
+		const outcome = await enrichEvent(db, await newestEvent('nda_record.downloaded'), CONTEXT);
+		expect(outcome).toEqual({ kind: 'skip', reason: 'subject_missing' });
+	});
+
+	it('enriches an NDA acceptance from the live requester', async () => {
+		const requesterId = await insertRequester({ name: 'Priya Nair', company: 'Nair Systems' });
+		const { versionId } = await insertNdaVersion();
+		const [acceptance] = await db
+			.insert(ndaAcceptance)
+			.values({
+				requesterId,
+				versionId,
+				typedName: 'Priya Nair',
+				email: 'priya@nair-systems.example',
+				company: 'Nair Systems',
+				companyDomain: 'nair-systems.example',
+				templateSha256: 'c'.repeat(64)
+			})
+			.returning({ id: ndaAcceptance.id });
+
+		await recordEvent(db, {
+			action: 'nda_acceptance.recorded',
+			actor: { type: 'requester', id: requesterId },
+			subjectType: 'nda_acceptance',
+			subjectId: acceptance!.id
+		});
+
+		const outcome = await enrichEvent(db, await newestEvent('nda_acceptance.recorded'), CONTEXT);
+
+		expect(outcome.kind).toBe('model');
+		if (outcome.kind !== 'model') return;
+		expect(outcome.model.verified).toBe(true);
+		expect(outcome.model.data).toMatchObject({
+			name: 'Priya Nair',
+			company: 'Nair Systems',
+			version: 1
+		});
+		expect(outcome.model.data.template).toBeDefined();
+	});
+
+	/**
+	 * Discriminating, not just passing: `nda_acceptance` keeps its own
+	 * typedName/email/company/companyDomain after a purge (purgeRequester's
+	 * comment — an Art. 17(3)(e) evidence exemption), so a naive fixture with
+	 * those columns already blank would pass even if the enricher read them
+	 * back instead of `requester`. This test leaves them populated with
+	 * values distinct from the (blanked) requester row, so an implementation
+	 * that "fixes" enrichNdaAcceptance to read `ndaAcceptance.email` — the
+	 * exact regression the function's why-comment warns against — fails this
+	 * test by returning a model instead of a skip.
+	 */
+	it('skips an NDA acceptance whose requester has been purged', async () => {
+		const requesterId = await insertRequester();
+		const { versionId } = await insertNdaVersion();
+		const [acceptance] = await db
+			.insert(ndaAcceptance)
+			.values({
+				requesterId,
+				versionId,
+				typedName: 'Retained Name',
+				email: 'retained@acme.example',
+				company: 'Retained Co',
+				companyDomain: 'acme.example',
+				templateSha256: 'd'.repeat(64)
+			})
+			.returning({ id: ndaAcceptance.id });
+
+		await recordEvent(db, {
+			action: 'nda_acceptance.recorded',
+			actor: { type: 'requester', id: requesterId },
+			subjectType: 'nda_acceptance',
+			subjectId: acceptance!.id
+		});
+
+		// Exactly what purgeRequester writes to `requester` — it does NOT touch
+		// `nda_acceptance`'s identity columns, which stay populated above.
+		await db
+			.update(requester)
+			.set({
+				email: `purged-${requesterId}@invalid`,
+				name: '',
+				company: '',
+				companyDomain: '',
+				purgedAt: new Date()
+			})
+			.where(eq(requester.id, requesterId));
+
+		const outcome = await enrichEvent(db, await newestEvent('nda_acceptance.recorded'), CONTEXT);
+		expect(outcome).toEqual({ kind: 'skip', reason: 'subject_purged' });
 	});
 });
