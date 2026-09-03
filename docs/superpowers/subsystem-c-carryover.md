@@ -1,7 +1,7 @@
 # Integrations subsystem C — OTel egress — Carry-over
 
 **Date:** 2026-09-03
-**Branch:** `feat/otel-egress`, 23 commits from `84b71e0`
+**Branch:** `feat/otel-egress`, 26 commits from `84b71e0`
 **Spec:** `docs/superpowers/specs/2026-09-02-otel-egress-design.md`
 **Plan:** `docs/superpowers/plans/2026-09-02-otel-egress.md`
 
@@ -12,12 +12,13 @@ sequences them C → A → B → D → E), so this is also the first carry-over 
 
 ---
 
-## 1. Two undocumented spec deviations
+## 1. Spec deviations, both now folded back into the spec
 
-Both were decided during implementation and neither was written down until now, which is the reason
-this section exists first.
+Both were decided during implementation and neither was written down at the time, which is the reason
+this section exists first. Both have since been reconciled: §7.1 and §7.2 of the design now say what
+the code does, so a reader of the spec alone is no longer misled.
 
-### 1.1 §7.1 lists four request-span attributes; three are implemented
+### 1.1 §7.1 listed four request-span attributes; three are implemented — spec corrected
 
 `server.address` was dropped. It is the `Host` header — attacker-controlled, unbounded in
 cardinality, and on a request that reaches the container directly it is frequently a literal IP
@@ -29,33 +30,33 @@ The three that ship — `http.request.method`, `http.route`, `http.response.stat
 three the spec's own questions need. This is a correction to §7.1, not a shortfall against it: the
 attribute should not have been listed.
 
-### 1.2 §7.2's `delivery/serve.ts` span was dropped
+### 1.2 §7.2's `delivery/serve.ts` span — closed
 
-§7.2 asks for a span around the one mediated path out of storage *and* the watermarking inside it,
-singling out delivery because it "buffers." Only the watermark span shipped.
+Originally dropped: §7.2 asks for a span around the one mediated path out of storage *and* the
+watermarking inside it, singling out delivery because it "buffers," and only the watermark span
+shipped. That left the storage read — the thing §7.2 actually named — outside every span, so a large
+document over a slow adapter reported a fast watermark inside a slow request with the gap
+unexplained.
 
-`serveDocumentFile` takes a SvelteKit `RequestEvent`, and no integration test in this repository
-constructs one — the unit fakes in `tests/unit/telemetry-request.test.ts` and
-`tests/unit/hooks-locale.test.ts` cover only what `handle` reads, which is a much smaller surface
-than `serveDocumentFile` touches. A span added there would therefore ship untested, and this
-subsystem's whole argument for manual instrumentation (§4) is that a missing span is a missing line
-of code rather than a silent breakage — an untested span is neither.
+**Now implemented.** `serveDocumentFile` opens a `document deliver` span around the storage read and
+the stamping, with `stampPdf`'s own span nested inside it; the difference between the two is exactly
+the buffering. Attributes are `document.tier`, `document.watermarked` and `document.size_bytes`, and
+the recipient appears on neither span (§8).
 
-**What the watermark span does and does not cover.** It covers the CPU cost of stamping, which is
-real. It does *not* cover the storage read that precedes it: `serveDocumentFile` buffers the whole
-object out of storage and only then calls `stampPdf`, so the buffering — the thing §7.2 actually
-singled out — is outside the span. On a large document over a slow storage adapter, the span will
-report a fast watermark inside a slow request and the gap will be unexplained.
+**What unblocked it.** The stated blocker was that `serveDocumentFile` takes a SvelteKit
+`RequestEvent` no integration test could construct. That turned out to be the wrong diagnosis: the
+module reads five fields off the event (`params`, `request.headers`, `locals.requester`,
+`locals.locale`, `getClientAddress()`), and `tests/helpers/request-event.ts` supplies exactly those.
+The real obstacle was the three lazy singletons it reaches for rather than takes — `getDb()`,
+`getConfig()`, `getStorage()` — which a test can satisfy by owning `process.env` before the first
+call, as `tests/integration/delivery-serve.test.ts` now does. Integration files run in isolated
+forks, so that affects no other file.
 
-**What would unblock it.** Either of:
-
-- a `RequestEvent` fixture the integration suite can build, which would also serve the several other
-  server modules that take one and are tested only through e2e today; or
-- moving the span up to wrap the storage-read-plus-stamp block inside `serveDocumentFile`, which
-  needs no new attributes — `document.pages` stays where it is — and measures what §7.2 named.
-
-Raised by the final review of this branch and deliberately not taken there: reopening the
-untestable-`RequestEvent` problem in a fix wave is the wrong moment for it.
+That fixture is reusable, and it is the thing that was actually missing: several other server
+modules take a `RequestEvent` and are covered only through e2e today. `tests/integration/download.test.ts`
+carries a comment saying the authorization matrix is asserted at the module boundary "because the
+endpoint needs a full SvelteKit event" — that constraint is now lifted for whoever wants to take it
+up.
 
 ---
 
@@ -89,7 +90,26 @@ that runs `withSpan` under the *no-op* tracer, which means a file that deliberat
 provider — the opposite precondition to every other telemetry test file, all of which register one.
 Worth doing, not worth doing inside this branch's last commits.
 
-### 2.4 e2e teardown noise, pre-existing
+### 2.4 Four cleanup findings left standing
+
+A final `/simplify` pass over the branch fixed reuse, indentation and closure-retention problems (see
+§4). Four of its findings were skipped on judgement, and are recorded here so they are decisions
+rather than oversights:
+
+- **A `withRequestSpan(event, fn)` seam owned by `telemetry/`.** Would pull `isHttpError` and
+  SvelteKit into a directory that is otherwise framework-free. Extracting `handleRequest` in
+  `hooks.server.ts` got the blame-and-indentation benefit without that coupling.
+- **`withSpan` owning duration and outcome.** It has the try/catch where both are known, so both
+  metric call sites reopen a second `performance.now()` around it. But the two differ genuinely — a
+  status code versus a three-valued outcome including `locked` — so the shared version would need a
+  per-site callback anyway.
+- **A shared structured `logError()`.** `console.error(JSON.stringify({ level: 'error', … }))` is now
+  hand-written four times, and `provider.ts`'s comment justifies itself by matching the other copies.
+  Two of the four predate this branch, so fixing it properly is a change outside C.
+- **A `jobAttributes()` beside `requestAttributes()`.** One repeated attribute key across three
+  literals; an abstraction would cost more than the drift it prevents.
+
+### 2.5 e2e teardown noise, pre-existing
 
 `tests/setup/e2e-db-teardown.ts` drops the e2e database while the 15-second `mail:drain` tick is
 still live, so a run
@@ -105,11 +125,11 @@ harness actually invokes, which is a change to the harness rather than to C.
 | | Before | After |
 | --- | --- | --- |
 | Unit tests | 199 | 227 |
-| Integration tests | 281 | 287 |
+| Integration tests | 281 | 290 |
 | E2e tests | 103 | 103 |
 | Migrations | 26 | 26 |
 | Tables | — | unchanged; C has no state beyond a process-lifetime SDK |
-| Span names | — | +4, permanent |
+| Span names | — | +6, permanent |
 | Metric names | — | +4, permanent |
 
 `pnpm check` at 0 errors and 0 warnings throughout, and
@@ -128,7 +148,34 @@ looking identical.
 
 ---
 
-## 4. One process note worth keeping
+## 4. The cleanup wave, and what it changed structurally
+
+A `/simplify` pass ran over the finished branch — quality only, no bug hunting. What it found is
+worth recording because two of the findings were about the *shape of the diff*, not the code:
+
+**Instrumentation had been woven through two functions instead of wrapped around them.** `handle` and
+`stampPdf` had their entire bodies re-indented one level into a `withSpan` callback: 245 changed
+lines in `hooks.server.ts` of which only 143 were real, and 94 in `watermark.ts` of which only 8
+were. Extracting `handleRequest` and `stamp` and making the public function a thin wrapper brought
+those to 121 and 18 insertions with zero whitespace churn, and returned `git blame` on the locale
+and session logic — the most cross-cutting code in the repository — to the commits that wrote it.
+
+**The test scaffolding was copied seven times and had already diverged.** Every telemetry-touching
+test file hand-rolled the same `trace.disable()` / `setGlobalTracerProvider` dance with its own copy
+of the comment explaining it, and only two of the seven installed an `AsyncLocalStorageContextManager`
+— so whether `activeTraceId()` worked at all depended on which file you were in.
+`tests/helpers/telemetry.ts` now owns that rule once. The same file owns
+`expectNoSensitiveAttributes`, which had been hand-rolled at four sites screening for **different**
+subsets of the §8 rule: the watermark copy checked the recipient's name and company but not
+`token=` or the IP shape, and the mail copy omitted the span name from the values it scanned. That
+was the branch's permanent security regression net, kept in step by hand.
+
+The lesson generalises past telemetry: a rule stated in seven places is a rule that is enforced in
+seven slightly different ways, and the security-relevant copies are the ones that drift quietest.
+
+---
+
+## 5. One process note worth keeping
 
 **Three separate vacuous assertions were caught in this branch.** Two by review, and one by a
 reviewer who deleted the guard under test and confirmed every assertion still passed.

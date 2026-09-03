@@ -582,7 +582,11 @@ exports traces and metrics to your own OTLP/HTTP collector — never to us, and
 never anywhere you have not configured.
 
 **What it sends.** One span per HTTP request, named for the matched route; one
-per background job tick, per mail send, and per watermarked document. Four
+per background job tick and per mail send; two per document download — the
+mediated read out of storage, with the watermarking nested inside it, so a slow
+download tells you whether the time went to storage or to stamping; and one
+around the migration step at boot, so a deploy that is slow to come up tells you
+whether the migration is the reason. Four
 metrics: request duration, job tick duration and outcome, and the depth of the
 outbound mail queue. Every audit event written during a request carries that
 request's trace id in `request_id`, so an access in the audit log and the trace

@@ -125,7 +125,10 @@ database. C is another of these, not an exception to them.
 
 `src/lib/server/telemetry/` exports `startTelemetry()`, `withSpan()` and the metric recorders.
 `init` calls it through a dynamic import, before migrations — so a slow migration is itself a span,
-which is exactly the observation an operator wants on a slow start.
+which is exactly the observation an operator wants on a slow start. The migration step is wrapped in
+a `database migrate` span for that reason: starting telemetry first buys nothing unless the thing it
+was started ahead of is actually measured, and a deploy that is slow to come up is either a slow
+migration or something else.
 
 **Application code imports only `@opentelemetry/api`.** When no provider is registered, its tracer
 and meter are no-ops. This is the property that makes the design cheap: every call site is
@@ -168,7 +171,14 @@ already have between the application and their collector.
 ### 7.1 The request span
 
 Created in `handle`, named `${method} ${event.route.id}`, ending when the response is produced.
-Attributes: `http.request.method`, `http.route`, `http.response.status_code`, `server.address`.
+Attributes: `http.request.method`, `http.route`, `http.response.status_code`.
+
+`server.address` was listed here in an earlier draft and is deliberately **not** implemented. It is
+the `Host` header — attacker-controlled, unbounded in cardinality, and frequently a literal IP
+address on a request that reaches the container directly. §8 bans IP addresses from telemetry
+outright, so an attribute whose value is *sometimes* an IP cannot be sanitised into compliance, and
+one an attacker can set freely is a cardinality bomb in the operator's own backend. The three that
+ship are the three this document's own questions need.
 
 The route id for an unmatched request is `null`; the span is named `${method} unmatched` and carries
 no route attribute, so a scan for nonexistent paths cannot inflate cardinality with one route value
@@ -190,8 +200,14 @@ return tracer.startActiveSpan(name, (span) =>
 - **`runJob`**, one per tick: job name, whether the advisory lock was acquired, and the outcome. This
   is where "is the mail queue draining" is answered when the answer is "no, and here is the error."
 - **The mail drain**, one per send, wrapping the SMTP call.
-- **`delivery/serve.ts`**, the one mediated path out of storage, and the PDF watermarking inside it —
-  the slowest thing the application does on a request path, and the only one that buffers.
+- **`delivery/serve.ts`**, the one mediated path out of storage: one `document deliver` span around
+  the storage read *and* the stamping, with the `document watermark` span nested inside it. Two
+  spans rather than one because the gated path buffers the whole object before the stamper sees a
+  byte — the difference between the outer and inner span is exactly that buffering, which a span
+  around the stamp alone reports as a fast watermark inside an unexplained slow request. Attributes
+  are `document.tier`, `document.watermarked` and `document.size_bytes`; the recipient appears on
+  neither span (§8).
+- **The migration step in `init`**, one `database migrate` span per boot, per §5.
 
 ### 7.3 Correlation
 
