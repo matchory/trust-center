@@ -171,7 +171,20 @@ const enrichGrantRevoked: Enricher = async (db, row, context) => {
 	};
 };
 
-/** `nda_acceptance.recorded` and `nda_record.downloaded` share a subject. */
+/**
+ * `nda_acceptance.recorded` and `nda_record.downloaded` share a subject.
+ *
+ * `nda_acceptance` itself carries `email`/`company`/`companyDomain` — see the
+ * table's own comment and `purgeRequester`'s: they deliberately survive a
+ * purge, under the Art. 17(3)(e) exemption, as legal evidence of who signed.
+ * That exemption is about *retention*, not export. Reading those columns here
+ * would quietly turn a kept evidence record into a live feed of a purged
+ * person's name and address into an operator's n8n run history and CRM —
+ * exactly what §4.5 exists to stop. So identity is sourced from `requester`
+ * below, and a purge skips this event, the same way purgeRequester fails a
+ * pending `outbound_email` rather than sending it. Do not "fix" this by
+ * reading `ndaAcceptance.email` instead.
+ */
 const enrichNdaAcceptance =
 	(verb: 'accepted' | 'downloaded'): Enricher =>
 	async (db, row, context) => {
@@ -192,6 +205,8 @@ const enrichNdaAcceptance =
 			.limit(1);
 		if (!acceptance) return { skip: 'missing' };
 
+		// Identity comes from live `requester`, deliberately not from the
+		// acceptance row's own denormalized columns — see the function comment.
 		const person = identity(await loadRequester(db, acceptance.requesterId));
 		if ('skip' in person) return person;
 
