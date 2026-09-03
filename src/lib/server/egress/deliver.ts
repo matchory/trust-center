@@ -1,5 +1,6 @@
 import { SpanKind } from '@opentelemetry/api';
 import { eq, sql } from 'drizzle-orm';
+import { recordEvent } from '../audit';
 import {
 	auditEvent,
 	eventDelivery,
@@ -279,6 +280,82 @@ export async function deliverClaimed(
 	}
 
 	return { delivered, failed, skipped };
+}
+
+/** The window with no success after which an endpoint disables itself. */
+export const DISABLE_AFTER_HOURS = 24;
+
+/**
+ * Time-based rather than a consecutive-failure count, which is wrong in both
+ * directions: a low-volume deployment takes four days to reach ten failures,
+ * so a dead endpoint stays "enabled" and silent for four days, while a
+ * high-volume one reaches ten inside a single 25-row batch — so a routine
+ * secret_version rotation would auto-disable the endpoint within one tick
+ * (spec §5.4).
+ *
+ * `coalesce(last_success_at, created_at)` because `last_success_at` is NULL
+ * for an endpoint that has never succeeded once, which is precisely the
+ * permanently-dead case this exists for.
+ *
+ * The "and at least one attempt in the window" half is what keeps a *quiet*
+ * endpoint enabled: an operator whose channel simply had no matching events
+ * for a day must not find it disabled.
+ */
+export async function disableStaleEndpoints(db: Db): Promise<{ disabled: string[] }> {
+	const stale = (await db.execute(sql`
+		SELECT e.id, e.name, e.format,
+		       (SELECT d.last_status_code FROM event_delivery d
+		         WHERE d.endpoint_id = e.id AND d.status IN ('failed', 'pending')
+		         ORDER BY d.created_at DESC LIMIT 1) AS last_status_code
+		FROM event_endpoint e
+		WHERE e.enabled = true
+		  AND coalesce(e.last_success_at, e.created_at) < now() - make_interval(hours => ${DISABLE_AFTER_HOURS})
+		  AND EXISTS (
+		    SELECT 1 FROM event_delivery d
+		    WHERE d.endpoint_id = e.id
+		      AND d.attempts > 0
+		      AND d.created_at > now() - make_interval(hours => ${DISABLE_AFTER_HOURS})
+		  )
+	`)) as unknown as { id: string; name: string; format: string; last_status_code: number | null }[];
+
+	const disabled: string[] = [];
+
+	for (const endpoint of stale) {
+		const reason = `no delivery succeeded in ${DISABLE_AFTER_HOURS} hours`;
+
+		await db.transaction(async (tx) => {
+			// `enabled` and `disabled_at` move together or the row is rejected:
+			// event_endpoint_disabled_check makes "disabled" one state rather than
+			// two columns that usually agree.
+			await tx
+				.update(eventEndpoint)
+				.set({ enabled: false, disabledAt: new Date(), disabledReason: reason })
+				.where(eq(eventEndpoint.id, endpoint.id));
+
+			// The single exception to "egress writes no audit events" (spec §9).
+			// Safe because by the time this is written the endpoint is disabled
+			// and cannot deliver it, and another endpoint delivering it is
+			// desirable. `meta` carries the name and format but NOT the URL: a
+			// Teams Workflows URL carries its shared secret in the query string,
+			// and this table cannot be deleted from.
+			await recordEvent(tx, {
+				action: 'event_endpoint.disabled',
+				actor: { type: 'system', id: null },
+				subjectType: 'event_endpoint',
+				subjectId: endpoint.id,
+				meta: {
+					name: endpoint.name,
+					format: endpoint.format,
+					reason,
+					lastStatusCode: endpoint.last_status_code
+				}
+			});
+		});
+
+		disabled.push(endpoint.id);
+	}
+
+	return { disabled };
 }
 
 async function terminate(
