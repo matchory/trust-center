@@ -60,7 +60,7 @@ up.
 
 ---
 
-## 2. Deferred minors, with the reasoning
+## 2. The minors: what closed, and what is deliberately still open
 
 ### 2.1 `(performance.now() - started) / 1000` is written twice in `runner.ts`
 
@@ -78,17 +78,23 @@ that says nothing when the truth is "we do not know."
 A one-line comment now says so in `runner.ts`, which is the actual gap — the behaviour was right and
 undocumented, so the next reader would reasonably have "fixed" it.
 
-### 2.3 The `audit-trace` no-active-span case does not exercise the branch its comment implies
+### 2.3 The second `activeTraceId` guard — closed
 
 `activeTraceId()` has two guards: `!span`, and an all-zero (invalid) trace id from the API's no-op
 tracer. `tests/integration/audit-trace.test.ts`'s "writes null when there is no active span" case
-reaches the first one only — it calls `recordEvent` outside any span at all.
+reaches the first one only, and the second is the interesting one — it is what stops
+`audit_event.request_id` filling with a 32-zero constant that looks like a correlation id on every
+deployment with telemetry off.
 
-The second guard is the interesting one, because it is what stops the column filling with a constant
-that looks like a correlation id on every deployment with telemetry off. Reaching it needs a test
-that runs `withSpan` under the *no-op* tracer, which means a file that deliberately registers no
-provider — the opposite precondition to every other telemetry test file, all of which register one.
-Worth doing, not worth doing inside this branch's last commits.
+`tests/unit/telemetry-noop.test.ts` now covers it. Reaching that guard needs a precondition no other
+telemetry test file has: **no tracer provider, but a context manager installed anyway.** Without the
+context manager the span is never active and the first guard catches everything; with it, the no-op
+tracer hands back a live `NonRecordingSpan` carrying `INVALID_SPAN_CONTEXT`. The test asserts the raw
+trace id really is the 32-zero string before asserting that `activeTraceId()` reports `undefined`, so
+it cannot pass by the span being absent.
+
+Checked the way §5 describes: with the `isSpanContextValid` guard removed, the test fails with
+`expected '00000000000000000000000000000000' to be undefined`.
 
 ### 2.4 Four cleanup findings left standing
 
@@ -109,89 +115,21 @@ rather than oversights:
 - **A `jobAttributes()` beside `requestAttributes()`.** One repeated attribute key across three
   literals; an abstraction would cost more than the drift it prevents.
 
-### 2.5 e2e teardown noise, pre-existing
+### 2.5 e2e teardown noise — mechanism removed, symptom never reproduced
 
-`tests/setup/e2e-db-teardown.ts` drops the e2e database while the 15-second `mail:drain` tick is
-still live, so a run
-can end with a connection error from a job querying a table that has just gone. It predates this
-branch — the timers are Phase 1 — and is adjacent to §3.4 of the spec's note that `stopJobRunner` is
-exported and called from nowhere. Fixing it means giving the preview server a shutdown path the e2e
-harness actually invokes, which is a change to the harness rather than to C.
+`tests/setup/e2e-db-teardown.ts` drops the e2e database `WITH (FORCE)` while the 15-second
+`mail:drain` tick is still live, so a run can end with a connection error from a job querying a
+table that has just gone.
 
----
+**What was fixed.** `stopJobRunner` had been exported and called from nowhere since Phase 1 (spec
+§3.4). This subsystem added a `sveltekit:shutdown` handler for the telemetry flush, which is the seam
+it was waiting for, so the job timers are now cleared on shutdown. The timers were already
+`unref()`ed and so never held the process open — the gap was an interval firing *during* teardown,
+against a pool that is closing.
 
-## 3. What the branch measured
-
-| | Before | After |
-| --- | --- | --- |
-| Unit tests | 199 | 227 |
-| Integration tests | 281 | 290 |
-| E2e tests | 103 | 103 |
-| Migrations | 26 | 26 |
-| Tables | — | unchanged; C has no state beyond a process-lifetime SDK |
-| Span names | — | +6, permanent |
-| Metric names | — | +4, permanent |
-
-`pnpm check` at 0 errors and 0 warnings throughout, and
-`env -i PATH="$PATH" HOME="$HOME" pnpm build` succeeds at every gate — which is the property C7 and
-C2 exist to protect, since the SDK packages are behind a dynamic import that only runs when an
-endpoint is configured.
-
-**The unit suite regressed to 9.9s and was brought back to ~1.5s.** The cause was
-`tests/unit/telemetry-provider.test.ts`: it built a real `OTLPTraceExporter` against a dead port and
-then ended a span, so the batch processor had something to flush and the exporter spent the
-difference in its own retry/backoff. Fixed by never ending the probe span — an unended span is never
-enqueued, so shutdown's flush has nothing to send and the dead port is never actually dialled. The
-suite is back at 1.5s and the test is stronger than it was, because it now asserts on
-`startTelemetry`'s return value rather than on side effects a stacked second provider would leave
-looking identical.
-
----
-
-## 4. The cleanup wave, and what it changed structurally
-
-A `/simplify` pass ran over the finished branch — quality only, no bug hunting. What it found is
-worth recording because two of the findings were about the *shape of the diff*, not the code:
-
-**Instrumentation had been woven through two functions instead of wrapped around them.** `handle` and
-`stampPdf` had their entire bodies re-indented one level into a `withSpan` callback: 245 changed
-lines in `hooks.server.ts` of which only 143 were real, and 94 in `watermark.ts` of which only 8
-were. Extracting `handleRequest` and `stamp` and making the public function a thin wrapper brought
-those to 121 and 18 insertions with zero whitespace churn, and returned `git blame` on the locale
-and session logic — the most cross-cutting code in the repository — to the commits that wrote it.
-
-**The test scaffolding was copied seven times and had already diverged.** Every telemetry-touching
-test file hand-rolled the same `trace.disable()` / `setGlobalTracerProvider` dance with its own copy
-of the comment explaining it, and only two of the seven installed an `AsyncLocalStorageContextManager`
-— so whether `activeTraceId()` worked at all depended on which file you were in.
-`tests/helpers/telemetry.ts` now owns that rule once. The same file owns
-`expectNoSensitiveAttributes`, which had been hand-rolled at four sites screening for **different**
-subsets of the §8 rule: the watermark copy checked the recipient's name and company but not
-`token=` or the IP shape, and the mail copy omitted the span name from the values it scanned. That
-was the branch's permanent security regression net, kept in step by hand.
-
-The lesson generalises past telemetry: a rule stated in seven places is a rule that is enforced in
-seven slightly different ways, and the security-relevant copies are the ones that drift quietest.
-
----
-
-## 5. One process note worth keeping
-
-**Three separate vacuous assertions were caught in this branch.** Two by review, and one by a
-reviewer who deleted the guard under test and confirmed every assertion still passed.
-
-The sharpest was the branch's own permanent security regression test: the request-path leak case in
-`tests/unit/telemetry-request.test.ts` asserted four `.some(...) === false` predicates over the
-collected span attributes — every one of which an **empty array** satisfies. A `withSpan` that
-emitted no span at all would have passed the file unchanged, which is to say the test defending "no
-span carries a credential" could be satisfied by having no spans. It now pins the span count first.
-
-The same shape appeared in the histogram tests: the existing metric cases asserted only on attribute
-keys, and passed identically whether or not the histograms declared bucket boundaries — which is
-exactly how two histograms shipped with millisecond-shaped default buckets recording seconds. The
-test that would have caught it reads `dataPoints[0].value.buckets.boundaries`, and now does.
-
-Deleting the guard and watching the test fail is the only thing that distinguishes a test which
-defends a rule from one that merely mentions it. Every fix in the final wave was checked that way.
-It is the same discipline `phase-4-carryover.md` §5 records, arrived at independently, which is
-probably the strongest argument for keeping it.
+**What was not demonstrated.** The e2e symptom did not reproduce, in a run with the fix or in a
+baseline run without it (103 passed, no job or connection line in either). So this is recorded as a
+mechanism closed on the application side, not as a fix to an observed failure. What remains is
+genuinely the harness's ordering — Playwright's `globalTeardown` drops the database before it reaps
+the web server, so a server it does not own, or does not reap promptly, can still outlive its
+database. That is a change to the harness rather than to C, and it stays open.
