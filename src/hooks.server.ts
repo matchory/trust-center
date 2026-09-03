@@ -1,5 +1,12 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
-import { error, type Handle, type HandleServerError, type ServerInit } from '@sveltejs/kit';
+import { SpanKind } from '@opentelemetry/api';
+import {
+	error,
+	isHttpError,
+	type Handle,
+	type HandleServerError,
+	type ServerInit
+} from '@sveltejs/kit';
 import {
 	SESSION_COOKIE,
 	STAFF_COOKIE_OPTIONS,
@@ -15,6 +22,13 @@ import {
 import { COMPILED_LOCALES } from '$lib/i18n/compiled';
 import { classifyPath, resolveLocale } from '$lib/i18n/locale';
 import { assertIsLocale, overwriteServerAsyncLocalStorage } from '$lib/paraglide/runtime.js';
+import {
+	activeTraceId,
+	recordRequestDuration,
+	requestAttributes,
+	requestSpanName,
+	withSpan
+} from '$lib/server/telemetry';
 
 type Locale = ReturnType<typeof assertIsLocale>;
 
@@ -39,6 +53,38 @@ export const init: ServerInit = async () => {
 		process.exit(1);
 	}
 
+	// Before migrations, so a slow migration is itself a span — which is the
+	// observation an operator wants when a deploy is slow to come up.
+	//
+	// This dynamic import is *not* what keeps `pnpm build` working with an empty
+	// environment, unlike the migrator's below: this file already imports the
+	// same barrel statically for `handle`, so the module is in the graph either
+	// way. What protects the build is inside `startTelemetry` — the SDK packages
+	// are behind an `await Promise.all([import(…)])` that only runs when an
+	// endpoint is configured. Do not turn those into static imports in
+	// provider.ts on the strength of this line.
+	const { startTelemetry, shutdownTelemetry } = await import('$lib/server/telemetry');
+	await startTelemetry(getConfig().telemetry);
+
+	// adapter-node already handles SIGTERM and SIGINT and emits this once the
+	// server has stopped accepting connections, so we add no signal handler of
+	// our own and cannot fight the adapter's shutdown ordering.
+	process.on('sveltekit:shutdown', () => {
+		// A final flush failing — the collector being unreachable mid-deploy is
+		// the ordinary case, not an exotic one — must not become an unhandled
+		// rejection during teardown: under Node's default mode that can abort
+		// the very shutdown sequence this handler exists to make graceful.
+		void shutdownTelemetry().catch((cause) => {
+			console.error(
+				JSON.stringify({
+					level: 'error',
+					scope: 'telemetry',
+					message: cause instanceof Error ? cause.message : String(cause)
+				})
+			);
+		});
+	});
+
 	// Default on, because the single-container deployment this ships for has
 	// nowhere else to run them. Operators running more than one replica set
 	// RUN_MIGRATIONS=false and run a one-off migration job instead — two
@@ -46,7 +92,12 @@ export const init: ServerInit = async () => {
 	// no advisory lock around drizzle's migrator to prevent it.
 	if (process.env.RUN_MIGRATIONS !== 'false') {
 		const { migrate } = await import('drizzle-orm/postgres-js/migrator');
-		await migrate(getDb(), { migrationsFolder: './drizzle' });
+		// The span telemetry is started ahead of migrations for: a deploy that is
+		// slow to come up is either a slow migration or something else, and this
+		// is what tells the operator which.
+		await withSpan('database migrate', {}, () =>
+			migrate(getDb(), { migrationsFolder: './drizzle' })
+		);
 	}
 
 	// After migrations, so no job queries a table that does not exist yet.
@@ -59,7 +110,11 @@ export const init: ServerInit = async () => {
 	}
 };
 
-export const handle: Handle = async ({ event, resolve }) => {
+/**
+ * Everything `handle` did before instrumentation, unchanged and at its original
+ * indentation: the span belongs around this, not woven through it.
+ */
+async function handleRequest({ event, resolve }: Parameters<Handle>[0]): Promise<Response> {
 	const { locales, defaultLocale } = getConfig();
 	const route = classifyPath(event.url.pathname, COMPILED_LOCALES, locales);
 
@@ -138,6 +193,61 @@ export const handle: Handle = async ({ event, resolve }) => {
 
 		return response;
 	});
+}
+
+/**
+ * Opened at the very top of `handle`, ahead of locale classification and the
+ * two session lookups. `event.route.id` and the method are both populated
+ * before `handle` runs, so nothing is lost by starting here — and starting
+ * later cost two things: `http.server.request.duration` is a semantic
+ * convention name with a semantic convention meaning, and it under-reported by
+ * a database round trip on every authenticated request; and the 404 for a
+ * compiled-but-disabled locale was thrown before the span existed, so that
+ * entire class of request was invisible in traces and metrics alike.
+ *
+ * The span wraps outside `localeStorage.run`, which stays the immediate wrapper
+ * around `resolve` inside `handleRequest` — the rule CLAUDE.md states, and whose
+ * breach shows up as SSR translations silently falling back to the base locale.
+ */
+export const handle: Handle = async (input) => {
+	const routeId = input.event.route.id;
+	const method = input.event.request.method;
+	const started = performance.now();
+
+	return withSpan(
+		requestSpanName(method, routeId),
+		{},
+		async (span) => {
+			// Called on every exit path, a throw included, so no failure between
+			// here and `resolve` can drop a request out of both signals at once.
+			const record = (status: number) => {
+				const attributes = requestAttributes({ method, routeId, status });
+
+				// One set of values, put on the span and handed to the histogram, so
+				// the two cannot drift — including the unmatched-route omission.
+				span.setAttributes(attributes);
+				recordRequestDuration(attributes, (performance.now() - started) / 1000);
+			};
+
+			try {
+				const response = await handleRequest(input);
+				record(response.status);
+				return response;
+			} catch (cause) {
+				// A SvelteKit `error()` carries the status the response will have;
+				// anything else SvelteKit renders as a 500, so that is the honest
+				// fallback. Approximate rather than observed — the response is built
+				// above us — but an approximate status beats the invisibility this
+				// replaces, where a throw produced no span attributes and no data
+				// point at all.
+				record(isHttpError(cause) ? cause.status : 500);
+				throw cause;
+			}
+		},
+		// SERVER rather than the SDK's default INTERNAL — see `withSpan`'s `kind`
+		// parameter for why the kind is as permanent as the span name.
+		SpanKind.SERVER
+	);
 };
 
 /**
@@ -148,7 +258,10 @@ export const handle: Handle = async ({ event, resolve }) => {
  * logs. Message, route, and a correlation id are enough to investigate.
  */
 export const handleError: HandleServerError = ({ error: caught, event, status, message }) => {
-	const id = crypto.randomUUID();
+	// The identifier in the log line is the identifier in the trace backend
+	// when tracing is on; a uuid remains the fallback when it is not, so the
+	// line is never without one.
+	const id = activeTraceId() ?? crypto.randomUUID();
 
 	console.error(
 		JSON.stringify({

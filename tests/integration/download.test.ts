@@ -83,10 +83,14 @@ beforeEach(async () => {
 
 /**
  * The authorization matrix, asserted at the module boundary rather than through
- * the route: the endpoint needs a full SvelteKit event, and `mayDownload` is
- * the decision the endpoint makes. The route's own behaviour — 404 for a
- * gated file with no session, watermarking, the audit event — is covered in
- * tests/e2e/security.spec.ts and access-portal.spec.ts.
+ * the route: `mayDownload` is the decision the endpoint makes, and every row of
+ * the matrix is a decision rather than a response. The route's own behaviour —
+ * 404 for a gated file with no session, watermarking, the audit event — is
+ * covered in tests/e2e/security.spec.ts and access-portal.spec.ts.
+ *
+ * The endpoint itself is reachable from an integration test since
+ * tests/helpers/request-event.ts existed; tests/integration/delivery-serve.test.ts
+ * drives it. Kept at this boundary anyway: a decision table reads better as one.
  */
 describe('mayDownload', () => {
 	it('admits a requester with a live grant naming the document', async () => {

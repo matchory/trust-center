@@ -243,6 +243,11 @@ and cursor durability; what happens when the sink is unreachable for a long peri
 
 ### C — OTel egress
 
+**Designed 2026-09-02 in `2026-09-02-otel-egress-design.md`, which governs C where the two differ.**
+That document supersedes two claims below: the `pg` gotcha names a driver this project does not use
+(it is postgres-js, for which no maintained instrumentation exists), and `@opentelemetry/sdk-node`
+with auto-instrumentation is rejected in favour of manual spans. The rest of this section stands.
+
 Cheapest piece, independent of the rest, and the only one that makes the other four debuggable in
 production — an argument for shipping it early rather than last.
 

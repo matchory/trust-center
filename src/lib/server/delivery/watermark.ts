@@ -1,5 +1,7 @@
 import { degrees, PDFDocument, rgb } from 'pdf-lib';
 import { embedFace } from '../pdf/fonts';
+import { withSpan } from '../telemetry';
+import type { Span } from '@opentelemetry/api';
 
 export interface WatermarkRecipient {
 	name: string;
@@ -24,10 +26,26 @@ export async function stampPdf(
 	fontDir: string,
 	recipient: WatermarkRecipient
 ): Promise<Uint8Array> {
+	return withSpan('document watermark', {}, (span) => stamp(bytes, fontDir, recipient, span));
+}
+
+/**
+ * `recipient` — name, company, email — never reaches the span: telemetry is
+ * outside the reach of the requester-erasure path, and none of it may end up
+ * there (spec §8). The page count is all this span carries, and it is not known
+ * until the document is loaded, so it is set here rather than passed in.
+ */
+async function stamp(
+	bytes: Uint8Array,
+	fontDir: string,
+	recipient: WatermarkRecipient,
+	span: Span
+): Promise<Uint8Array> {
 	// `ignoreEncryption` is deliberately NOT set: a document we cannot fully
 	// parse is one we cannot prove we stamped, and a silently unstamped gated
 	// download is worse than a failed one.
 	const pdf = await PDFDocument.load(bytes);
+	span.setAttribute('document.pages', pdf.getPageCount());
 	// The same embedded typeface the record PDF draws with. A standard font is
 	// WinAnsi-only, and the name it could not encode is exactly the one this
 	// stamp exists to carry. One face, not four: the stamp draws in one, and

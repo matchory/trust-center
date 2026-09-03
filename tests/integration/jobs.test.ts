@@ -10,11 +10,14 @@ import {
 } from '../../src/lib/server/db/schema';
 import { cleanupExpiredSessions, runJob } from '../../src/lib/server/jobs';
 import { createRequesterSession, upsertRequester } from '../../src/lib/server/identity/requester';
+import { recordingSpans } from '../helpers/telemetry';
 import type { Db } from '../../src/lib/server/db';
 
 let db: Db;
 let close: () => Promise<void>;
 let staffUserId: string;
+
+const spans = recordingSpans();
 
 beforeAll(async () => {
 	({ db, close } = createDb(process.env.TEST_DATABASE_URL!));
@@ -175,5 +178,31 @@ describe('sweepUnverifiedRequests', () => {
 		expect(
 			await db.select().from(accessRequest).where(eq(accessRequest.id, verified!.id))
 		).toHaveLength(1);
+	});
+});
+
+describe('runJob telemetry', () => {
+	it('emits one span per tick, naming the job and whether it held the lock', async () => {
+		await runJob(db, 'telemetry-span-probe', async () => {});
+
+		const finished = spans();
+		expect(finished).toHaveLength(1);
+		expect(finished[0]?.name).toBe('job telemetry-span-probe');
+		expect(finished[0]?.attributes['job.name']).toBe('telemetry-span-probe');
+		expect(finished[0]?.attributes['job.lock_acquired']).toBe(true);
+	});
+
+	// A job that throws must still end its span, or the active context leaks
+	// into the next tick and the failure surfaces somewhere unrelated.
+	it('ends the span and marks it an error when the job throws', async () => {
+		await expect(
+			runJob(db, 'telemetry-error-probe', async () => {
+				throw new Error('tick failed');
+			})
+		).rejects.toThrow('tick failed');
+
+		const finished = spans();
+		expect(finished).toHaveLength(1);
+		expect(finished[0]?.status.code).toBe(2);
 	});
 });

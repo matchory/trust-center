@@ -8,6 +8,7 @@ import { getConfig } from '../config';
 import { clientIp } from '../http/client-ip';
 import { consumeRateLimit, rateLimitKey } from '../ratelimit';
 import { getStorage, StorageObjectNotFound } from '../storage';
+import { withSpan } from '../telemetry';
 import { stampPdf } from './watermark';
 import { m } from '../../paraglide/messages.js';
 import { assertIsLocale } from '../../paraglide/runtime.js';
@@ -104,33 +105,53 @@ export async function serveDocumentFile(
 	let contentLength: number;
 
 	try {
-		if (gated && requester) {
-			// Buffered, because watermarking is not streamable. The bound is
-			// MAX_UPLOAD_MB, the same ceiling that admitted the file. Document
-			// uploads are PDF-only, so the stamper always applies.
-			const stream = await getStorage().stream(row.storageKey);
-			const source = new Uint8Array(await new Response(stream).arrayBuffer());
+		// Spec §7.2's delivery span. It wraps the storage read as well as the
+		// stamping, because on the gated path the read buffers the whole object
+		// before `stampPdf` sees a byte — so a span around the stamp alone
+		// reports a fast watermark inside a slow request and leaves the gap
+		// unexplained. `stampPdf` opens its own span inside this one, and the
+		// difference between the two is exactly the buffering.
+		//
+		// `document.size_bytes` is the stored size, which is what makes a slow
+		// read legible; `recipient` is not represented here at all, per §8.
+		({ body, contentLength } = await withSpan(
+			'document deliver',
+			{
+				'document.tier': row.tier,
+				'document.watermarked': gated,
+				'document.size_bytes': row.sizeBytes
+			},
+			async (): Promise<{ body: BodyInit; contentLength: number }> => {
+				if (gated && requester) {
+					// Buffered, because watermarking is not streamable. The bound is
+					// MAX_UPLOAD_MB, the same ceiling that admitted the file. Document
+					// uploads are PDF-only, so the stamper always applies.
+					const stream = await getStorage().stream(row.storageKey);
+					const source = new Uint8Array(await new Response(stream).arrayBuffer());
 
-			const stamped = await stampPdf(source, getConfig().ndaFontDir, {
-				name: requester.name,
-				company: requester.company,
-				email: requester.email,
-				at: new Date(),
-				notice: m.download_confidentiality_notice({}, { locale: assertIsLocale(locals.locale) })
-			});
+					const stamped = await stampPdf(source, getConfig().ndaFontDir, {
+						name: requester.name,
+						company: requester.company,
+						email: requester.email,
+						at: new Date(),
+						notice: m.download_confidentiality_notice({}, { locale: assertIsLocale(locals.locale) })
+					});
 
-			// pdf-lib types its output as `Uint8Array<ArrayBufferLike>`, while
-			// `BodyInit` admits only ArrayBuffer-backed views. pdf-lib never
-			// allocates in a SharedArrayBuffer, so this narrows rather than
-			// suppresses — and it avoids copying the whole file again.
-			body = stamped as Uint8Array<ArrayBuffer>;
-			// The *stamped* length. Sending the stored size would truncate every
-			// watermarked download at the byte the original ended.
-			contentLength = stamped.byteLength;
-		} else {
-			body = await getStorage().stream(row.storageKey);
-			contentLength = row.sizeBytes;
-		}
+					return {
+						// pdf-lib types its output as `Uint8Array<ArrayBufferLike>`, while
+						// `BodyInit` admits only ArrayBuffer-backed views. pdf-lib never
+						// allocates in a SharedArrayBuffer, so this narrows rather than
+						// suppresses — and it avoids copying the whole file again.
+						body: stamped as Uint8Array<ArrayBuffer>,
+						// The *stamped* length. Sending the stored size would truncate
+						// every watermarked download at the byte the original ended.
+						contentLength: stamped.byteLength
+					};
+				}
+
+				return { body: await getStorage().stream(row.storageKey), contentLength: row.sizeBytes };
+			}
+		));
 	} catch (cause) {
 		// A row without its object is an operator problem, not a visitor one.
 		if (cause instanceof StorageObjectNotFound) error(404, 'Not found');

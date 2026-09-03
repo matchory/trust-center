@@ -10,6 +10,34 @@ function blankAsUndefined<T extends z.ZodTypeAny>(schema: T) {
 	return z.preprocess((value) => (value === '' ? undefined : value), schema.optional());
 }
 
+/**
+ * `k=v,k=v`, split on the *first* `=` only — an OTLP bearer token is a header
+ * value that can itself contain `=`, and splitting on every one would truncate
+ * it into a credential that fails authentication with no error here.
+ *
+ * Parsing and validation are one chain in the schema below rather than a parse
+ * here and a separate refine there: as two readings of the same string they
+ * disagreed at the edges — the refine rejected a trailing comma this skips, and
+ * neither rejected an empty key, so `=v` produced a `{'': 'v'}` header the
+ * exporter cannot send. This is where the collector credential lives, so the
+ * disagreement is made unrepresentable rather than kept in step by hand.
+ */
+function otlpHeaderEntries(raw: string): [string, string][] {
+	return raw
+		.split(',')
+		.map((pair) => pair.trim())
+		.filter((pair) => pair.length > 0)
+		.map((pair): [string, string] => {
+			const split = pair.indexOf('=');
+			// No `=` at all leaves the key empty, which is exactly the state the
+			// refine rejects — so a malformed entry fails validation rather than
+			// being silently reshaped into a header.
+			if (split < 0) return ['', ''];
+
+			return [pair.slice(0, split).trim(), pair.slice(split + 1).trim()];
+		});
+}
+
 const localeList = z
 	.string()
 	.min(1)
@@ -51,6 +79,13 @@ export interface AppConfig {
 		adminGroup: string;
 		approverGroup: string | undefined;
 	};
+	/** Off unless `endpoint` is set; see docs/superpowers/specs/2026-09-02-otel-egress-design.md. */
+	telemetry: {
+		endpoint: string | undefined;
+		serviceName: string;
+		headers: Record<string, string>;
+		sampleRatio: number;
+	};
 }
 
 /**
@@ -88,7 +123,46 @@ function buildSchema(compiledLocales: readonly string[]) {
 			SMTP_URL: blankAsUndefined(z.string().url()),
 			MAIL_FROM: z.string().min(1).default('trust-center@localhost'),
 			MAIL_RETENTION_DAYS: z.coerce.number().int().positive().default(90),
-			STAFF_NOTIFICATION_EMAIL: blankAsUndefined(z.string().email())
+			STAFF_NOTIFICATION_EMAIL: blankAsUndefined(z.string().email()),
+			// Standard OTel variable names, read and validated here rather than by
+			// the SDK's own environment parsing: a typo'd endpoint must refuse to
+			// boot like every other setting, not degrade to silently exporting
+			// nothing. Only these four are honoured (spec C3).
+			OTEL_EXPORTER_OTLP_ENDPOINT: blankAsUndefined(
+				z
+					.string()
+					.url()
+					// Zod's .url() alone accepts non-HTTP schemes like collector: (a valid
+					// URL per RFC 3986), so this refine ensures only HTTP or HTTPS endpoints
+					// reach the application.
+					.refine(
+						(url) => url.startsWith('http://') || url.startsWith('https://'),
+						'must be an HTTP or HTTPS URL'
+					)
+					// Normalised here for the same reason BASE_URL is below: the
+					// exporters concatenate `/v1/traces` and `/v1/metrics` onto this,
+					// so `https://otel.internal:4318/` — the commonest form of this
+					// typo, and one the standard SDK tolerates — would export to a
+					// double slash and take a 404 from most collectors, silently.
+					.transform((url) => url.replace(/\/+$/, ''))
+			),
+			OTEL_SERVICE_NAME: z.string().min(1).default('trust-center'),
+			OTEL_EXPORTER_OTLP_HEADERS: blankAsUndefined(
+				z
+					.string()
+					.min(1)
+					.transform(otlpHeaderEntries)
+					// At least one, and every key non-empty: a value that parses to
+					// nothing (`,`) or to a nameless header (`=v`) is a typo in the one
+					// setting that carries the collector credential, and it must refuse
+					// to boot rather than authenticate with no header.
+					.refine(
+						(entries) => entries.length > 0 && entries.every(([key]) => key.length > 0),
+						'expected comma-separated key=value pairs'
+					)
+					.transform((entries) => Object.fromEntries(entries))
+			),
+			OTEL_TRACES_SAMPLER_ARG: blankAsUndefined(z.coerce.number().min(0).max(1)).default(1)
 		})
 		.superRefine((value, ctx) => {
 			const unsupported = value.LOCALES.filter((locale) => !compiledLocales.includes(locale));
@@ -162,6 +236,12 @@ export function parseConfig(
 			groupsClaim: parsed.OIDC_GROUPS_CLAIM,
 			adminGroup: parsed.OIDC_ADMIN_GROUP,
 			approverGroup: parsed.OIDC_APPROVER_GROUP
+		},
+		telemetry: {
+			endpoint: parsed.OTEL_EXPORTER_OTLP_ENDPOINT,
+			serviceName: parsed.OTEL_SERVICE_NAME,
+			headers: parsed.OTEL_EXPORTER_OTLP_HEADERS ?? {},
+			sampleRatio: parsed.OTEL_TRACES_SAMPLER_ARG
 		}
 	};
 }

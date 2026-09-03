@@ -2,12 +2,14 @@ import { randomUUID } from 'node:crypto';
 import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { SpanKind } from '@opentelemetry/api';
 import { eq } from 'drizzle-orm';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { createDb } from '../../src/lib/server/db';
 import { outboundEmail } from '../../src/lib/server/db/schema';
 import { drainOutbox, enqueueEmail } from '../../src/lib/server/mail/queue';
 import { createLocalStorage, newStorageKey } from '../../src/lib/server/storage/local';
+import { expectNoSensitiveAttributes, recordingSpans } from '../helpers/telemetry';
 import type { MailAdapter, OutgoingMail } from '../../src/lib/server/mail';
 import type { Db } from '../../src/lib/server/db';
 import type { StorageAdapter } from '../../src/lib/server/storage';
@@ -17,6 +19,8 @@ const FROM = 'trust-center@test.invalid';
 let db: Db;
 let close: () => Promise<void>;
 let storage: StorageAdapter;
+
+const spans = recordingSpans();
 
 beforeAll(async () => {
 	({ db, close } = createDb(process.env.TEST_DATABASE_URL!));
@@ -233,5 +237,35 @@ describe('attachments', () => {
 
 		expect(sent).toBe(0);
 		expect(failed).toBe(1);
+	});
+});
+
+describe('mail drain telemetry', () => {
+	it('emits one span per send, naming the template and never the address', async () => {
+		// `access_link` is not a real MailTemplate (the file has no such id, and
+		// `renderTemplate`'s exhaustive switch would return undefined for it,
+		// failing the row before the mailer is ever called) — `sign_in` is the
+		// closest existing template with a matching `{ url }` payload shape.
+		await db.insert(outboundEmail).values({
+			to: 'telemetry-probe@example.test',
+			template: 'sign_in',
+			locale: 'de',
+			payload: { url: 'https://trust.example/de/access' }
+		});
+
+		await drainOutbox(db, {
+			limit: 10,
+			mailer: mailerThat('succeed').adapter,
+			from: FROM,
+			storage
+		});
+
+		const sendSpans = spans().filter((span) => span.name === 'mail send');
+		expect(sendSpans).toHaveLength(1);
+		expect(sendSpans[0]?.attributes['mail.template']).toBe('sign_in');
+		// CLIENT rather than the SDK's default INTERNAL: SMTP is the application's
+		// only outbound egress, and a service map keys on the span kind.
+		expect(sendSpans[0]?.kind).toBe(SpanKind.CLIENT);
+		expectNoSensitiveAttributes(sendSpans[0]);
 	});
 });

@@ -110,3 +110,95 @@ describe('optional variables left blank', () => {
 		).toThrow(/STAFF_NOTIFICATION_EMAIL/);
 	});
 });
+
+describe('telemetry configuration', () => {
+	it('is inert when no endpoint is set', () => {
+		const config = parseConfig(valid, COMPILED);
+		expect(config.telemetry.endpoint).toBeUndefined();
+		expect(config.telemetry.serviceName).toBe('trust-center');
+		expect(config.telemetry.headers).toEqual({});
+		expect(config.telemetry.sampleRatio).toBe(1);
+	});
+
+	it('parses an endpoint, a service name and a ratio', () => {
+		const config = parseConfig(
+			{
+				...valid,
+				OTEL_EXPORTER_OTLP_ENDPOINT: 'https://collector.example.com:4318',
+				OTEL_SERVICE_NAME: 'trust-center-staging',
+				OTEL_TRACES_SAMPLER_ARG: '0.25'
+			},
+			COMPILED
+		);
+		expect(config.telemetry.endpoint).toBe('https://collector.example.com:4318');
+		expect(config.telemetry.serviceName).toBe('trust-center-staging');
+		expect(config.telemetry.sampleRatio).toBe(0.25);
+	});
+
+	it('parses headers into a record, keeping values containing "="', () => {
+		const config = parseConfig(
+			{ ...valid, OTEL_EXPORTER_OTLP_HEADERS: 'authorization=Bearer a=b, x-tenant=acme' },
+			COMPILED
+		);
+		expect(config.telemetry.headers).toEqual({
+			authorization: 'Bearer a=b',
+			'x-tenant': 'acme'
+		});
+	});
+
+	it('refuses a header entry with no "=" rather than dropping it', () => {
+		expect(() =>
+			parseConfig({ ...valid, OTEL_EXPORTER_OTLP_HEADERS: 'garbage' }, COMPILED)
+		).toThrow();
+	});
+
+	// `{'': 'v'}` is not a header the exporter can send, and this variable is
+	// where the collector credential lives — so it refuses to boot rather than
+	// authenticating with a nameless one.
+	it('refuses a header entry with an empty key', () => {
+		expect(() =>
+			parseConfig({ ...valid, OTEL_EXPORTER_OTLP_HEADERS: '=secret' }, COMPILED)
+		).toThrow();
+	});
+
+	// The parser skips a trailing comma; the validator used to reject it, so the
+	// two disagreed about the same string. They now read it the same way.
+	it('accepts a trailing comma, which the parser skips', () => {
+		const config = parseConfig(
+			{ ...valid, OTEL_EXPORTER_OTLP_HEADERS: 'authorization=Bearer t,' },
+			COMPILED
+		);
+		expect(config.telemetry.headers).toEqual({ authorization: 'Bearer t' });
+	});
+
+	// A value that parses to no headers at all is a typo, not a configuration.
+	it('refuses a header string that yields no pairs', () => {
+		expect(() => parseConfig({ ...valid, OTEL_EXPORTER_OTLP_HEADERS: ',' }, COMPILED)).toThrow();
+	});
+
+	// The exporters concatenate `/v1/traces` onto this, and a trailing slash is
+	// the commonest form of the typo — the standard SDK tolerates it, so an
+	// operator has no reason to expect a double slash and the 404 it earns.
+	it('strips a trailing slash from the endpoint', () => {
+		const config = parseConfig(
+			{ ...valid, OTEL_EXPORTER_OTLP_ENDPOINT: 'https://otel.internal:4318/' },
+			COMPILED
+		);
+		expect(config.telemetry.endpoint).toBe('https://otel.internal:4318');
+	});
+
+	it('refuses an endpoint that is not a URL', () => {
+		expect(() =>
+			parseConfig({ ...valid, OTEL_EXPORTER_OTLP_ENDPOINT: 'collector:4318' }, COMPILED)
+		).toThrow();
+	});
+
+	it('refuses a sampler ratio outside 0..1', () => {
+		expect(() => parseConfig({ ...valid, OTEL_TRACES_SAMPLER_ARG: '2' }, COMPILED)).toThrow();
+	});
+
+	it('treats a blank sample ratio as the documented default 1, not as 0', () => {
+		const config = parseConfig({ ...valid, OTEL_TRACES_SAMPLER_ARG: '' }, COMPILED);
+		expect(config.telemetry.sampleRatio).toBe(1);
+	});
+});

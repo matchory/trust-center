@@ -57,6 +57,10 @@ refusal is recorded in the audit log.
 | `MAIL_FROM` | for mail | `trust-center@localhost` | Envelope sender for every message. |
 | `MAIL_RETENTION_DAYS` | no | `90` | After this many days a delivered or failed notification is stripped of its address and payload. The row stays. |
 | `STAFF_NOTIFICATION_EMAIL` | no | — | Where "a new request is waiting for triage" notices go. Unset means none are sent. |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | no | — | Your OTLP/HTTP collector, e.g. `https://otel.internal:4318`. Unset means no telemetry is exported and no OpenTelemetry SDK is loaded. See §11. |
+| `OTEL_SERVICE_NAME` | no | `trust-center` | The `service.name` attached to exported traces and metrics. |
+| `OTEL_EXPORTER_OTLP_HEADERS` | no | — | Collector authentication, as `key=value` pairs separated by commas. |
+| `OTEL_TRACES_SAMPLER_ARG` | no | `1` | Fraction of traces sampled, 0 to 1. The default keeps all of them. |
 | `REQUESTER_SESSION_TTL_HOURS` | no | `72` | How long a verified requester stays signed in. |
 | `MAGIC_LINK_TTL_MINUTES` | no | `30` | Lifetime of a single-use verification or sign-in link. |
 | `ACCESS_GRANT_DEFAULT_DAYS` | no | `90` | Default expiry when staff approve without naming one. |
@@ -504,8 +508,11 @@ If a CDN sits in front of nginx, raise `XFF_DEPTH` to match.
 
 ## 9. What this deployment does not send anywhere
 
-- **No telemetry.** Nothing reports usage, versions, or errors to us or anyone
-  else.
+- **No telemetry by default.** Nothing reports usage, versions, or errors to us
+  or to anyone else, and with `OTEL_EXPORTER_OTLP_ENDPOINT` unset the
+  application loads no OpenTelemetry SDK at all. If you set it, traces and
+  metrics go to **your** collector and nowhere else — never to us — and they
+  carry no personal data by design (§11).
 - **No third-party requests from the portal.** No CDN, no web fonts, no
   analytics. A Content-Security-Policy with every source at `'self'` and no
   `unsafe-inline` makes the browser enforce it.
@@ -567,3 +574,53 @@ sign in, so the grants are unreachable, but revoke them explicitly from
 The purge writes its own audit event, `requester.purged`, naming the staff
 member who performed it and how many events were pseudonymized. That event is
 about the operator, not the erased person, and it survives.
+
+## 11. Telemetry
+
+Off unless you set `OTEL_EXPORTER_OTLP_ENDPOINT`. With it set, the application
+exports traces and metrics to your own OTLP/HTTP collector — never to us, and
+never anywhere you have not configured.
+
+**What it sends.** One span per HTTP request, named for the matched route; one
+per background job tick and per mail send; two per document download — the
+mediated read out of storage, with the watermarking nested inside it, so a slow
+download tells you whether the time went to storage or to stamping; and one
+around the migration step at boot, so a deploy that is slow to come up tells you
+whether the migration is the reason. Four
+metrics: request duration, job tick duration and outcome, and the depth of the
+outbound mail queue. Every audit event written during a request carries that
+request's trace id in `request_id`, so an access in the audit log and the trace
+that produced it are the same identifier.
+
+**What it never sends.** No email address, requester name, company, IP address,
+user agent, session or magic-link token, URL query string, or SQL parameter.
+This is a hard boundary, not a setting: telemetry leaves the reach of the
+erasure path in §10, so it carries nothing that erasure would need to reach.
+`tests/unit/telemetry-request.test.ts` asserts it on every run.
+
+**The mail queue gauge is the one to alert on.** Nothing in this deployment
+sends mail inline — everything is queued and drained by the job runner — so a
+broken SMTP configuration looks perfectly healthy from the outside while the
+queue grows. `trustcenter.mail.queue.depth` rising without falling is the
+signal. Note that a deployment with no `SMTP_URL` is a supported configuration
+in which that number grows forever by design.
+
+**Where export failures show up.** A malformed endpoint refuses to boot, but a
+well-formed one pointing somewhere unhelpful cannot be caught before the first
+export is attempted. Those failures — a 404 from a collector that does not
+serve `/v1/traces`, a 401 from a stale token in `OTEL_EXPORTER_OTLP_HEADERS`, a
+refused connection — are written to the container log as structured JSON with
+`"scope":"telemetry"`, the same shape a failing background job uses:
+
+```sh
+docker compose logs trust-center | grep '"scope":"telemetry"'
+```
+
+Nothing is logged when telemetry is off. A trailing slash on the endpoint is
+tolerated: it is stripped at startup, so `https://otel.example:4318/` and
+`https://otel.example:4318` behave identically.
+
+Only the four `OTEL_*` variables in §3 are read. Other standard OpenTelemetry
+environment variables are deliberately ignored, because every setting in this
+application is validated once at startup and a typo must refuse to boot rather
+than silently export nothing.

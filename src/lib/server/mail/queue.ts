@@ -1,6 +1,8 @@
+import { SpanKind } from '@opentelemetry/api';
 import { sql } from 'drizzle-orm';
 import { outboundEmail } from '../db/schema';
 import { renderTemplate } from './templates';
+import { withSpan } from '../telemetry';
 import type { MailPayload, MailTemplate } from './templates';
 import type { MailAdapter, MailAttachment, OutgoingMail } from './index';
 import type { StorageAdapter } from '../storage';
@@ -19,6 +21,21 @@ export async function enqueueEmail(
 		locale: input.locale,
 		payload: input.payload
 	});
+}
+
+/**
+ * Every row still waiting to go out, rows in retry backoff included — this
+ * counts what is queued, not what the next `drainOutbox` tick would claim.
+ * Lives here rather than at the caller so the definition of "queued" stays with
+ * the claim predicate above it: telemetry owns the instrument, this module owns
+ * what the number means.
+ */
+export async function pendingCount(db: Db): Promise<number> {
+	const rows = (await db.execute(
+		sql`SELECT count(*)::int AS depth FROM outbound_email WHERE status = 'pending'`
+	)) as unknown as { depth: number }[];
+
+	return rows[0]?.depth ?? 0;
 }
 
 interface ClaimedRow {
@@ -81,13 +98,23 @@ export async function drainOutbox(
 			// attachment silently dropped would be worse than one that did not go.
 			const attachments = await resolveAttachments(storage, row.payload);
 
-			const { providerId } = await mailer.send({
-				to: row.to,
-				from,
-				subject: rendered.subject,
-				text: rendered.text,
-				attachments
-			});
+			const { providerId } = await withSpan(
+				'mail send',
+				// The template and locale, never `row.to`: the recipient is personal
+				// data and telemetry leaves the reach of `purgeRequester` (spec §8).
+				{ 'mail.template': row.template, 'mail.locale': row.locale },
+				() =>
+					mailer.send({
+						to: row.to,
+						from,
+						subject: rendered.subject,
+						text: rendered.text,
+						attachments
+					}),
+				// CLIENT, because this is the application's only outbound egress
+				// (spec §4) — see `withSpan`'s `kind` for why it is not left INTERNAL.
+				SpanKind.CLIENT
+			);
 
 			await db.execute(sql`
 				UPDATE outbound_email
