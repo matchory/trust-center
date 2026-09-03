@@ -90,8 +90,11 @@ stop appearing.
 and C adds no signal handling of its own. Without a flush, every deploy silently loses the last
 batch of spans and metrics.
 
-Noted in passing: `stopJobRunner` is exported and called from nowhere, so the job timers are never
-stopped on shutdown either. That is a pre-existing gap adjacent to this work, not part of it.
+Noted in passing when this was written: `stopJobRunner` was exported and called from nowhere, so the
+job timers were never stopped on shutdown either. Once C added the shutdown handler above, the seam
+that gap was waiting for existed — so `init` now registers `stopJobRunner` on the same event. The
+timers are `unref()`ed and never held the process open; what this closes is an interval firing
+*during* teardown against a pool that is closing.
 
 ---
 
@@ -358,6 +361,5 @@ called outside one, it writes null and does not throw.
   rediscover them.
 - **Rate-limit metrics** (C12), until the bucket names are a closed set.
 - **Logs** (§2), until there is a reader who wants trace-correlated logs specifically.
-- **`stopJobRunner` never being called** (§3.4). Adjacent, pre-existing, and not C's to fix.
 - **Trace context propagation into subsystem A.** C13 chooses a parent-based sampler so that A can
   propagate context when it exists, but nothing is propagated today because nothing goes out.
