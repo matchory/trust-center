@@ -105,8 +105,16 @@ export const init: ServerInit = async () => {
 	// single-container deployment has nowhere else to run them. Imported
 	// dynamically so `pnpm build` still needs neither config nor a database.
 	if (process.env.RUN_JOBS !== 'false') {
-		const { startJobRunner } = await import('$lib/server/jobs');
+		const { startJobRunner, stopJobRunner } = await import('$lib/server/jobs');
 		startJobRunner();
+
+		// `stopJobRunner` has been exported and called from nowhere since Phase 1
+		// (spec §3.4). The shutdown seam above is what it was waiting for: the
+		// timers are `unref()`ed, so they never held the process open, but an
+		// interval that fires *during* teardown starts a transaction against a
+		// pool that is closing, which surfaces as a connection error attributed
+		// to a job rather than to the shutdown that caused it.
+		process.on('sveltekit:shutdown', stopJobRunner);
 	}
 };
 
