@@ -1,0 +1,359 @@
+import { and, eq } from 'drizzle-orm';
+import {
+	accessGrant,
+	accessRequest,
+	document,
+	documentFile,
+	documentTranslation,
+	ndaAcceptance,
+	ndaTemplate,
+	ndaTemplateVersion,
+	requester
+} from '../db/schema';
+import type { AuditEventRow } from '../audit';
+import type { Db } from '../db';
+import type { EventModel } from './model';
+
+export type EnrichOutcome =
+	| { kind: 'model'; model: EventModel }
+	| { kind: 'skip'; reason: 'subject_purged' | 'subject_missing' };
+
+export interface EnrichContext {
+	deliveryId: string;
+	baseUrl: string;
+	/**
+	 * `config.defaultLocale`, passed in by the job. Used only to build the
+	 * admin link, which is locale-prefixed like every page URL in this
+	 * application — the payload's audience is the operator's own staff, not the
+	 * requester (spec §3.2).
+	 */
+	locale: string;
+}
+
+/** What an enricher returns; the shared fields are filled in around it. */
+interface Enriched {
+	data: Record<string, unknown>;
+	summary: string;
+	link: string | null;
+	/**
+	 * Overrides the enriched path's default of `true`. Set only by the
+	 * anonymous branch of `document.downloaded`, where there is no verified
+	 * identity to speak of (plan C5).
+	 */
+	verified?: boolean;
+}
+
+type Enricher = (
+	db: Db,
+	row: AuditEventRow,
+	context: EnrichContext
+) => Promise<Enriched | { skip: 'purged' | 'missing' }>;
+
+interface PersonIdentity {
+	name: string;
+	email: string;
+	company: string;
+	companyDomain: string;
+}
+
+/**
+ * Explicitly annotated rather than inferred: without it, TS widens the
+ * `return person` inside each enricher's `if ('skip' in person)` guard back to
+ * this function's full union instead of narrowing to the skip variants, and
+ * every enricher below fails to typecheck against `Enricher`.
+ */
+type IdentityResult = { skip: 'missing' } | { skip: 'purged' } | { person: PersonIdentity };
+
+/**
+ * Personal data a consumer acts on. `purged_at` is the signal, NOT blank
+ * columns: purgeRequester writes `purged-<id>@invalid` into `email`, so a
+ * blank-column test would pass a purged row through with the one field a CRM
+ * upserts on (spec §4.5, plan §Smaller corrections).
+ */
+function identity(row: typeof requester.$inferSelect | undefined): IdentityResult {
+	if (!row) return { skip: 'missing' };
+	if (row.purgedAt !== null) return { skip: 'purged' };
+
+	return {
+		person: {
+			name: row.name,
+			email: row.email,
+			company: row.company,
+			companyDomain: row.companyDomain
+		}
+	};
+}
+
+async function loadRequester(db: Db, id: string | null) {
+	if (id === null) return undefined;
+	const [row] = await db.select().from(requester).where(eq(requester.id, id)).limit(1);
+	return row;
+}
+
+/**
+ * The four access-request events share a loader: they differ only in which
+ * decision columns are worth carrying, and one query is what a consumer
+ * branching on `event` actually needs.
+ */
+const enrichAccessRequest: Enricher = async (db, row, context) => {
+	if (row.subjectId === null) return { skip: 'missing' };
+
+	const [request] = await db
+		.select()
+		.from(accessRequest)
+		.where(eq(accessRequest.id, row.subjectId))
+		.limit(1);
+	if (!request) return { skip: 'missing' };
+
+	const person = identity(await loadRequester(db, request.requesterId));
+	if ('skip' in person) return person;
+
+	const [grant] = await db
+		.select({
+			id: accessGrant.id,
+			termDays: accessGrant.termDays,
+			expiresAt: accessGrant.expiresAt,
+			acceptanceDueAt: accessGrant.acceptanceDueAt
+		})
+		.from(accessGrant)
+		.where(eq(accessGrant.requestId, request.id))
+		.limit(1);
+
+	return {
+		data: {
+			...person.person,
+			requestId: request.id,
+			status: request.status,
+			justification: request.justification,
+			...(row.meta as Record<string, unknown> | null),
+			...(grant
+				? {
+						grantId: grant.id,
+						termDays: grant.termDays,
+						expiresAt: grant.expiresAt?.toISOString() ?? null,
+						acceptanceDueAt: grant.acceptanceDueAt?.toISOString() ?? null
+					}
+				: {}),
+			...(request.reason !== null ? { reason: request.reason } : {})
+		},
+		summary: summaryFor(row.action, person.person.company),
+		// Every page URL in this application is locale-prefixed, and the link is
+		// built by string interpolation rather than by `localizePath()` because
+		// this is a server-side absolute URL for an external consumer, not a
+		// navigation target.
+		link: `${context.baseUrl}/${context.locale}/admin/requests/${request.id}`
+	};
+};
+
+const enrichGrantRevoked: Enricher = async (db, row, context) => {
+	if (row.subjectId === null) return { skip: 'missing' };
+
+	const [grant] = await db
+		.select()
+		.from(accessGrant)
+		.where(eq(accessGrant.id, row.subjectId))
+		.limit(1);
+	if (!grant) return { skip: 'missing' };
+
+	const person = identity(await loadRequester(db, grant.requesterId));
+	if ('skip' in person) return person;
+
+	return {
+		data: {
+			...person.person,
+			grantId: grant.id,
+			termDays: grant.termDays,
+			expiresAt: grant.expiresAt?.toISOString() ?? null,
+			revokedAt: grant.revokedAt?.toISOString() ?? null
+		},
+		summary: `Access for ${person.person.company} was revoked`,
+		link: `${context.baseUrl}/${context.locale}/admin/grants`
+	};
+};
+
+/** `nda_acceptance.recorded` and `nda_record.downloaded` share a subject. */
+const enrichNdaAcceptance =
+	(verb: 'accepted' | 'downloaded'): Enricher =>
+	async (db, row, context) => {
+		if (row.subjectId === null) return { skip: 'missing' };
+
+		const [acceptance] = await db
+			.select({
+				id: ndaAcceptance.id,
+				requesterId: ndaAcceptance.requesterId,
+				acceptedAt: ndaAcceptance.acceptedAt,
+				slug: ndaTemplate.slug,
+				version: ndaTemplateVersion.version
+			})
+			.from(ndaAcceptance)
+			.innerJoin(ndaTemplateVersion, eq(ndaTemplateVersion.id, ndaAcceptance.versionId))
+			.innerJoin(ndaTemplate, eq(ndaTemplate.id, ndaTemplateVersion.templateId))
+			.where(eq(ndaAcceptance.id, row.subjectId))
+			.limit(1);
+		if (!acceptance) return { skip: 'missing' };
+
+		const person = identity(await loadRequester(db, acceptance.requesterId));
+		if ('skip' in person) return person;
+
+		return {
+			data: {
+				...person.person,
+				acceptanceId: acceptance.id,
+				template: acceptance.slug,
+				version: acceptance.version,
+				acceptedAt: acceptance.acceptedAt.toISOString()
+			},
+			summary:
+				verb === 'accepted'
+					? `${person.person.company} accepted ${acceptance.slug} v${acceptance.version}`
+					: `${person.person.company} downloaded their ${acceptance.slug} record`,
+			link: `${context.baseUrl}/${context.locale}/admin/requesters/${acceptance.requesterId}`
+		};
+	};
+
+/**
+ * The subject is a `document_file`, not a document (delivery/serve.ts), so the
+ * title comes from file → document → translation. The actor id is null for
+ * every public-tier download, which is a deliverable event and not a missing
+ * subject (plan C5).
+ */
+const enrichDocumentDownloaded: Enricher = async (db, row, context) => {
+	if (row.subjectId === null) return { skip: 'missing' };
+
+	const [file] = await db
+		.select({
+			id: documentFile.id,
+			locale: documentFile.locale,
+			version: documentFile.version,
+			documentId: document.id,
+			slug: document.slug,
+			tier: document.tier,
+			title: documentTranslation.title
+		})
+		.from(documentFile)
+		.innerJoin(document, eq(document.id, documentFile.documentId))
+		.leftJoin(
+			documentTranslation,
+			and(
+				eq(documentTranslation.documentId, document.id),
+				eq(documentTranslation.locale, documentFile.locale)
+			)
+		)
+		.where(eq(documentFile.id, row.subjectId))
+		.limit(1);
+	if (!file) return { skip: 'missing' };
+
+	const document_ = {
+		documentId: file.documentId,
+		slug: file.slug,
+		title: file.title ?? file.slug,
+		tier: file.tier,
+		locale: file.locale,
+		version: file.version
+	};
+
+	// A public download has no requester at all — no session is created on that
+	// path — so there is nobody to enrich and nobody to have been purged.
+	if (row.actorId === null) {
+		return {
+			data: document_,
+			summary: `${document_.title} was downloaded`,
+			link: `${context.baseUrl}/${context.locale}/admin/documents/${file.documentId}`,
+			// Nobody was identified, so nothing here is verified.
+			verified: false
+		};
+	}
+
+	const person = identity(await loadRequester(db, row.actorId));
+	if ('skip' in person) return person;
+
+	return {
+		data: { ...person.person, ...document_ },
+		summary: `${person.person.company} downloaded ${document_.title}`,
+		link: `${context.baseUrl}/${context.locale}/admin/documents/${file.documentId}`
+	};
+};
+
+/**
+ * Walked against `grep -rhoE "action: '[a-z0-9._-]+'" src/` plus the two
+ * template-literal sites (`access/verify.ts` and
+ * `admin/requests/[id]/+page.server.ts`, both `access_request.${status}`) —
+ * not against memory. `access_request.submitted` is deliberately absent: its
+ * data is unverified public-form input (spec §4.3).
+ */
+const ENRICHERS: Record<string, Enricher> = {
+	'access_request.pending': enrichAccessRequest,
+	'access_request.approved': enrichAccessRequest,
+	'access_request.denied': enrichAccessRequest,
+	'access_request.info_requested': enrichAccessRequest,
+	'access_grant.revoked': enrichGrantRevoked,
+	'nda_acceptance.recorded': enrichNdaAcceptance('accepted'),
+	'nda_record.downloaded': enrichNdaAcceptance('downloaded'),
+	'document.downloaded': enrichDocumentDownloaded
+};
+
+export const ENRICHED_ACTIONS: readonly string[] = Object.keys(ENRICHERS);
+
+/** `access_request.pending` → "Access request pending". */
+function summaryFor(action: string, company?: string): string {
+	const words = action.replace(/[._]/g, ' ');
+	const sentence = words.charAt(0).toUpperCase() + words.slice(1);
+	return company ? `${sentence} — ${company}` : sentence;
+}
+
+export async function enrichEvent(
+	db: Db,
+	row: AuditEventRow,
+	context: EnrichContext
+): Promise<EnrichOutcome> {
+	const shared = {
+		action: row.action,
+		at: row.at,
+		eventId: row.id,
+		// A bigint does not survive JSON.stringify, and `seq` is what makes a
+		// gap detectable by a consumer (spec §4.4).
+		seq: String(row.seq),
+		deliveryId: context.deliveryId,
+		subject:
+			row.subjectType !== null && row.subjectId !== null
+				? { type: row.subjectType, id: row.subjectId }
+				: null,
+		actor: { type: row.actorType, id: row.actorId }
+	};
+
+	const enricher = ENRICHERS[row.action];
+
+	if (enricher) {
+		const result = await enricher(db, row, context);
+		if ('skip' in result) {
+			return {
+				kind: 'skip',
+				reason: result.skip === 'purged' ? 'subject_purged' : 'subject_missing'
+			};
+		}
+
+		// Every registered action is written after identity verification —
+		// `access_request.pending` exists precisely because someone has by then
+		// proven they control the address — so `true` is the default and an
+		// enricher opts out of it explicitly.
+		return {
+			kind: 'model',
+			model: { ...shared, ...result, verified: result.verified ?? true }
+		};
+	}
+
+	// The fallback carries `meta` verbatim and neither `ip` nor `ua`. §6.6
+	// already guarantees `meta` holds no requester personal data, so this is
+	// safe by construction rather than by filtering — and a filter is a thing
+	// somebody later forgets to extend (spec §4.2).
+	return {
+		kind: 'model',
+		model: {
+			...shared,
+			verified: false,
+			data: (row.meta as Record<string, unknown> | null) ?? {},
+			summary: summaryFor(row.action),
+			link: null
+		}
+	};
+}
