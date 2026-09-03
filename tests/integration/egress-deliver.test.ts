@@ -342,6 +342,43 @@ describe('deliverClaimed', () => {
 		expect(second).toHaveLength(0);
 	});
 
+	/**
+	 * Spec §5.5: a disabled endpoint neither fans out nor delivers. Fan-out
+	 * already enforces this (Task 9); this is the delivery half.
+	 *
+	 * This asserts the deterministic invariant — a pending delivery on an
+	 * already-disabled endpoint is never claimed — rather than racing a disable
+	 * into the narrow window between claimDeliveries's two internal queries.
+	 * That race (the locked fetch re-checking `e.enabled` because the two
+	 * queries take separate snapshots even inside one transaction) is real but
+	 * not reliably reproducible from a test without an artificial delay between
+	 * the two queries. Disabling before claiming at all, as this test does,
+	 * means the row is already excluded by the *first* (unlocked, ranking)
+	 * query's own `e.enabled = true` predicate — so this test alone would not
+	 * catch the `e.enabled = true` predicate being dropped from the *second*
+	 * (locked) query specifically, which is what regressed. It still guards
+	 * the end-to-end invariant the two queries exist to jointly uphold, and a
+	 * regression in either one's predicate that left both checks equally wrong
+	 * would still be caught here.
+	 */
+	it('does not claim a pending delivery on an already-disabled endpoint', async () => {
+		const server = await serve((_request, response) => response.writeHead(200).end());
+		const endpointId = await createEndpoint(server.url, ['certification.*']);
+		await emitFallbackEvent();
+
+		// Fan out without claiming, so the row is pending and due before the
+		// endpoint is disabled.
+		await db.transaction((tx) => fanOut(tx));
+		await db
+			.update(eventEndpoint)
+			.set({ enabled: false, disabledAt: new Date(), disabledReason: 'test' })
+			.where(eq(eventEndpoint.id, endpointId));
+
+		const claimed = await db.transaction((tx) => claimDeliveries(tx));
+
+		expect(claimed).toHaveLength(0);
+	});
+
 	it('records signing_key_missing without making a request when a generic endpoint has no key', async () => {
 		const server = await serve((_request, response) => response.writeHead(200).end());
 		const endpointId = await createEndpoint(server.url, ['certification.*']);

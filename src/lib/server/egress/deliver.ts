@@ -80,17 +80,24 @@ export async function claimDeliveries(
 	if (candidates.length === 0) return [];
 
 	// The second query locks exactly those ids `FOR UPDATE SKIP LOCKED`,
-	// re-checking status and due-ness because time has passed since the
-	// unlocked read above. A row a concurrent tick locked first is silently
-	// dropped here rather than waited on — which only ever under-claims for
-	// this tick, never double-claims.
+	// re-checking the row's status and due-ness AND the endpoint's enabled
+	// state, because time has passed since the unlocked read above and the two
+	// statements take separate snapshots even inside one transaction. Without
+	// re-checking `enabled` here, an operator disabling an endpoint in the
+	// window between the two queries would still have a delivery claimed for
+	// it — and then actually sent, moments later in phase two with no lock
+	// held. Spec §5.5 is explicit that a disabled endpoint neither fans out
+	// nor delivers; fan-out already enforces this (Task 9), so the delivery
+	// half must too. A row a concurrent tick locked first is silently dropped
+	// here rather than waited on — which only ever under-claims for this tick,
+	// never double-claims.
 	const rows = (await tx.execute(sql`
 		SELECT d.id, d.endpoint_id, d.audit_seq, d.audit_id, d.attempts,
 		       e.url, e.format, e.secret_version
 		FROM event_delivery d
 		JOIN event_endpoint e ON e.id = d.endpoint_id
 		WHERE d.id = ANY(${sql.raw(`ARRAY['${candidates.map((row) => row.id).join("','")}']::uuid[]`)})
-		  AND d.status = 'pending' AND d.next_attempt_at <= now()
+		  AND d.status = 'pending' AND d.next_attempt_at <= now() AND e.enabled = true
 		ORDER BY d.next_attempt_at
 		FOR UPDATE OF d SKIP LOCKED
 	`)) as unknown as {
