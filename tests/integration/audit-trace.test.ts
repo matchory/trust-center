@@ -1,47 +1,24 @@
-import { context, trace } from '@opentelemetry/api';
-import { AsyncLocalStorageContextManager } from '@opentelemetry/context-async-hooks';
-import {
-	BasicTracerProvider,
-	InMemorySpanExporter,
-	SimpleSpanProcessor
-} from '@opentelemetry/sdk-trace-base';
 import { desc, eq } from 'drizzle-orm';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createDb, type Db } from '../../src/lib/server/db';
 import { auditEvent } from '../../src/lib/server/db/schema';
 import { recordEvent } from '../../src/lib/server/audit';
 import { activeTraceId, withSpan } from '../../src/lib/server/telemetry';
+import { recordingSpans } from '../helpers/telemetry';
 
 let db: Db;
 let close: () => Promise<void>;
+
+recordingSpans();
 
 beforeAll(() => {
 	const url = process.env.TEST_DATABASE_URL;
 	if (!url) throw new Error('TEST_DATABASE_URL not set by global setup');
 	({ db, close } = createDb(url));
-
-	// `trace.setGlobalTracerProvider` silently refuses a second registration
-	// (returns false, no throw) once one is already registered on globalThis —
-	// disable first so this file's provider actually takes effect.
-	trace.disable();
-	trace.setGlobalTracerProvider(
-		new BasicTracerProvider({
-			spanProcessors: [new SimpleSpanProcessor(new InMemorySpanExporter())]
-		})
-	);
-
-	// `trace.setGlobalTracerProvider` alone installs no context manager, so
-	// `context.active()` never propagates and `startActiveSpan` cannot make its
-	// span active — without this, `activeTraceId()` returns undefined inside
-	// `withSpan` and the central assertion below fails.
-	context.setGlobalContextManager(new AsyncLocalStorageContextManager().enable());
 });
 
 afterAll(async () => {
 	await close();
-	// Leave the global tracing API as this file found it, for whichever test
-	// file's `beforeAll` runs next in the same worker.
-	trace.disable();
 });
 
 async function latestRequestId(action: string): Promise<string | null> {

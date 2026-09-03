@@ -23,6 +23,21 @@ export async function enqueueEmail(
 	});
 }
 
+/**
+ * Every row still waiting to go out, rows in retry backoff included — this
+ * counts what is queued, not what the next `drainOutbox` tick would claim.
+ * Lives here rather than at the caller so the definition of "queued" stays with
+ * the claim predicate above it: telemetry owns the instrument, this module owns
+ * what the number means.
+ */
+export async function pendingCount(db: Db): Promise<number> {
+	const rows = (await db.execute(
+		sql`SELECT count(*)::int AS depth FROM outbound_email WHERE status = 'pending'`
+	)) as unknown as { depth: number }[];
+
+	return rows[0]?.depth ?? 0;
+}
+
 interface ClaimedRow {
 	id: string;
 	to: string;
@@ -97,8 +112,7 @@ export async function drainOutbox(
 						attachments
 					}),
 				// CLIENT, because this is the application's only outbound egress
-				// (spec §4): a service map that does not show SMTP leaving this
-				// process shows nothing leaving it at all.
+				// (spec §4) — see `withSpan`'s `kind` for why it is not left INTERNAL.
 				SpanKind.CLIENT
 			);
 

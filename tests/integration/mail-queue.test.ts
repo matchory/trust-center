@@ -2,18 +2,14 @@ import { randomUUID } from 'node:crypto';
 import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { SpanKind, trace } from '@opentelemetry/api';
-import {
-	BasicTracerProvider,
-	InMemorySpanExporter,
-	SimpleSpanProcessor
-} from '@opentelemetry/sdk-trace-base';
+import { SpanKind } from '@opentelemetry/api';
 import { eq } from 'drizzle-orm';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { createDb } from '../../src/lib/server/db';
 import { outboundEmail } from '../../src/lib/server/db/schema';
 import { drainOutbox, enqueueEmail } from '../../src/lib/server/mail/queue';
 import { createLocalStorage, newStorageKey } from '../../src/lib/server/storage/local';
+import { expectNoSensitiveAttributes, recordingSpans } from '../helpers/telemetry';
 import type { MailAdapter, OutgoingMail } from '../../src/lib/server/mail';
 import type { Db } from '../../src/lib/server/db';
 import type { StorageAdapter } from '../../src/lib/server/storage';
@@ -23,31 +19,16 @@ const FROM = 'trust-center@test.invalid';
 let db: Db;
 let close: () => Promise<void>;
 let storage: StorageAdapter;
-let exporter: InMemorySpanExporter;
+
+const spans = recordingSpans();
 
 beforeAll(async () => {
 	({ db, close } = createDb(process.env.TEST_DATABASE_URL!));
 	storage = createLocalStorage(await mkdtemp(join(tmpdir(), 'mail-attachment-')));
-
-	// `trace.setGlobalTracerProvider` silently refuses a second registration
-	// (returns false, no throw) once one is already registered on globalThis —
-	// disable first so this file's provider actually takes effect, and
-	// register once here rather than per test so the second test's fresh
-	// exporter is not silently ignored.
-	trace.disable();
-	exporter = new InMemorySpanExporter();
-	trace.setGlobalTracerProvider(
-		new BasicTracerProvider({ spanProcessors: [new SimpleSpanProcessor(exporter)] })
-	);
 });
-
-beforeEach(() => exporter.reset());
 
 afterAll(async () => {
 	await close();
-	// Leave the global tracing API as this file found it, for whichever test
-	// file's `beforeAll` runs next in the same worker.
-	trace.disable();
 });
 
 function mailerThat(behaviour: 'succeed' | 'fail'): { adapter: MailAdapter; sent: string[] } {
@@ -279,16 +260,12 @@ describe('mail drain telemetry', () => {
 			storage
 		});
 
-		const sendSpans = exporter.getFinishedSpans().filter((span) => span.name === 'mail send');
+		const sendSpans = spans().filter((span) => span.name === 'mail send');
 		expect(sendSpans).toHaveLength(1);
 		expect(sendSpans[0]?.attributes['mail.template']).toBe('sign_in');
 		// CLIENT rather than the SDK's default INTERNAL: SMTP is the application's
 		// only outbound egress, and a service map keys on the span kind.
 		expect(sendSpans[0]?.kind).toBe(SpanKind.CLIENT);
-
-		// Spec §8: the recipient is personal data and telemetry leaves the
-		// boundary, so no attribute may carry it.
-		const values = Object.values(sendSpans[0]?.attributes ?? {}).map(String);
-		expect(values.some((value) => value.includes('@'))).toBe(false);
+		expectNoSensitiveAttributes(sendSpans[0]);
 	});
 });

@@ -1,13 +1,8 @@
-import { trace } from '@opentelemetry/api';
-import {
-	BasicTracerProvider,
-	InMemorySpanExporter,
-	SimpleSpanProcessor
-} from '@opentelemetry/sdk-trace-base';
 import { PDFDocument } from 'pdf-lib';
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { stampPdf } from '../../src/lib/server/delivery/watermark';
 import { blankPdf, drawnText } from '../helpers/pdf';
+import { expectNoSensitiveAttributes, recordingSpans } from '../helpers/telemetry';
 
 const FONT_DIR = './assets/fonts';
 
@@ -19,28 +14,7 @@ const recipient = {
 	notice: 'Confidential — provided under access grant.'
 };
 
-let exporter: InMemorySpanExporter;
-
-beforeAll(() => {
-	// `trace.setGlobalTracerProvider` silently refuses a second registration
-	// (returns false, no throw) once one is already registered on globalThis —
-	// disable first so this file's provider actually takes effect, and
-	// register once here rather than per test so a later test's fresh exporter
-	// state is not silently ignored.
-	trace.disable();
-	exporter = new InMemorySpanExporter();
-	trace.setGlobalTracerProvider(
-		new BasicTracerProvider({ spanProcessors: [new SimpleSpanProcessor(exporter)] })
-	);
-});
-
-beforeEach(() => exporter.reset());
-
-afterAll(() => {
-	// Leave the global tracing API as this file found it, for whichever test
-	// file's `beforeAll` runs next in the same worker.
-	trace.disable();
-});
+const spans = recordingSpans();
 
 describe('stampPdf', () => {
 	it('returns a valid PDF with the same page count', async () => {
@@ -112,14 +86,10 @@ describe('stampPdf telemetry', () => {
 	it('emits a span with the page count and nothing about the recipient', async () => {
 		await stampPdf(await blankPdf(3), FONT_DIR, recipient);
 
-		const spans = exporter.getFinishedSpans();
-		expect(spans).toHaveLength(1);
-		expect(spans[0]?.name).toBe('document watermark');
-		expect(spans[0]?.attributes['document.pages']).toBe(3);
-
-		const values = [spans[0]?.name ?? '', ...Object.values(spans[0]?.attributes ?? {}).map(String)];
-		expect(values.some((value) => value.includes('@'))).toBe(false);
-		expect(values.some((value) => value.includes('Acme'))).toBe(false);
-		expect(values.some((value) => value.includes('A Person'))).toBe(false);
+		const finished = spans();
+		expect(finished).toHaveLength(1);
+		expect(finished[0]?.name).toBe('document watermark');
+		expect(finished[0]?.attributes['document.pages']).toBe(3);
+		expectNoSensitiveAttributes(finished[0], 'Acme', 'A Person');
 	});
 });

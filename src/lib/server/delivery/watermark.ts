@@ -1,6 +1,7 @@
 import { degrees, PDFDocument, rgb } from 'pdf-lib';
 import { embedFace } from '../pdf/fonts';
 import { withSpan } from '../telemetry';
+import type { Span } from '@opentelemetry/api';
 
 export interface WatermarkRecipient {
 	name: string;
@@ -25,60 +26,69 @@ export async function stampPdf(
 	fontDir: string,
 	recipient: WatermarkRecipient
 ): Promise<Uint8Array> {
-	return withSpan('document watermark', {}, async (span) => {
-		// `ignoreEncryption` is deliberately NOT set: a document we cannot fully
-		// parse is one we cannot prove we stamped, and a silently unstamped gated
-		// download is worse than a failed one.
-		const pdf = await PDFDocument.load(bytes);
-		// Page count is not known until the document is loaded, so it goes on the
-		// span here rather than as an initial attribute. `recipient` — name,
-		// company, email — never does: telemetry is outside the reach of the
-		// requester-erasure path, and none of it may end up there (spec §8).
-		span.setAttribute('document.pages', pdf.getPageCount());
-		// The same embedded typeface the record PDF draws with. A standard font is
-		// WinAnsi-only, and the name it could not encode is exactly the one this
-		// stamp exists to carry. One face, not four: the stamp draws in one, and
-		// embedding the rest would cost every gated download for nothing.
-		const font = await embedFace(pdf, fontDir, 'regular');
+	return withSpan('document watermark', {}, (span) => stamp(bytes, fontDir, recipient, span));
+}
 
-		const timestamp = `${recipient.at.toISOString().replace('T', ' ').slice(0, 19)} UTC`;
-		const footer = `${recipient.name} · ${recipient.company} · ${recipient.email} · ${timestamp}`;
+/**
+ * `recipient` — name, company, email — never reaches the span: telemetry is
+ * outside the reach of the requester-erasure path, and none of it may end up
+ * there (spec §8). The page count is all this span carries, and it is not known
+ * until the document is loaded, so it is set here rather than passed in.
+ */
+async function stamp(
+	bytes: Uint8Array,
+	fontDir: string,
+	recipient: WatermarkRecipient,
+	span: Span
+): Promise<Uint8Array> {
+	// `ignoreEncryption` is deliberately NOT set: a document we cannot fully
+	// parse is one we cannot prove we stamped, and a silently unstamped gated
+	// download is worse than a failed one.
+	const pdf = await PDFDocument.load(bytes);
+	span.setAttribute('document.pages', pdf.getPageCount());
+	// The same embedded typeface the record PDF draws with. A standard font is
+	// WinAnsi-only, and the name it could not encode is exactly the one this
+	// stamp exists to carry. One face, not four: the stamp draws in one, and
+	// embedding the rest would cost every gated download for nothing.
+	const font = await embedFace(pdf, fontDir, 'regular');
 
-		for (const page of pdf.getPages()) {
-			const { width, height } = page.getSize();
+	const timestamp = `${recipient.at.toISOString().replace('T', ' ').slice(0, 19)} UTC`;
+	const footer = `${recipient.name} · ${recipient.company} · ${recipient.email} · ${timestamp}`;
 
-			// A diagonal, low-opacity band across the middle: survives cropping the
-			// margins, which is the obvious way to remove a footer.
-			page.drawText(recipient.company, {
-				x: width * 0.12,
-				y: height * 0.42,
-				size: 42,
-				font,
-				color: rgb(0.6, 0.6, 0.6),
-				opacity: 0.18,
-				rotate: degrees(30)
-			});
+	for (const page of pdf.getPages()) {
+		const { width, height } = page.getSize();
 
-			// The identifying line, small and along the bottom margin.
-			page.drawText(footer, {
-				x: 28,
-				y: 22,
-				size: 7,
-				font,
-				color: rgb(0.25, 0.25, 0.25),
-				opacity: 0.85
-			});
+		// A diagonal, low-opacity band across the middle: survives cropping the
+		// margins, which is the obvious way to remove a footer.
+		page.drawText(recipient.company, {
+			x: width * 0.12,
+			y: height * 0.42,
+			size: 42,
+			font,
+			color: rgb(0.6, 0.6, 0.6),
+			opacity: 0.18,
+			rotate: degrees(30)
+		});
 
-			page.drawText(recipient.notice, {
-				x: 28,
-				y: 12,
-				size: 7,
-				font,
-				color: rgb(0.25, 0.25, 0.25),
-				opacity: 0.85
-			});
-		}
+		// The identifying line, small and along the bottom margin.
+		page.drawText(footer, {
+			x: 28,
+			y: 22,
+			size: 7,
+			font,
+			color: rgb(0.25, 0.25, 0.25),
+			opacity: 0.85
+		});
 
-		return pdf.save();
-	});
+		page.drawText(recipient.notice, {
+			x: 28,
+			y: 12,
+			size: 7,
+			font,
+			color: rgb(0.25, 0.25, 0.25),
+			opacity: 0.85
+		});
+	}
+
+	return pdf.save();
 }

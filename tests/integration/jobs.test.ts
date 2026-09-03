@@ -1,12 +1,6 @@
 import { randomUUID } from 'node:crypto';
-import { trace } from '@opentelemetry/api';
-import {
-	BasicTracerProvider,
-	InMemorySpanExporter,
-	SimpleSpanProcessor
-} from '@opentelemetry/sdk-trace-base';
 import { eq } from 'drizzle-orm';
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createDb } from '../../src/lib/server/db';
 import {
 	accessRequest,
@@ -16,12 +10,14 @@ import {
 } from '../../src/lib/server/db/schema';
 import { cleanupExpiredSessions, runJob } from '../../src/lib/server/jobs';
 import { createRequesterSession, upsertRequester } from '../../src/lib/server/identity/requester';
+import { recordingSpans } from '../helpers/telemetry';
 import type { Db } from '../../src/lib/server/db';
 
 let db: Db;
 let close: () => Promise<void>;
 let staffUserId: string;
-let exporter: InMemorySpanExporter;
+
+const spans = recordingSpans();
 
 beforeAll(async () => {
 	({ db, close } = createDb(process.env.TEST_DATABASE_URL!));
@@ -37,26 +33,10 @@ beforeAll(async () => {
 		.returning({ id: staffUser.id });
 
 	staffUserId = row!.id;
-
-	// `trace.setGlobalTracerProvider` silently refuses a second registration
-	// (returns false, no throw) once one is already registered on globalThis —
-	// disable first so this file's provider actually takes effect, and
-	// register once here rather than per test so the second test's fresh
-	// exporter is not silently ignored.
-	trace.disable();
-	exporter = new InMemorySpanExporter();
-	trace.setGlobalTracerProvider(
-		new BasicTracerProvider({ spanProcessors: [new SimpleSpanProcessor(exporter)] })
-	);
 });
-
-beforeEach(() => exporter.reset());
 
 afterAll(async () => {
 	await close();
-	// Leave the global tracing API as this file found it, for whichever test
-	// file's `beforeAll` runs next in the same worker.
-	trace.disable();
 });
 
 describe('runJob', () => {
@@ -205,11 +185,11 @@ describe('runJob telemetry', () => {
 	it('emits one span per tick, naming the job and whether it held the lock', async () => {
 		await runJob(db, 'telemetry-span-probe', async () => {});
 
-		const spans = exporter.getFinishedSpans();
-		expect(spans).toHaveLength(1);
-		expect(spans[0]?.name).toBe('job telemetry-span-probe');
-		expect(spans[0]?.attributes['job.name']).toBe('telemetry-span-probe');
-		expect(spans[0]?.attributes['job.lock_acquired']).toBe(true);
+		const finished = spans();
+		expect(finished).toHaveLength(1);
+		expect(finished[0]?.name).toBe('job telemetry-span-probe');
+		expect(finished[0]?.attributes['job.name']).toBe('telemetry-span-probe');
+		expect(finished[0]?.attributes['job.lock_acquired']).toBe(true);
 	});
 
 	// A job that throws must still end its span, or the active context leaks
@@ -221,8 +201,8 @@ describe('runJob telemetry', () => {
 			})
 		).rejects.toThrow('tick failed');
 
-		const spans = exporter.getFinishedSpans();
-		expect(spans).toHaveLength(1);
-		expect(spans[0]?.status.code).toBe(2);
+		const finished = spans();
+		expect(finished).toHaveLength(1);
+		expect(finished[0]?.status.code).toBe(2);
 	});
 });

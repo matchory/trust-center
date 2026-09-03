@@ -9,22 +9,6 @@ import { registerQueueDepthGauge, resetInstruments } from './metrics';
 let started: { shutdown: () => Promise<void> }[] = [];
 
 /**
- * Imports the SDK dynamically and only when an endpoint is configured, for the
- * same reason `init` imports the migrator and the job runner that way: `vite
- * build` must need neither configuration nor a database, and an operator
- * running without telemetry should not pay to load an exporter they will never
- * use.
- *
- * Returns whether this call actually started providers, so a caller (or a
- * test) can observe the guard's effect directly instead of through
- * `globalThis` side effects that a second, redundant registration would
- * leave equally intact. `init` ignores it; a second call must still return
- * `false` rather than build a second `NodeTracerProvider`/`MeterProvider`
- * pair, since later tasks add a `PeriodicExportingMetricReader` with its own
- * live export timer, and orphaning one of those on every restart is a leak,
- * not a curiosity.
- */
-/**
  * Without a diag logger the OTLP exporter reports every export failure — a 404
  * from an endpoint that is nearly right, a 401 from a stale bearer token, a
  * refused connection — through the API's no-op, so a collector that accepts
@@ -59,6 +43,26 @@ function installDiagLogger(): void {
 		},
 		DiagLogLevel.ERROR
 	);
+}
+
+/**
+ * A module-level function rather than a closure written inside `startTelemetry`:
+ * the gauge holds its callback for the life of the process, and a closure
+ * defined there would pin that entire scope — the ten destructured SDK modules,
+ * the resource, both providers — for just as long.
+ *
+ * `getDb` and the mail module are imported here rather than at module scope:
+ * `getDb` is lazy, but keeping the database out of this module's import graph
+ * preserves the rule that importing telemetry never reaches for a connection.
+ * The registry caches both after the first collection.
+ */
+async function readQueueDepth(): Promise<number> {
+	const [{ getDb }, { pendingCount }] = await Promise.all([
+		import('../db/instance'),
+		import('../mail/queue')
+	]);
+
+	return pendingCount(getDb());
 }
 
 export async function startTelemetry(config: AppConfig['telemetry']): Promise<boolean> {
@@ -117,20 +121,7 @@ export async function startTelemetry(config: AppConfig['telemetry']): Promise<bo
 	// provider on next use.
 	resetInstruments();
 
-	// `getDb` is imported here rather than at module scope: it is lazy, but
-	// keeping the database out of this module's import graph preserves the rule
-	// that importing telemetry never reaches for a connection. Only when an
-	// endpoint is configured does this run at all, so a deployment without a
-	// collector never issues the query.
-	const [{ getDb }, { sql }] = await Promise.all([import('../db/instance'), import('drizzle-orm')]);
-
-	registerQueueDepthGauge(async () => {
-		const rows = (await getDb().execute(
-			sql`SELECT count(*)::int AS depth FROM outbound_email WHERE status = 'pending'`
-		)) as unknown as { depth: number }[];
-
-		return rows[0]?.depth ?? 0;
-	});
+	registerQueueDepthGauge(readQueueDepth);
 
 	started = [tracerProvider, meterProvider];
 	return true;

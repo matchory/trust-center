@@ -15,13 +15,12 @@ function blankAsUndefined<T extends z.ZodTypeAny>(schema: T) {
  * value that can itself contain `=`, and splitting on every one would truncate
  * it into a credential that fails authentication with no error here.
  *
- * The schema's refine validates the *result* of this function rather than
- * re-deriving the rule from the raw string, because the two disagreed at the
- * edges when they were separate: the refine rejected a trailing comma this
- * skips, and neither rejected an empty key, so `=v` produced a `{'': 'v'}`
- * header the exporter cannot send. This is where the collector credential
- * lives; the parser and its validator have to be the same reading of the
- * string.
+ * Parsing and validation are one chain in the schema below rather than a parse
+ * here and a separate refine there: as two readings of the same string they
+ * disagreed at the edges — the refine rejected a trailing comma this skips, and
+ * neither rejected an empty key, so `=v` produced a `{'': 'v'}` header the
+ * exporter cannot send. This is where the collector credential lives, so the
+ * disagreement is made unrepresentable rather than kept in step by hand.
  */
 function otlpHeaderEntries(raw: string): [string, string][] {
 	return raw
@@ -37,10 +36,6 @@ function otlpHeaderEntries(raw: string): [string, string][] {
 
 			return [pair.slice(0, split).trim(), pair.slice(split + 1).trim()];
 		});
-}
-
-function parseOtlpHeaders(raw: string | undefined): Record<string, string> {
-	return raw ? Object.fromEntries(otlpHeaderEntries(raw)) : {};
 }
 
 const localeList = z
@@ -156,14 +151,16 @@ function buildSchema(compiledLocales: readonly string[]) {
 				z
 					.string()
 					.min(1)
-					.refine((raw) => {
-						const entries = otlpHeaderEntries(raw);
-						// At least one, and every key non-empty: a value that parses to
-						// nothing (`,`) or to a nameless header (`=v`) is a typo in the
-						// one setting that carries the collector credential, and it must
-						// refuse to boot rather than authenticate with no header.
-						return entries.length > 0 && entries.every(([key]) => key.length > 0);
-					}, 'expected comma-separated key=value pairs')
+					.transform(otlpHeaderEntries)
+					// At least one, and every key non-empty: a value that parses to
+					// nothing (`,`) or to a nameless header (`=v`) is a typo in the one
+					// setting that carries the collector credential, and it must refuse
+					// to boot rather than authenticate with no header.
+					.refine(
+						(entries) => entries.length > 0 && entries.every(([key]) => key.length > 0),
+						'expected comma-separated key=value pairs'
+					)
+					.transform((entries) => Object.fromEntries(entries))
 			),
 			OTEL_TRACES_SAMPLER_ARG: blankAsUndefined(z.coerce.number().min(0).max(1)).default(1)
 		})
@@ -243,7 +240,7 @@ export function parseConfig(
 		telemetry: {
 			endpoint: parsed.OTEL_EXPORTER_OTLP_ENDPOINT,
 			serviceName: parsed.OTEL_SERVICE_NAME,
-			headers: parseOtlpHeaders(parsed.OTEL_EXPORTER_OTLP_HEADERS),
+			headers: parsed.OTEL_EXPORTER_OTLP_HEADERS ?? {},
 			sampleRatio: parsed.OTEL_TRACES_SAMPLER_ARG
 		}
 	};

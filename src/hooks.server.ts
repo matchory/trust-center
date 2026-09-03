@@ -92,7 +92,12 @@ export const init: ServerInit = async () => {
 	// no advisory lock around drizzle's migrator to prevent it.
 	if (process.env.RUN_MIGRATIONS !== 'false') {
 		const { migrate } = await import('drizzle-orm/postgres-js/migrator');
-		await migrate(getDb(), { migrationsFolder: './drizzle' });
+		// The span telemetry is started ahead of migrations for: a deploy that is
+		// slow to come up is either a slow migration or something else, and this
+		// is what tells the operator which.
+		await withSpan('database migrate', {}, () =>
+			migrate(getDb(), { migrationsFolder: './drizzle' })
+		);
 	}
 
 	// After migrations, so no job queries a table that does not exist yet.
@@ -105,22 +110,110 @@ export const init: ServerInit = async () => {
 	}
 };
 
-export const handle: Handle = async ({ event, resolve }) => {
-	// Opened at the very top of `handle`, ahead of locale classification and the
-	// two session lookups. `event.route.id` and the method are both populated
-	// before `handle` runs, so nothing is lost by starting here — and starting
-	// later cost two things: `http.server.request.duration` is a semantic
-	// convention name with a semantic convention meaning, and it under-reported
-	// by a database round trip on every authenticated request; and the 404 below
-	// for a compiled-but-disabled locale was thrown before the span existed, so
-	// that entire class of request was invisible in traces and metrics alike.
-	const routeId = event.route.id;
-	const method = event.request.method;
+/**
+ * Everything `handle` did before instrumentation, unchanged and at its original
+ * indentation: the span belongs around this, not woven through it.
+ */
+async function handleRequest({ event, resolve }: Parameters<Handle>[0]): Promise<Response> {
+	const { locales, defaultLocale } = getConfig();
+	const route = classifyPath(event.url.pathname, COMPILED_LOCALES, locales);
+
+	// A compiled-but-disabled locale is not a content path. Refusing it here
+	// keeps `/en/avv` from degrading into a lookup for a document slugged "en"
+	// the day an operator narrows LOCALES.
+	if (route.kind === 'unknown-locale') {
+		error(404, `Locale "${route.locale}" is not enabled on this deployment.`);
+	}
+
+	event.locals.pathLocale = route.kind === 'localized' ? route.locale : null;
+	event.locals.locale =
+		route.kind === 'localized'
+			? route.locale
+			: resolveLocale(
+					{
+						pathLocale: null,
+						acceptLanguage: event.request.headers.get('accept-language') ?? undefined
+					},
+					locales,
+					defaultLocale
+				);
+
+	event.locals.staff = null;
+	const token = event.cookies.get(SESSION_COOKIE);
+
+	if (token) {
+		const session = await validateStaffSession(getDb(), token);
+		const role = session?.user.role;
+
+		if (session && (role === 'admin' || role === 'approver')) {
+			event.locals.staff = {
+				id: session.user.id,
+				email: session.user.email,
+				name: session.user.name,
+				role
+			};
+		} else {
+			// As with the requester cookie below, every attribute must match the
+			// set or the deletion is rejected — see STAFF_COOKIE_OPTIONS.
+			event.cookies.delete(SESSION_COOKIE, STAFF_COOKIE_OPTIONS);
+		}
+	}
+
+	event.locals.requester = null;
+	const requesterToken = event.cookies.get(REQUESTER_SESSION_COOKIE);
+
+	if (requesterToken) {
+		const session = await validateRequesterSession(getDb(), requesterToken);
+
+		if (session) {
+			event.locals.requester = {
+				id: session.requester.id,
+				email: session.requester.email,
+				name: session.requester.name,
+				company: session.requester.company
+			};
+		} else {
+			// Every attribute must match how it was set, or the delete silently
+			// does nothing — see requesterCookieOptions.
+			event.cookies.delete(REQUESTER_SESSION_COOKIE, requesterCookieOptions(event.locals.locale));
+		}
+	}
+
+	// localeStorage.run MUST remain the outermost wrapper around resolve, or
+	// server-rendered translations silently fall back to the base locale.
+	return localeStorage.run({ locale: assertIsLocale(event.locals.locale) }, async () => {
+		const response = await resolve(event, {
+			transformPageChunk: ({ html }) => html.replace('%lang%', event.locals.locale)
+		});
+
+		// Only the unprefixed responses vary by Accept-Language — and those are
+		// all redirects issued by the root layout. Every content URL carries its
+		// locale in the path and stays unconditionally cacheable.
+		if (route.kind === 'unprefixed') response.headers.append('Vary', 'Accept-Language');
+
+		return response;
+	});
+}
+
+/**
+ * Opened at the very top of `handle`, ahead of locale classification and the
+ * two session lookups. `event.route.id` and the method are both populated
+ * before `handle` runs, so nothing is lost by starting here — and starting
+ * later cost two things: `http.server.request.duration` is a semantic
+ * convention name with a semantic convention meaning, and it under-reported by
+ * a database round trip on every authenticated request; and the 404 for a
+ * compiled-but-disabled locale was thrown before the span existed, so that
+ * entire class of request was invisible in traces and metrics alike.
+ *
+ * The span wraps outside `localeStorage.run`, which stays the immediate wrapper
+ * around `resolve` inside `handleRequest` — the rule CLAUDE.md states, and whose
+ * breach shows up as SSR translations silently falling back to the base locale.
+ */
+export const handle: Handle = async (input) => {
+	const routeId = input.event.route.id;
+	const method = input.event.request.method;
 	const started = performance.now();
 
-	// The span wraps outside `localeStorage.run`, which stays the immediate
-	// wrapper around `resolve` — the rule CLAUDE.md states, and whose breach
-	// shows up as SSR translations silently falling back to the base locale.
 	return withSpan(
 		requestSpanName(method, routeId),
 		{},
@@ -128,99 +221,16 @@ export const handle: Handle = async ({ event, resolve }) => {
 			// Called on every exit path, a throw included, so no failure between
 			// here and `resolve` can drop a request out of both signals at once.
 			const record = (status: number) => {
-				span.setAttributes(requestAttributes({ method, routeId, status }));
-				recordRequestDuration({
-					method,
-					routeId,
-					status,
-					seconds: (performance.now() - started) / 1000
-				});
+				const attributes = requestAttributes({ method, routeId, status });
+
+				// One set of values, put on the span and handed to the histogram, so
+				// the two cannot drift — including the unmatched-route omission.
+				span.setAttributes(attributes);
+				recordRequestDuration(attributes, (performance.now() - started) / 1000);
 			};
 
 			try {
-				const { locales, defaultLocale } = getConfig();
-				const route = classifyPath(event.url.pathname, COMPILED_LOCALES, locales);
-
-				// A compiled-but-disabled locale is not a content path. Refusing it
-				// here keeps `/en/avv` from degrading into a lookup for a document
-				// slugged "en" the day an operator narrows LOCALES.
-				if (route.kind === 'unknown-locale') {
-					error(404, `Locale "${route.locale}" is not enabled on this deployment.`);
-				}
-
-				event.locals.pathLocale = route.kind === 'localized' ? route.locale : null;
-				event.locals.locale =
-					route.kind === 'localized'
-						? route.locale
-						: resolveLocale(
-								{
-									pathLocale: null,
-									acceptLanguage: event.request.headers.get('accept-language') ?? undefined
-								},
-								locales,
-								defaultLocale
-							);
-
-				event.locals.staff = null;
-				const token = event.cookies.get(SESSION_COOKIE);
-
-				if (token) {
-					const session = await validateStaffSession(getDb(), token);
-					const role = session?.user.role;
-
-					if (session && (role === 'admin' || role === 'approver')) {
-						event.locals.staff = {
-							id: session.user.id,
-							email: session.user.email,
-							name: session.user.name,
-							role
-						};
-					} else {
-						// As with the requester cookie below, every attribute must match
-						// the set or the deletion is rejected — see STAFF_COOKIE_OPTIONS.
-						event.cookies.delete(SESSION_COOKIE, STAFF_COOKIE_OPTIONS);
-					}
-				}
-
-				event.locals.requester = null;
-				const requesterToken = event.cookies.get(REQUESTER_SESSION_COOKIE);
-
-				if (requesterToken) {
-					const session = await validateRequesterSession(getDb(), requesterToken);
-
-					if (session) {
-						event.locals.requester = {
-							id: session.requester.id,
-							email: session.requester.email,
-							name: session.requester.name,
-							company: session.requester.company
-						};
-					} else {
-						// Every attribute must match how it was set, or the delete
-						// silently does nothing — see requesterCookieOptions.
-						event.cookies.delete(
-							REQUESTER_SESSION_COOKIE,
-							requesterCookieOptions(event.locals.locale)
-						);
-					}
-				}
-
-				const response = await localeStorage.run(
-					{ locale: assertIsLocale(event.locals.locale) },
-					async () => {
-						const resolved = await resolve(event, {
-							transformPageChunk: ({ html }) => html.replace('%lang%', event.locals.locale)
-						});
-
-						// Only the unprefixed responses vary by Accept-Language — and those
-						// are all redirects issued by the root layout. Every content URL
-						// carries its locale in the path and stays unconditionally cacheable.
-						if (route.kind === 'unprefixed') resolved.headers.append('Vary', 'Accept-Language');
-
-						return resolved;
-					}
-				);
-
+				const response = await handleRequest(input);
 				record(response.status);
 				return response;
 			} catch (cause) {
@@ -234,10 +244,8 @@ export const handle: Handle = async ({ event, resolve }) => {
 				throw cause;
 			}
 		},
-		// SERVER, not the SDK's default INTERNAL: every trace backend and the
-		// collector's spanmetrics connector keys entry-point detection, service
-		// maps and RED aggregation on the span kind, so an INTERNAL root carrying
-		// http.route is the entry point of no trace anywhere.
+		// SERVER rather than the SDK's default INTERNAL — see `withSpan`'s `kind`
+		// parameter for why the kind is as permanent as the span name.
 		SpanKind.SERVER
 	);
 };

@@ -1,5 +1,4 @@
-import { metrics } from '@opentelemetry/api';
-import { requestAttributes } from './attributes';
+import { metrics, type Attributes } from '@opentelemetry/api';
 
 const METER_NAME = 'trust-center';
 
@@ -58,19 +57,14 @@ function get() {
 	return (instruments ??= build());
 }
 
-export function recordRequestDuration(input: {
-	method: string;
-	routeId: string | null;
-	status: number;
-	seconds: number;
-}): void {
-	// Shares `requestAttributes` with the span so the two never drift: same
-	// request, same rule — including the unmatched-route omission, which keeps
-	// an unmatched path from minting one time series per probe.
-	get().requestDuration.record(
-		input.seconds,
-		requestAttributes({ method: input.method, routeId: input.routeId, status: input.status })
-	);
+/**
+ * Takes the attributes the caller already put on the span rather than building
+ * its own, so the span and the data point are not merely built by the same rule
+ * but are the same values — including the unmatched-route omission, which keeps
+ * an unmatched path from minting one time series per probe.
+ */
+export function recordRequestDuration(attributes: Attributes, seconds: number): void {
+	get().requestDuration.record(seconds, attributes);
 }
 
 /**
@@ -83,10 +77,13 @@ export function recordJobTick(input: {
 	outcome: 'ok' | 'locked' | 'error';
 	seconds: number;
 }): void {
-	const attributes = { 'job.name': input.name, outcome: input.outcome };
+	const { jobTickDuration, jobTick } = get();
 
-	get().jobTickDuration.record(input.seconds, { 'job.name': input.name });
-	get().jobTick.add(1, attributes);
+	// The duration carries no `outcome`: it is the histogram an operator reads
+	// for "is this job getting slower", and splitting it by outcome would put
+	// the `locked` ticks — which do no work at all — in the same chart.
+	jobTickDuration.record(input.seconds, { 'job.name': input.name });
+	jobTick.add(1, { 'job.name': input.name, outcome: input.outcome });
 }
 
 /** Called by `startTelemetry` after the real meter provider is registered. */
