@@ -1,6 +1,10 @@
 import { diag, DiagLogLevel, metrics, trace } from '@opentelemetry/api';
 import type { AppConfig } from '../config';
-import { registerQueueDepthGauge, resetInstruments } from './metrics';
+import {
+	registerEgressQueueDepthGauge,
+	registerQueueDepthGauge,
+	resetInstruments
+} from './metrics';
 
 /**
  * Held so shutdown can flush. Empty is the normal state: a deployment with no
@@ -65,6 +69,16 @@ async function readQueueDepth(): Promise<number> {
 	return pendingCount(getDb());
 }
 
+/** The egress counterpart, and a module-level function for the same reason. */
+async function readEgressQueueDepth(): Promise<number> {
+	const [{ getDb }, { pendingDeliveryCount }] = await Promise.all([
+		import('../db/instance'),
+		import('../egress/deliver')
+	]);
+
+	return pendingDeliveryCount(getDb());
+}
+
 export async function startTelemetry(config: AppConfig['telemetry']): Promise<boolean> {
 	if (!config.endpoint || started.length > 0) return false;
 
@@ -122,6 +136,12 @@ export async function startTelemetry(config: AppConfig['telemetry']): Promise<bo
 	resetInstruments();
 
 	registerQueueDepthGauge(readQueueDepth);
+	// Registered unconditionally rather than behind `config.egress.enabled`: the
+	// gauge reads a table, not the flag, and a deployment that turned egress off
+	// with rows still pending must not have the depth go silent — a gauge that
+	// stops reporting is indistinguishable from a collector that stopped
+	// scraping. Zero is the honest reading for the disabled case.
+	registerEgressQueueDepthGauge(readEgressQueueDepth);
 
 	started = [tracerProvider, meterProvider];
 	return true;

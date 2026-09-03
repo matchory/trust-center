@@ -385,3 +385,36 @@ describe('fanOut', () => {
 		expect(resumed.enqueued).toBe(1);
 	});
 });
+
+/**
+ * `enqueued` is the value `trustcenter.egress.fanout` carries, so it has to be
+ * rows inserted rather than rows attempted (Task 12).
+ */
+describe('what enqueued counts', () => {
+	it('reports zero for a replayed window whose rows are already enqueued', async () => {
+		const endpointId = await createEndpoint(['access_request.*']);
+		const subjectId = crypto.randomUUID();
+		await recordEvent(db, {
+			action: 'access_request.approved',
+			actor: { type: 'system', id: null },
+			subjectType: 'access_request',
+			subjectId
+		});
+
+		const first = await db.transaction((tx) => fanOut(tx));
+		expect(first.enqueued).toBe(1);
+
+		// The cursor rewound to where it was: a crash between the insert and the
+		// cursor update leaves exactly this state, and purgeRequester's UPDATE of
+		// audit_event reaches it the other way, by lifting a row's xmin back above
+		// the cursor. `ON CONFLICT DO NOTHING` makes the replay a no-op — and a
+		// counter that reported one enqueued here would tell an operator work
+		// happened where none did.
+		await db.update(eventEndpoint).set({ cursorSeq: 0n }).where(eq(eventEndpoint.id, endpointId));
+
+		const replay = await db.transaction((tx) => fanOut(tx));
+
+		expect(replay.enqueued).toBe(0);
+		expect(await deliveredSeqs(endpointId)).toHaveLength(1);
+	});
+});

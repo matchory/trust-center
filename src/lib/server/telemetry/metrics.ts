@@ -49,6 +49,19 @@ function build() {
 		}),
 		jobTick: meter.createCounter('trustcenter.job.tick', {
 			description: 'Background job ticks by outcome'
+		}),
+		egressDelivery: meter.createCounter('trustcenter.egress.delivery', {
+			description: 'Event deliveries by outcome'
+		}),
+		egressDeliveryDuration: meter.createHistogram('trustcenter.egress.delivery.duration', {
+			description: 'Duration of one event delivery attempt',
+			unit: 's',
+			// The request set, not the job set: a delivery is one HTTP call on a
+			// 10 s timeout, so the same boundaries answer the same question.
+			advice: { explicitBucketBoundaries: REQUEST_DURATION_BUCKETS }
+		}),
+		egressFanout: meter.createCounter('trustcenter.egress.fanout', {
+			description: 'Deliveries enqueued by fan-out'
 		})
 	};
 }
@@ -86,6 +99,45 @@ export function recordJobTick(input: {
 	jobTick.add(1, { 'job.name': input.name, outcome: input.outcome });
 }
 
+/**
+ * The endpoint's UUID, never its `name`, URL or host. A host can be a literal
+ * IP address and §8 bans IP addresses from telemetry outright — an attribute
+ * whose value is *sometimes* an IP cannot be sanitised into compliance, which
+ * is C's carry-over §1.1 reasoning for dropping `server.address`. `name` is
+ * unvalidated operator free text, and an operator who names an endpoint after
+ * its URL or a contact address puts exactly that into a metric label. The UUID
+ * costs one lookup and is not a judgement call (spec §10).
+ *
+ * Unlike `recordJobTick`, the duration keeps `outcome`: a `skipped` row makes
+ * no HTTP request at all, so an operator asking "is delivery getting slower"
+ * has to be able to exclude those — dropping the attribute would put a
+ * sub-millisecond skip in the same distribution as a ten-second timeout with
+ * no way to tell them apart. Three series per endpoint is the whole cost.
+ */
+export function recordEgressDelivery(input: {
+	endpointId: string;
+	outcome: 'delivered' | 'failed' | 'skipped';
+	seconds: number;
+}): void {
+	const attributes: Attributes = {
+		'egress.endpoint_id': input.endpointId,
+		outcome: input.outcome
+	};
+
+	get().egressDelivery.add(1, attributes);
+	get().egressDeliveryDuration.record(input.seconds, attributes);
+}
+
+/**
+ * Unattributed on purpose: fan-out is per endpoint, but the endpoint a row was
+ * enqueued *for* is already the `egress.endpoint_id` on every delivery this
+ * counter's rows turn into, and splitting the total here would only duplicate
+ * that at the cost of a series per endpoint on a counter nobody breaks down.
+ */
+export function recordEgressFanout(enqueued: number): void {
+	if (enqueued > 0) get().egressFanout.add(enqueued);
+}
+
 /** Called by `startTelemetry` after the real meter provider is registered. */
 export function resetInstruments(): void {
 	instruments = undefined;
@@ -103,6 +155,28 @@ export function registerQueueDepthGauge(read: () => Promise<number>): void {
 	const gauge = metrics.getMeter(METER_NAME).createObservableGauge('trustcenter.mail.queue.depth', {
 		description: 'Outbound emails queued and not yet sent'
 	});
+
+	gauge.addCallback(async (result) => {
+		result.observe(await read());
+	});
+}
+
+/**
+ * Mirrors `registerQueueDepthGauge`, and tells the same two cases apart: a
+ * deployment whose endpoints all black-hole looks healthy from the outside
+ * while `event_delivery` grows, and one that is simply quiet looks identical
+ * without this number.
+ *
+ * Registered by `startTelemetry` only when telemetry is on, so a deployment
+ * with no collector never runs the query — including the very common one where
+ * egress is disabled entirely.
+ */
+export function registerEgressQueueDepthGauge(read: () => Promise<number>): void {
+	const gauge = metrics
+		.getMeter(METER_NAME)
+		.createObservableGauge('trustcenter.egress.queue.depth', {
+			description: 'Event deliveries queued and not yet delivered'
+		});
 
 	gauge.addCallback(async (result) => {
 		result.observe(await read());

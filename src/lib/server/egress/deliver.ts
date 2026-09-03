@@ -8,7 +8,7 @@ import {
 	type DeliveryErrorReason,
 	type EgressFormat
 } from '../db/schema';
-import { withSpan } from '../telemetry';
+import { recordEgressDelivery, withSpan } from '../telemetry';
 import { backoffMinutes, MAX_ATTEMPTS, postEvent } from './client';
 import { validateEndpointUrl, type AllowEntry, type LookupAll } from './destination';
 import { enrichEvent } from './enrich';
@@ -27,6 +27,20 @@ export const CLAIM_LIMIT = 25;
  * global alone starves by claim order.
  */
 export const PER_ENDPOINT_LIMIT = 5;
+
+/**
+ * Every row still owed a delivery, rows in retry backoff included — what is
+ * queued, not what the next tick would claim. Lives here rather than at the
+ * telemetry caller so the definition of "queued" stays beside the claim
+ * predicate below, exactly as `pendingCount` sits beside `drainOutbox`'s.
+ */
+export async function pendingDeliveryCount(db: Db): Promise<number> {
+	const rows = (await db.execute(
+		sql`SELECT count(*)::int AS depth FROM event_delivery WHERE status = 'pending'`
+	)) as unknown as { depth: number }[];
+
+	return rows[0]?.depth ?? 0;
+}
 
 export interface ClaimedDelivery {
 	id: string;
@@ -146,6 +160,19 @@ export async function deliverClaimed(
 	let skipped = 0;
 
 	for (const row of claimed) {
+		// Started before the render rather than around the POST alone: the
+		// histogram is what an operator budgets a tick against, and enrichment is
+		// several queries — time this loop spends and the span does not see is
+		// exactly the time that would otherwise be unaccounted for, since
+		// `trustcenter.job.tick.duration` covers phase one only (spec §5.1).
+		const started = performance.now();
+		const record = (outcome: 'delivered' | 'failed' | 'skipped') =>
+			recordEgressDelivery({
+				endpointId: row.endpointId,
+				outcome,
+				seconds: (performance.now() - started) / 1000
+			});
+
 		// The Drizzle query builder, not raw SQL: a hand-written SELECT returns
 		// snake_case keys, and enrichEvent reads camelCase (`actorType`,
 		// `subjectType`, ...) — every field would silently be undefined rather
@@ -160,6 +187,7 @@ export async function deliverClaimed(
 		// a delivery whose audit row is somehow absent has nothing to render.
 		if (!audit) {
 			await terminate(db, row, 'skipped', null, null);
+			record('skipped');
 			skipped++;
 			continue;
 		}
@@ -174,6 +202,7 @@ export async function deliverClaimed(
 			// Nothing is sent. Blanks are the one shape a consumer cannot branch
 			// on (spec §4.5).
 			await terminate(db, row, 'skipped', null, null);
+			record('skipped');
 			skipped++;
 			continue;
 		}
@@ -185,6 +214,7 @@ export async function deliverClaimed(
 		// not have to manage a key they cannot use (spec §7.1).
 		if (row.endpoint.format === 'generic' && options.signingKey === undefined) {
 			await recordFailure(db, row, null, 'signing_key_missing', false, null);
+			record('failed');
 			failed++;
 			continue;
 		}
@@ -264,6 +294,7 @@ export async function deliverClaimed(
 					.set({ lastSuccessAt: new Date() })
 					.where(eq(eventEndpoint.id, row.endpointId));
 			});
+			record('delivered');
 			delivered++;
 			continue;
 		}
@@ -276,6 +307,7 @@ export async function deliverClaimed(
 			outcome.retryable,
 			outcome.retryAfterSeconds
 		);
+		record('failed');
 		failed++;
 	}
 

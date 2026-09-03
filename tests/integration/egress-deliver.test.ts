@@ -12,11 +12,14 @@ import {
 import { claimDeliveries, deliverClaimed } from '../../src/lib/server/egress/deliver';
 import { parseAllowList } from '../../src/lib/server/egress/destination';
 import { currentHorizon, fanOut } from '../../src/lib/server/egress/fanout';
+import { expectNoSensitiveAttributes, recordingSpans } from '../helpers/telemetry';
 import { startWebhookServer } from '../helpers/webhook-server';
 
 let db: Db;
 let close: () => Promise<void>;
 let stop: (() => Promise<void>) | undefined;
+
+const spans = recordingSpans();
 
 const OPTIONS = {
 	baseUrl: 'https://trust.example.com',
@@ -416,5 +419,37 @@ describe('deliverClaimed', () => {
 		expect(row?.status).toBe('failed');
 		expect(row?.lastError).toBe('destination_denied');
 		expect(row?.attempts).toBe(1);
+	});
+});
+
+/**
+ * §8's rule asserted over a span the delivery path actually emitted. It could
+ * not be asserted anywhere else: `deliverClaimed` needs a database and a
+ * socket, and a hand-constructed span in the unit suite would satisfy
+ * `expectNoSensitiveAttributes` while proving nothing about the attributes
+ * `withSpan` is really called with.
+ */
+describe('delivery telemetry', () => {
+	it('carries no address, token, IP or endpoint name on the event deliver span', async () => {
+		const server = await serve((_request, response) => response.writeHead(204).end());
+		// Every shape §8 bans, in the two operator-controlled strings this path
+		// has to hand: `name` is unvalidated free text and the URL's query string
+		// is where a Teams Workflows secret lives (spec §10).
+		const name = 'alerts@acme.example via 10.1.2.3';
+		const endpointId = await createEndpoint(`${server.url}?token=SECRET`, ['certification.*'], {
+			name
+		});
+		await emitFallbackEvent();
+
+		expect(await tick(server.port)).toEqual({ delivered: 1, failed: 0, skipped: 0 });
+
+		const span = spans().find((finished) => finished.name === 'event deliver');
+		expectNoSensitiveAttributes(span, name, 'SECRET', '127.0.0.1');
+		// The positive half: the span is not clean by being empty. The UUID is
+		// what §10 says stands in for every one of the strings above.
+		expect(span?.attributes['egress.endpoint_id']).toBe(endpointId);
+		expect(span?.attributes['egress.action']).toBe('certification.created');
+		expect(span?.attributes['egress.format']).toBe('generic');
+		expect(span?.attributes['http.response.status_code']).toBe(204);
 	});
 });

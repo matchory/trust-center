@@ -140,7 +140,11 @@ export async function fanOut(tx: Db): Promise<{ enqueued: number; paused: string
 				: window.filter((row) => patterns.some((pattern) => matchesPattern(pattern, row.action)));
 
 		if (matching.length > 0) {
-			await tx
+			// `returning` so `enqueued` is rows INSERTED, not rows attempted: the
+			// discards below are exactly the replay case, and Task 12 turns this
+			// number into `trustcenter.egress.fanout` — a counter that ticked on a
+			// no-op replay would report work an operator could not find.
+			const inserted = await tx
 				.insert(eventDelivery)
 				.values(
 					matching.map((row) => ({
@@ -155,8 +159,9 @@ export async function fanOut(tx: Db): Promise<{ enqueued: number; paused: string
 				// bumps a row's xmin above the cursor again.
 				.onConflictDoNothing({
 					target: [eventDelivery.endpointId, eventDelivery.auditSeq]
-				});
-			enqueued += matching.length;
+				})
+				.returning({ id: eventDelivery.id });
+			enqueued += inserted.length;
 		}
 
 		// The LAST row of the window, never `max(seq)`: the window is ordered by

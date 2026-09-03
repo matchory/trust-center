@@ -33,6 +33,22 @@ beforeAll(() => {
 });
 
 afterAll(async () => {
+	// Children before parents throughout, the same order and the same reason as
+	// nda-delivery.test.ts's `reset`: `nda_acceptance.version_id` is ON DELETE
+	// RESTRICT, so an acceptance row left here makes `delete from
+	// nda_template_version` fail in whichever file runs next — which is how this
+	// surfaced, as eleven failures in nda-templates.test.ts that had nothing to
+	// do with it. Every other file that writes nda_acceptance already cleans it.
+	await db.delete(accessGrant);
+	await db.delete(ndaAcceptance);
+	await db.delete(documentTranslation);
+	await db.delete(documentFile);
+	await db.delete(document);
+	await db.delete(documentCategory);
+	await db.delete(ndaTemplateVersion);
+	await db.delete(ndaTemplate);
+	await db.delete(accessRequest);
+	await db.delete(requester);
 	await close();
 });
 
