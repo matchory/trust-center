@@ -167,7 +167,12 @@ export function validateEndpointUrl(raw: string, allow: readonly AllowEntry[] = 
 	// it is enough to require that whenever the parsed hostname is IPv4, the
 	// host text as the operator wrote it was already canonical IPv4 too.
 	if (isIPv4(hostname)) {
-		const rawHost = /^[a-z][a-z0-9+.-]*:\/\/(?:[^@/?#]*@)?([^:/?#]*)/i.exec(raw)?.[1] ?? '';
+		// A trailing dot is stripped for the same reason as above — compare
+		// against the same normalised form, or a legitimately-typed
+		// `127.0.0.1.` would be rejected as if it were smuggled.
+		const rawHost = (
+			/^[a-z][a-z0-9+.-]*:\/\/(?:[^@/?#]*@)?([^:/?#]*)/i.exec(raw)?.[1] ?? ''
+		).replace(/\.$/, '');
 		if (!isIPv4(rawHost)) {
 			throw new EgressDestinationRejected(`${raw} is not a canonical host`, 'url');
 		}
@@ -182,15 +187,6 @@ export function validateEndpointUrl(raw: string, allow: readonly AllowEntry[] = 
 	if (!allowedPort) {
 		throw new EgressDestinationRejected(`port ${port} is not permitted`, 'url');
 	}
-
-	// The WHATWG setter strips a port equal to the scheme's default (443 for
-	// https, 80 for http) straight back to `''`, so `url.port` alone can never
-	// report a default port — every caller of the returned URL would have to
-	// re-derive it from the protocol instead. An own data property shadows
-	// the prototype accessor so `.port` always reports the effective port,
-	// including the implicit default, without touching the URL's own state
-	// (`href` is unaffected).
-	Object.defineProperty(url, 'port', { value: String(port), enumerable: true, configurable: true });
 
 	return url;
 }

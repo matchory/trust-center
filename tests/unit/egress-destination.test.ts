@@ -75,8 +75,16 @@ describe('validateEndpointUrl', () => {
 	});
 
 	it('accepts an explicit port 80 or 443', () => {
-		expect(validateEndpointUrl('https://hooks.example.test:443/a').port).toBe('443');
-		expect(validateEndpointUrl('http://n8n:80/webhook/x').port).toBe('80');
+		// Not asserted via `.port`: WHATWG strips a port equal to the scheme's
+		// default straight back to `''`, so a scheme-default port can never be
+		// read back off the URL itself. The effective port is covered instead
+		// by the `resolveDestination` tests, which assert `pinned.port`.
+		expect(() => validateEndpointUrl('https://hooks.example.test:443/a')).not.toThrow();
+		expect(validateEndpointUrl('https://hooks.example.test:443/a').hostname).toBe(
+			'hooks.example.test'
+		);
+		expect(() => validateEndpointUrl('http://n8n:80/webhook/x')).not.toThrow();
+		expect(validateEndpointUrl('http://n8n:80/webhook/x').hostname).toBe('n8n');
 	});
 
 	/**
