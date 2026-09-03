@@ -1,5 +1,5 @@
 import { SpanKind } from '@opentelemetry/api';
-import { eq, sql } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 import { recordEvent } from '../audit';
 import {
 	auditEvent,
@@ -355,14 +355,38 @@ export async function disableStaleEndpoints(db: Db): Promise<{ disabled: string[
 	for (const endpoint of stale) {
 		const reason = `no delivery succeeded in ${DISABLE_AFTER_HOURS} hours`;
 
-		await db.transaction(async (tx) => {
+		const wrote = await db.transaction(async (tx) => {
 			// `enabled` and `disabled_at` move together or the row is rejected:
 			// event_endpoint_disabled_check makes "disabled" one state rather than
 			// two columns that usually agree.
-			await tx
+			//
+			// `enabled = true` is in the WHERE, and the audit event is written only
+			// if this UPDATE actually claimed the row — a compare-and-set, not a
+			// blind write. `startJobRunner`'s setInterval does not wait for the
+			// previous tick's promise chain and phase two is bounded only by
+			// CLAIM_LIMIT * the request timeout, so two runs of this function can
+			// in principle overlap on one replica; both would then read
+			// `enabled = true` before either wrote and each would append an
+			// `event_endpoint.disabled` row for a single disablement, into a table
+			// that cannot be deleted from. Under READ COMMITTED the second UPDATE
+			// instead blocks on the first's row lock, re-evaluates this WHERE
+			// against the committed row, matches nothing, and writes no event.
+			//
+			// Not covered by a test, deliberately and with the limit stated: two
+			// concurrent calls through one pool serialise — the second's SELECT
+			// runs after the first has committed and returns no rows at all — so a
+			// `Promise.all` test passes identically with this predicate removed. It
+			// would assert the invariant while proving nothing. The guard is kept
+			// because it is correct and makes the idempotence structural rather
+			// than a property of callers happening to be sequential; the sequential
+			// path is what the idempotence test above actually covers.
+			const claimed = await tx
 				.update(eventEndpoint)
 				.set({ enabled: false, disabledAt: new Date(), disabledReason: reason })
-				.where(eq(eventEndpoint.id, endpoint.id));
+				.where(and(eq(eventEndpoint.id, endpoint.id), eq(eventEndpoint.enabled, true)))
+				.returning({ id: eventEndpoint.id });
+
+			if (claimed.length === 0) return false;
 
 			// The single exception to "egress writes no audit events" (spec §9).
 			// Safe because by the time this is written the endpoint is disabled
@@ -382,9 +406,11 @@ export async function disableStaleEndpoints(db: Db): Promise<{ disabled: string[
 					lastStatusCode: endpoint.last_status_code
 				}
 			});
+
+			return true;
 		});
 
-		disabled.push(endpoint.id);
+		if (wrote) disabled.push(endpoint.id);
 	}
 
 	return { disabled };

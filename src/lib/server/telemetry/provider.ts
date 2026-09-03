@@ -140,7 +140,8 @@ export async function startTelemetry(config: AppConfig['telemetry']): Promise<bo
 	// gauge reads a table, not the flag, and a deployment that turned egress off
 	// with rows still pending must not have the depth go silent — a gauge that
 	// stops reporting is indistinguishable from a collector that stopped
-	// scraping. Zero is the honest reading for the disabled case.
+	// scraping. It reports the true pending count either way; it does not zero
+	// itself when egress is off.
 	registerEgressQueueDepthGauge(readEgressQueueDepth);
 
 	started = [tracerProvider, meterProvider];
