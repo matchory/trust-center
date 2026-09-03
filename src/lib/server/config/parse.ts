@@ -11,6 +11,21 @@ function blankAsUndefined<T extends z.ZodTypeAny>(schema: T) {
 }
 
 /**
+ * The schema's first boolean. `z.enum` rather than a truthiness check, so
+ * `EVENT_EGRESS_ENABLED=1` refuses to boot instead of silently reading as
+ * off — the same discipline the OTEL variables get, and this is the switch
+ * that answers "does this deployment call out at all".
+ *
+ * RUN_JOBS and RUN_MIGRATIONS deliberately stay outside this schema: they are
+ * read in hooks.server.ts's `init` to decide whether to *start* the subsystems
+ * that own config, so they are consulted before this parse runs.
+ */
+const booleanFlag = z.preprocess(
+	(value) => (value === '' || value === undefined ? 'false' : value),
+	z.enum(['true', 'false']).transform((value) => value === 'true')
+);
+
+/**
  * `k=v,k=v`, split on the *first* `=` only — an OTLP bearer token is a header
  * value that can itself contain `=`, and splitting on every one would truncate
  * it into a credential that fails authentication with no error here.
@@ -85,6 +100,12 @@ export interface AppConfig {
 		serviceName: string;
 		headers: Record<string, string>;
 		sampleRatio: number;
+	};
+	egress: {
+		enabled: boolean;
+		signingKey: string | undefined;
+		/** Raw `EVENT_EGRESS_ALLOW`; parsed by `parseAllowList`. */
+		allow: string | undefined;
 	};
 }
 
@@ -162,7 +183,21 @@ function buildSchema(compiledLocales: readonly string[]) {
 					)
 					.transform((entries) => Object.fromEntries(entries))
 			),
-			OTEL_TRACES_SAMPLER_ARG: blankAsUndefined(z.coerce.number().min(0).max(1)).default(1)
+			OTEL_TRACES_SAMPLER_ARG: blankAsUndefined(z.coerce.number().min(0).max(1)).default(1),
+			// Deploy-time switch. Endpoints live in the database so they can be
+			// reconfigured by someone without shell access, and this is what keeps
+			// "does this deployment call out, and to where?" answerable from
+			// `docker inspect`: the environment answers whether, the database
+			// answers where (spec §1.1). Also the kill switch that is not
+			// RUN_JOBS=false, which would also stop mail.
+			EVENT_EGRESS_ENABLED: booleanFlag,
+			// Not blankAsUndefined + min(1): a signing key shorter than 32
+			// characters is a weak HMAC key, and the failure is silent.
+			EVENT_SIGNING_KEY: blankAsUndefined(z.string().min(32)),
+			// Carried through as the raw string and parsed by egress/destination.ts.
+			// parse.ts must not import from egress/, or the config module would
+			// depend on one that imports the schema.
+			EVENT_EGRESS_ALLOW: blankAsUndefined(z.string().min(1))
 		})
 		.superRefine((value, ctx) => {
 			const unsupported = value.LOCALES.filter((locale) => !compiledLocales.includes(locale));
@@ -242,6 +277,11 @@ export function parseConfig(
 			serviceName: parsed.OTEL_SERVICE_NAME,
 			headers: parsed.OTEL_EXPORTER_OTLP_HEADERS ?? {},
 			sampleRatio: parsed.OTEL_TRACES_SAMPLER_ARG
+		},
+		egress: {
+			enabled: parsed.EVENT_EGRESS_ENABLED,
+			signingKey: parsed.EVENT_SIGNING_KEY,
+			allow: parsed.EVENT_EGRESS_ALLOW
 		}
 	};
 }

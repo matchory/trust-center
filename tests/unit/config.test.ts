@@ -202,3 +202,50 @@ describe('telemetry configuration', () => {
 		expect(config.telemetry.sampleRatio).toBe(1);
 	});
 });
+
+describe('egress configuration', () => {
+	it('is off by default', () => {
+		const config = parseConfig(valid, COMPILED);
+		expect(config.egress).toEqual({ enabled: false, signingKey: undefined, allow: undefined });
+	});
+
+	it('reads the three variables', () => {
+		const config = parseConfig(
+			{
+				...valid,
+				EVENT_EGRESS_ENABLED: 'true',
+				EVENT_SIGNING_KEY: 'k'.repeat(32),
+				EVENT_EGRESS_ALLOW: 'n8n:5678,10.1.0.0/16'
+			},
+			COMPILED
+		);
+
+		expect(config.egress.enabled).toBe(true);
+		expect(config.egress.signingKey).toBe('k'.repeat(32));
+		expect(config.egress.allow).toBe('n8n:5678,10.1.0.0/16');
+	});
+
+	// A blank value is how a .env spells "unset" (blankAsUndefined's reason).
+	it('treats a blank switch as off rather than refusing to boot', () => {
+		expect(parseConfig({ ...valid, EVENT_EGRESS_ENABLED: '' }, COMPILED).egress.enabled).toBe(
+			false
+		);
+	});
+
+	/**
+	 * A typo in the one switch that answers "does this deployment call out at
+	 * all" must refuse to boot rather than silently reading as off — the same
+	 * discipline the OTEL variables get, and for the same reason.
+	 */
+	it('refuses a switch that is neither true nor false', () => {
+		expect(() => parseConfig({ ...valid, EVENT_EGRESS_ENABLED: '1' }, COMPILED)).toThrowError(
+			/EVENT_EGRESS_ENABLED/
+		);
+	});
+
+	it('refuses a signing key shorter than 32 characters', () => {
+		expect(() => parseConfig({ ...valid, EVENT_SIGNING_KEY: 'short' }, COMPILED)).toThrowError(
+			/EVENT_SIGNING_KEY/
+		);
+	});
+});
