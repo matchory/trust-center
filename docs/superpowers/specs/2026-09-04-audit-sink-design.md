@@ -426,9 +426,15 @@ documented in §14 with a **write-only IAM policy** — `s3:PutObject`, no `s3:D
 `s3:BypassGovernanceRetention` — which turns note §9's "storage the application holds no credentials
 to rewrite" into something checkable.
 
-Keys are deterministic from the batch id, so a retry re-PUTs. **Whether a PUT to an existing key
-under object lock adds a version rather than being refused is a load-bearing premise that must be
-verified against a real bucket and against MinIO before implementation** (§19).
+Keys are deterministic from the batch id, so a retry re-PUTs. **Verified against MinIO on
+2026-09-04: the re-PUT succeeds and adds a version** — findings in
+`2026-09-04-audit-sink-spike.md`, unverified against Amazon (§16). The older version is retained
+under the same lock rather than replaced, so a retried batch leaves two locked objects at one key.
+The manifest digest distinguishes them; the key alone is a shipping address, not an identity.
+
+The adapter sends **no object-lock headers**. The bucket's default retention applies to a plain PUT
+(same findings), which keeps retention the operator's decision per §14 and avoids widening §5.2's
+write-only policy with `s3:PutObjectRetention`.
 
 The adapter reads the bucket's object-lock configuration once per process and **surfaces the result
 in §10's panel as a status row**, not only in a log line. It degrades to "unknown" when the
@@ -805,6 +811,12 @@ assertions must continue to pass untouched; B adds no client-side anything.
   than rewriting `t_xmin`. The concern would otherwise have been sharper for B than for A, since §11
   stops the job entirely when the sink is off; it is recorded as closed rather than omitted, so it is
   not rediscovered.
+- **The object-lock premises are verified against MinIO, not against Amazon.** §5.2's retry and
+  §6.1's discharge were exercised on MinIO only; no AWS credentials were available. Both behaviours
+  are what the S3 Object Lock documentation specifies, but if Amazon refuses a re-PUT to a locked
+  key, §5.2's retry path fails in production while every test passes against MinIO. Closing it costs
+  one PUT, one re-PUT and one versioned listing against a real locked bucket, and is due before B1 is
+  deployed against Amazon rather than before it is written.
 - **Batches are not `seq`-contiguous** (§1.1). `min_seq`/`max_seq` are informational.
 - **A digest mismatch, and a manifest `row_count` below the batch's, are expected after a purge**
   (§4.3), not alarming. §9's counter will be non-zero on any deployment that has honoured an erasure
@@ -873,10 +885,10 @@ digest and a version, an attestation series, a SigV4 signer with a new dependenc
 TLS client, a second CI container, an admin panel in two locales, a new `docs/self-hosting.md`
 section, and corrections to two erasure statements elsewhere in the tree.
 
-**Before any plan is written**, one spike: verify against a real bucket and against MinIO that a PUT
-to an existing key under object lock adds a version rather than being refused (§5.2), and that
-governance mode behaves as §6.1 assumes. Two unverified infrastructure premises currently sit under
-this document; a day of spike is cheap and week three is not.
+**The spike ran on 2026-09-04** and both premises hold on MinIO: a PUT to an existing key under
+object lock adds a version rather than being refused (§5.2), and governance mode refuses a delete
+without the bypass permission and permits it with (§6.1). Findings, with the raw output, in
+`2026-09-04-audit-sink-spike.md`. The Amazon half of that check was not run and is recorded in §16.
 
 **Then two plans**, because the adapters stress the port in opposite directions — one is a
 request/response PUT with a status code, the other a stream of framed messages with no acknowledgement
@@ -900,4 +912,5 @@ Each carries one reviewable theme in the sense §11 of the governing design uses
 - PostgreSQL freeze behaviour, measured 2026-09-04 on `postgres:18-alpine` (18.6): a row's reported
   `xmin` is unchanged by `VACUUM FREEZE` — §16.
 - Amazon S3 Object Lock, for governance vs compliance retention and versioning. **The premises in
-  §5.2 and §6.1 must be verified against a real bucket and MinIO before implementation** (§19).
+  §5.2 and §6.1 were verified against MinIO on 2026-09-04 and both hold** —
+  `2026-09-04-audit-sink-spike.md`. Not verified against Amazon (§16).
