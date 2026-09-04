@@ -1,7 +1,7 @@
 import { desc, eq, sql } from 'drizzle-orm';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { createDb, type Db } from '../../src/lib/server/db';
-import { auditBatch } from '../../src/lib/server/db/schema';
+import { auditBatch, auditBatchShipment } from '../../src/lib/server/db/schema';
 import { batchRow } from '../helpers/auditsink';
 import { rejectionCause } from '../helpers/db';
 
@@ -78,8 +78,32 @@ describe('audit_batch is append-only and monotonic', () => {
 				db.update(auditBatch).set({ rowCount: 99 }).where(eq(auditBatch.id, row!.id))
 			)
 		).toMatch(/append-only/);
-		expect(
-			await rejectionCause(db.delete(auditBatch).where(eq(auditBatch.id, row!.id)))
-		).toMatch(/append-only/);
+		expect(await rejectionCause(db.delete(auditBatch).where(eq(auditBatch.id, row!.id)))).toMatch(
+			/append-only/
+		);
+	});
+
+	// A row-level DELETE trigger does not fire on TRUNCATE (drizzle/0004's own
+	// reasoning, mirrored here) — the `beforeEach` above truncates with
+	// triggers disabled precisely so this guard stays untested by the fixture
+	// itself; these assert it fires once triggers are back on.
+	it('refuses TRUNCATE', async () => {
+		await db.insert(auditBatch).values(batchRow({ prev: [0n, 0n], cursor: [10n, 5n] }));
+
+		expect(await rejectionCause(db.execute(sql`TRUNCATE TABLE audit_batch CASCADE`))).toMatch(
+			/audit_batch is append-only: the table cannot be truncated/
+		);
+	});
+
+	it('refuses TRUNCATE on audit_batch_shipment', async () => {
+		const [row] = await db
+			.insert(auditBatch)
+			.values(batchRow({ prev: [0n, 0n], cursor: [10n, 5n] }))
+			.returning({ id: auditBatch.id });
+		await db.insert(auditBatchShipment).values({ batchId: row!.id, sink: 's3' });
+
+		expect(await rejectionCause(db.execute(sql`TRUNCATE TABLE audit_batch_shipment`))).toMatch(
+			/audit_batch_shipment is append-only: the table cannot be truncated/
+		);
 	});
 });

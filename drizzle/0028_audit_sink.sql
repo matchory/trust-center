@@ -119,4 +119,20 @@ $$;--> statement-breakpoint
 CREATE TRIGGER "audit_batch_shipment_forbid_rewrite"
 	BEFORE UPDATE OR DELETE ON "audit_batch_shipment"
 	FOR EACH ROW
-	EXECUTE FUNCTION "audit_batch_shipment_forbid_rewrite"();
+	EXECUTE FUNCTION "audit_batch_shipment_forbid_rewrite"();--> statement-breakpoint
+
+-- A row-level DELETE trigger does not fire on TRUNCATE, and the application
+-- role owns this table like it owns audit_batch — so the row-level guard
+-- above closes UPDATE/DELETE but leaves TRUNCATE open, exactly the gap
+-- drizzle/0004's statement-level trigger closes for audit_event (spec §2.1).
+CREATE FUNCTION "audit_batch_shipment_forbid_truncate"() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+	RAISE EXCEPTION 'audit_batch_shipment is append-only: the table cannot be truncated';
+END;
+$$;--> statement-breakpoint
+
+CREATE TRIGGER "audit_batch_shipment_forbid_truncate"
+	BEFORE TRUNCATE ON "audit_batch_shipment"
+	FOR EACH STATEMENT
+	EXECUTE FUNCTION "audit_batch_shipment_forbid_truncate"();
