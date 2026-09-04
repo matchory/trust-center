@@ -15,3 +15,4 @@ export * from './mail';
 export * from './nda';
 export * from './subscriptions';
 export * from './egress';
+export * from './auditsink';
