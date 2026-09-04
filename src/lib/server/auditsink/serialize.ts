@@ -66,7 +66,9 @@ export interface AuditRowText {
  * key normalization already makes the text deterministic.
  */
 export function serializeBatch(rows: readonly AuditRowText[]): {
-	body: Uint8Array;
+	/** ArrayBuffer-backed rather than the `ArrayBufferLike` default, so an
+	 * adapter can hand it straight to fetch as a body. */
+	body: Uint8Array<ArrayBuffer>;
 	digest: string;
 } {
 	const lines = rows.map((row) => {

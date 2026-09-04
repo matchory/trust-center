@@ -77,7 +77,9 @@ export async function insertBatch(
 export function alwaysSucceeds(sink: SinkName): AuditSinkAdapter {
 	return {
 		name: sink,
-		async ship() {},
+		async ship(batch) {
+			return `audit/${batch.id}.ndjson`;
+		},
 		async attest() {}
 	};
 }
@@ -86,7 +88,7 @@ export function alwaysSucceeds(sink: SinkName): AuditSinkAdapter {
 export function alwaysFails(sink: SinkName): AuditSinkAdapter {
 	return {
 		name: sink,
-		async ship() {
+		async ship(): Promise<string> {
 			throw new SinkError('network');
 		},
 		async attest() {}
@@ -99,9 +101,11 @@ export function failingAfter(n: number, sink: SinkName = 's3'): AuditSinkAdapter
 
 	return {
 		name: sink,
-		async ship() {
+		async ship(batch): Promise<string> {
 			shipped++;
 			if (shipped > n) throw new SinkError('network');
+
+			return `audit/${batch.id}.ndjson`;
 		},
 		async attest() {}
 	};

@@ -191,7 +191,7 @@ export async function shipClaimed(
 					// every row claimed after it); it does not get to recur here.
 					const batch =
 						prebuilt.get(shipment.batchId) ?? (await rebuildBatch(db, shipment.batchId));
-					await adapter.ship(batch);
+					const objectKey = await adapter.ship(batch);
 
 					await db
 						.update(auditBatchShipment)
@@ -201,12 +201,9 @@ export async function shipClaimed(
 							attempts: shipment.attempts + 1,
 							lastError: null,
 							lastStatusCode: null,
-							// object_key documents the S3 key written, and ship() returns
-							// void so it cannot report one here. Left null rather than
-							// filled with batch.id (which duplicates batch_id and would
-							// read as a plausible key that is actually wrong) — the S3
-							// adapter populates it once the port can report a real key.
-							objectKey: null
+							// Whatever the adapter says it wrote, and null from one that
+							// addresses no object — never a key this side guessed.
+							objectKey
 						})
 						.where(
 							and(

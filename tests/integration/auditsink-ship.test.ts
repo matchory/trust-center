@@ -22,6 +22,7 @@ import {
 	seedCursorAtHorizon,
 	seedRequesterWithAuditEvent
 } from '../helpers/auditsink';
+import type { AuditSinkAdapter } from '../../src/lib/server/auditsink/port';
 import type { Db } from '../../src/lib/server/db';
 
 let db: Db;
@@ -143,6 +144,29 @@ describe('shipClaimed', () => {
 		expect(two.shippedAt).toBeNull();
 		expect(two.attempts).toBe(1);
 		expect(two.lastError).toBe('network');
+	});
+
+	it('records the object key the adapter reports, and null from one that reports none', async () => {
+		// object_key is what points an auditor at the stored object. It comes
+		// from the adapter, because only the adapter knows the key it wrote; a
+		// transport with no addressable object reports null rather than a
+		// plausible-looking key this side invented.
+		await seedCursorAtHorizon(db);
+		const batch = await insertBatch(db);
+		const claimed = await claimShipments(db, ['s3', 'syslog'], 25);
+		const keyless: AuditSinkAdapter = {
+			name: 'syslog',
+			async ship() {
+				return null;
+			},
+			async attest() {}
+		};
+
+		await shipClaimed(db, claimed, [alwaysSucceeds('s3'), keyless], new Map());
+
+		const rows = await db.select().from(auditBatchShipment);
+		expect(rows.find((r) => r.sink === 's3')!.objectKey).toBe(`audit/${batch.id}.ndjson`);
+		expect(rows.find((r) => r.sink === 'syslog')!.objectKey).toBeNull();
 	});
 
 	it("leaves one sink's shipments intact when another fails", async () => {

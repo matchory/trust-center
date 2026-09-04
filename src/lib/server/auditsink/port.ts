@@ -3,7 +3,7 @@ import type { ShipmentErrorReason, SinkName } from '../db/schema';
 
 export interface SinkBatch {
 	id: string;
-	body: Uint8Array;
+	body: Uint8Array<ArrayBuffer>;
 	digest: string;
 	manifest: BatchManifest;
 }
@@ -24,7 +24,13 @@ export interface Attestation {
  */
 export interface AuditSinkAdapter {
 	readonly name: SinkName;
-	ship(batch: SinkBatch): Promise<void>;
+	/**
+	 * Returns the object key written, for `audit_batch_shipment.object_key`, or
+	 * `null` from a transport that addresses no object — a syslog receiver has
+	 * nowhere to point an auditor. Null rather than the batch id, which would
+	 * duplicate `batch_id` and read as a plausible key that is actually wrong.
+	 */
+	ship(batch: SinkBatch): Promise<string | null>;
 	attest(attestation: Attestation): Promise<void>;
 }
 

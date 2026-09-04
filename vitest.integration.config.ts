@@ -12,7 +12,7 @@ export default defineConfig({
 	test: {
 		environment: 'node',
 		include: ['tests/integration/**/*.test.ts'],
-		globalSetup: ['./tests/setup/pg.ts'],
+		globalSetup: ['./tests/setup/pg.ts', './tests/setup/minio.ts'],
 		testTimeout: 30_000,
 		hookTimeout: 120_000,
 		pool: 'forks',
