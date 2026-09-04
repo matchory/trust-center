@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
 	canaryValue,
 	endpointSecret,
+	eventHeaders,
 	signBody,
 	signatureHeader
 } from '../../src/lib/server/egress/secret';
@@ -73,6 +74,62 @@ describe('signatureHeader', () => {
 		expect(header).toBe(
 			`t=1756900000,v1=${signBody(current, 1756900000, '{}')},v1=${signBody(previous, 1756900000, '{}')}`
 		);
+	});
+});
+
+/**
+ * `signatureHeader` above proves the overlap is emitted when it is HANDED two
+ * secrets. These prove the caller decides to hand it two, which is the half
+ * that had drifted: the delivery path derived the previous version and the
+ * test send did not, so the tool an operator reaches for right after rotating
+ * a key was the one that could not prove the rotation worked (spec §7.2).
+ */
+describe('eventHeaders', () => {
+	const base = {
+		action: 'access_request.approved',
+		deliveryId: '3f4a9c2e-0000-4000-8000-0000000000aa',
+		endpointId: ID,
+		body: '{"a":1}'
+	};
+
+	it('names the event and the delivery, signed or not', () => {
+		const headers = eventHeaders({ ...base, secretVersion: 1, signingKey: undefined });
+
+		expect(headers['x-trust-center-event']).toBe(base.action);
+		expect(headers['x-trust-center-delivery']).toBe(base.deliveryId);
+	});
+
+	// Whether an unsigned delivery is ALLOWED is `requiresSigning`'s question,
+	// asked before this is called — a header builder does not refuse.
+	it('omits the signature entirely when no key is configured', () => {
+		const headers = eventHeaders({ ...base, secretVersion: 1, signingKey: undefined });
+
+		expect(headers['x-trust-center-signature']).toBeUndefined();
+		expect(Object.keys(headers)).toHaveLength(2);
+	});
+
+	it('signs with the current secret alone at version 1', () => {
+		const headers = eventHeaders({ ...base, secretVersion: 1, signingKey: ROOT });
+
+		expect(headers['x-trust-center-signature']).toMatch(/^t=\d+,v1=[0-9a-f]{64}$/);
+	});
+
+	it('carries the previous secret alongside the current one after a bump', () => {
+		const headers = eventHeaders({ ...base, secretVersion: 2, signingKey: ROOT });
+		const signature = headers['x-trust-center-signature'];
+		// Narrowed by throwing rather than defaulted to '', so a header that went
+		// missing entirely fails here instead of further down as an empty list.
+		if (signature === undefined) throw new Error('no signature header was emitted');
+
+		const [stamp = '', ...signatures] = signature.split(',');
+		const timestamp = Number(stamp.slice('t='.length));
+
+		// Asserted as the two derived secrets rather than as "two v1 parts", so a
+		// header that signed twice with the SAME secret would still fail.
+		expect(signatures).toEqual([
+			`v1=${signBody(endpointSecret(ROOT, ID, 2), timestamp, base.body)}`,
+			`v1=${signBody(endpointSecret(ROOT, ID, 1), timestamp, base.body)}`
+		]);
 	});
 });
 
