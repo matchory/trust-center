@@ -52,11 +52,17 @@ export default defineConfig({
 			// The caps are lowered so the route's *refusal* is reachable in a test
 			// without building a 25 MB, thousand-page fixture. What is under test is
 			// how an over-cap upload is handled, not the number itself.
+			// EVENT_SIGNING_KEY is set so /admin/settings/integrations' "reveal the
+			// derived secret" control is reachable — it is the one place a live
+			// HMAC secret can reach a page, so it is worth exercising in a browser.
+			// EVENT_EGRESS_ENABLED stays unset and therefore false, so no
+			// deployment under test actually calls out.
 			env: {
 				BASE_URL: PREVIEW,
 				DATABASE_URL: databaseUrl,
 				MAX_PDF_PAGES: '5',
-				MAX_UPLOAD_MB: '1'
+				MAX_UPLOAD_MB: '1',
+				EVENT_SIGNING_KEY: 'e2e-signing-key-'.padEnd(32, 'x')
 			}
 		},
 		{

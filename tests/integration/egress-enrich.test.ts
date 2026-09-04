@@ -1,0 +1,616 @@
+import { eq, sql } from 'drizzle-orm';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { createDb, type Db } from '../../src/lib/server/db';
+import { recordEvent } from '../../src/lib/server/audit';
+import {
+	accessGrant,
+	accessRequest,
+	auditEvent,
+	document,
+	documentCategory,
+	documentFile,
+	documentTranslation,
+	ndaAcceptance,
+	ndaTemplate,
+	ndaTemplateVersion,
+	requester
+} from '../../src/lib/server/db/schema';
+import { enrichEvent } from '../../src/lib/server/egress/enrich';
+
+let db: Db;
+let close: () => Promise<void>;
+
+const CONTEXT = {
+	baseUrl: 'https://trust.example.com',
+	locale: 'en'
+};
+
+beforeAll(() => {
+	const url = process.env.TEST_DATABASE_URL;
+	if (!url) throw new Error('TEST_DATABASE_URL not set by global setup');
+	({ db, close } = createDb(url));
+});
+
+afterAll(async () => {
+	// Children before parents throughout, the same order and the same reason as
+	// nda-delivery.test.ts's `reset`: `nda_acceptance.version_id` is ON DELETE
+	// RESTRICT, so an acceptance row left here makes `delete from
+	// nda_template_version` fail in whichever file runs next — which is how this
+	// surfaced, as eleven failures in nda-templates.test.ts that had nothing to
+	// do with it. Every other file that writes nda_acceptance already cleans it.
+	await db.delete(accessGrant);
+	await db.delete(ndaAcceptance);
+	await db.delete(documentTranslation);
+	await db.delete(documentFile);
+	await db.delete(document);
+	await db.delete(documentCategory);
+	await db.delete(ndaTemplateVersion);
+	await db.delete(ndaTemplate);
+	await db.delete(accessRequest);
+	await db.delete(requester);
+	await close();
+});
+
+async function newestEvent(action: string) {
+	const [row] = await db
+		.select()
+		.from(auditEvent)
+		.where(eq(auditEvent.action, action))
+		.orderBy(sql`seq desc`)
+		.limit(1);
+	if (!row) throw new Error(`no ${action} event`);
+	return row;
+}
+
+async function insertRequester(overrides: Record<string, unknown> = {}): Promise<string> {
+	const [row] = await db
+		.insert(requester)
+		.values({
+			email: `person-${crypto.randomUUID()}@acme.example`,
+			name: 'Dana Vogel',
+			company: 'Acme GmbH',
+			companyDomain: 'acme.example',
+			locale: 'en',
+			...overrides
+		})
+		.returning({ id: requester.id });
+	return row!.id;
+}
+
+/** document requires a category (NOT NULL FK), so every document fixture creates one. */
+async function insertCategory(): Promise<string> {
+	const [row] = await db
+		.insert(documentCategory)
+		.values({ slug: `cat-${crypto.randomUUID()}` })
+		.returning({ id: documentCategory.id });
+	return row!.id;
+}
+
+/** An effective version needs a template above it; the acceptance tests need both. */
+async function insertNdaVersion(): Promise<{ templateId: string; versionId: string }> {
+	const [template] = await db
+		.insert(ndaTemplate)
+		.values({ slug: `nda-${crypto.randomUUID()}` })
+		.returning({ id: ndaTemplate.id });
+	const [version] = await db
+		.insert(ndaTemplateVersion)
+		.values({ templateId: template!.id, version: 1 })
+		.returning({ id: ndaTemplateVersion.id });
+	return { templateId: template!.id, versionId: version!.id };
+}
+
+describe('enrichEvent', () => {
+	it('enriches access_request.pending from live domain state', async () => {
+		const requesterId = await insertRequester();
+		const [request] = await db
+			.insert(accessRequest)
+			.values({ requesterId, status: 'pending' })
+			.returning({ id: accessRequest.id });
+
+		await recordEvent(db, {
+			action: 'access_request.pending',
+			actor: { type: 'requester', id: requesterId },
+			subjectType: 'access_request',
+			subjectId: request!.id,
+			ip: '198.51.100.7',
+			ua: 'Mozilla/5.0',
+			meta: { ruleId: null, domain: 'acme.example' }
+		});
+
+		const outcome = await enrichEvent(db, await newestEvent('access_request.pending'), CONTEXT);
+
+		expect(outcome.kind).toBe('model');
+		if (outcome.kind !== 'model') return;
+		expect(outcome.model.verified).toBe(true);
+		expect(outcome.model.data).toMatchObject({
+			name: 'Dana Vogel',
+			company: 'Acme GmbH',
+			companyDomain: 'acme.example'
+		});
+		expect(outcome.model.data.email).toContain('@acme.example');
+		expect(outcome.model.summary).toContain('Acme GmbH');
+		expect(outcome.model.link).toBe(`https://trust.example.com/en/admin/requests/${request!.id}`);
+		expect(outcome.model.seq).toBe(String(outcome.model.seq));
+		// Forensic columns never travel.
+		expect(JSON.stringify(outcome.model)).not.toContain('198.51.100.7');
+		expect(JSON.stringify(outcome.model)).not.toContain('Mozilla');
+	});
+
+	/**
+	 * A privacy feature must not cause a data-integrity failure. A consumer
+	 * receiving `name: ""`, `email: ""` cannot distinguish it from a person
+	 * with no name: n8n → HubSpot will create a junk contact, or error, or —
+	 * worst — upsert by an empty email and overwrite an unrelated record.
+	 * Blanks are the one shape a consumer cannot branch on (spec §4.5).
+	 */
+	it('skips an event whose requester has been purged', async () => {
+		const requesterId = await insertRequester();
+		const [request] = await db
+			.insert(accessRequest)
+			.values({ requesterId, status: 'approved' })
+			.returning({ id: accessRequest.id });
+		await recordEvent(db, {
+			action: 'access_request.approved',
+			actor: { type: 'requester', id: requesterId },
+			subjectType: 'access_request',
+			subjectId: request!.id
+		});
+
+		// Exactly what purgeRequester writes — NOT blank columns. An
+		// implementation testing for an empty email gets the one field a CRM
+		// upserts on wrong.
+		await db
+			.update(requester)
+			.set({
+				email: `purged-${requesterId}@invalid`,
+				name: '',
+				company: '',
+				companyDomain: '',
+				purgedAt: new Date()
+			})
+			.where(eq(requester.id, requesterId));
+
+		const outcome = await enrichEvent(db, await newestEvent('access_request.approved'), CONTEXT);
+		expect(outcome).toEqual({ kind: 'skip', reason: 'subject_purged' });
+	});
+
+	it('skips an event whose subject row is gone', async () => {
+		const requesterId = await insertRequester();
+		const [request] = await db
+			.insert(accessRequest)
+			.values({ requesterId, status: 'pending' })
+			.returning({ id: accessRequest.id });
+		await recordEvent(db, {
+			action: 'access_request.pending',
+			actor: { type: 'requester', id: requesterId },
+			subjectType: 'access_request',
+			subjectId: request!.id
+		});
+		await db.delete(accessRequest).where(eq(accessRequest.id, request!.id));
+
+		const outcome = await enrichEvent(db, await newestEvent('access_request.pending'), CONTEXT);
+		expect(outcome).toEqual({ kind: 'skip', reason: 'subject_missing' });
+	});
+
+	/**
+	 * §6.6 guarantees `meta` holds no requester personal data, so the fallback
+	 * is safe by construction rather than by filtering — which is worth
+	 * preserving, because a filter is a thing somebody later forgets to extend.
+	 */
+	it('falls back to the audit row for an unregistered action', async () => {
+		await recordEvent(db, {
+			action: 'certification.created',
+			actor: { type: 'staff', id: crypto.randomUUID() },
+			subjectType: 'certification',
+			subjectId: crypto.randomUUID(),
+			ip: '198.51.100.9',
+			ua: 'curl/8',
+			meta: { slug: 'iso-27001' }
+		});
+
+		const outcome = await enrichEvent(db, await newestEvent('certification.created'), CONTEXT);
+
+		expect(outcome.kind).toBe('model');
+		if (outcome.kind !== 'model') return;
+		expect(outcome.model.verified).toBe(false);
+		expect(outcome.model.data).toEqual({ slug: 'iso-27001' });
+		expect(outcome.model.link).toBeNull();
+		expect(JSON.stringify(outcome.model)).not.toContain('198.51.100.9');
+		expect(JSON.stringify(outcome.model)).not.toContain('curl/8');
+	});
+
+	/**
+	 * `access_request.submitted` takes the fallback path deliberately: at the
+	 * moment it is written there is no requester row, and the name and address
+	 * are free text from a public, unauthenticated form. Enriching it would
+	 * make that form a delivery mechanism aimed at the operator's own staff
+	 * channel and CRM (spec §4.3).
+	 */
+	it('does not enrich access_request.submitted', async () => {
+		await recordEvent(db, {
+			action: 'access_request.submitted',
+			actor: { type: 'system', id: null },
+			subjectType: 'access_request',
+			subjectId: crypto.randomUUID(),
+			meta: { documentCount: 2, tiers: ['request'] }
+		});
+
+		const outcome = await enrichEvent(db, await newestEvent('access_request.submitted'), CONTEXT);
+
+		expect(outcome.kind).toBe('model');
+		if (outcome.kind !== 'model') return;
+		expect(outcome.model.verified).toBe(false);
+		expect(outcome.model.data).toEqual({ documentCount: 2, tiers: ['request'] });
+	});
+
+	/**
+	 * Plan C5. `/api/documents/{fileId}` is the cookie-free public path, so
+	 * this event is routinely written with a null actor id and no requester
+	 * row. Treating that as a missing subject would silently drop every public
+	 * download notification an operator subscribed to.
+	 */
+	it('delivers a public document.downloaded with no requester', async () => {
+		const categoryId = await insertCategory();
+		const [doc] = await db
+			.insert(document)
+			.values({ slug: `policy-${crypto.randomUUID()}`, categoryId, tier: 'public' })
+			.returning({ id: document.id });
+		await db
+			.insert(documentTranslation)
+			.values({ documentId: doc!.id, locale: 'en', title: 'Information Security Policy' });
+		const [file] = await db
+			.insert(documentFile)
+			.values({
+				documentId: doc!.id,
+				locale: 'en',
+				version: 1,
+				storageKey: `k-${crypto.randomUUID()}`,
+				filename: 'information-security-policy.pdf',
+				contentType: 'application/pdf',
+				sizeBytes: 1024,
+				sha256: 'a'.repeat(64)
+			})
+			.returning({ id: documentFile.id });
+
+		await recordEvent(db, {
+			action: 'document.downloaded',
+			actor: { type: 'requester', id: null },
+			subjectType: 'document_file',
+			subjectId: file!.id,
+			meta: { documentId: doc!.id, locale: 'en', version: 1, tier: 'public', watermarked: false }
+		});
+
+		const outcome = await enrichEvent(db, await newestEvent('document.downloaded'), CONTEXT);
+
+		expect(outcome.kind).toBe('model');
+		if (outcome.kind !== 'model') return;
+		expect(outcome.model.actor.id).toBeNull();
+		expect(outcome.model.verified).toBe(false);
+		expect(outcome.model.data).toMatchObject({
+			title: 'Information Security Policy',
+			tier: 'public'
+		});
+		expect(outcome.model.data).not.toHaveProperty('email');
+	});
+
+	/**
+	 * The title is resolved through `pickTranslation` against the *context*
+	 * locale — `config.defaultLocale`, the operator's own — not against the
+	 * locale of the file that happened to be downloaded (spec §3.2). Pinning the
+	 * join to `documentFile.locale` instead put a German title in an
+	 * English-speaking team's channel because of which file a requester clicked,
+	 * and degraded to a raw slug whenever that locale had no translation row.
+	 */
+	it("titles a download in the context locale, not the downloaded file's locale", async () => {
+		const categoryId = await insertCategory();
+		const slug = `policy-${crypto.randomUUID()}`;
+		const [doc] = await db
+			.insert(document)
+			.values({ slug, categoryId, tier: 'public' })
+			.returning({ id: document.id });
+		await db.insert(documentTranslation).values([
+			{ documentId: doc!.id, locale: 'en', title: 'Information Security Policy' },
+			{ documentId: doc!.id, locale: 'de', title: 'Informationssicherheitsrichtlinie' }
+		]);
+		// The German file, so the old locale-pinned join would title this card
+		// in German even though the payload's audience reads English.
+		const [file] = await db
+			.insert(documentFile)
+			.values({
+				documentId: doc!.id,
+				locale: 'de',
+				version: 1,
+				storageKey: `k-${crypto.randomUUID()}`,
+				filename: 'informationssicherheitsrichtlinie.pdf',
+				contentType: 'application/pdf',
+				sizeBytes: 1024,
+				sha256: 'a'.repeat(64)
+			})
+			.returning({ id: documentFile.id });
+
+		await recordEvent(db, {
+			action: 'document.downloaded',
+			actor: { type: 'requester', id: null },
+			subjectType: 'document_file',
+			subjectId: file!.id,
+			meta: { documentId: doc!.id, locale: 'de', version: 1, tier: 'public', watermarked: false }
+		});
+
+		const outcome = await enrichEvent(db, await newestEvent('document.downloaded'), CONTEXT);
+
+		expect(outcome.kind).toBe('model');
+		if (outcome.kind !== 'model') return;
+		expect(outcome.model.data).toMatchObject({
+			title: 'Information Security Policy',
+			// The file's own locale still travels, so a consumer can tell which
+			// rendition was fetched — it just does not decide the title.
+			locale: 'de'
+		});
+	});
+
+	/**
+	 * The slug is the fallback whenever the *context* locale has no title —
+	 * there is no second-choice locale. `pickTranslation` is called with the
+	 * context locale as both the requested and the default one, so a document
+	 * translated in some other language is a content gap from the operator's
+	 * point of view, and a raw slug in a Teams card is how it reaches them as
+	 * one. The case below carries a German title and an English context, which
+	 * is the boundary a "no translation at all" fixture would leave untested.
+	 */
+	it('falls back to the slug when the context locale has no title', async () => {
+		const categoryId = await insertCategory();
+		const slug = `de-only-${crypto.randomUUID()}`;
+		const [doc] = await db
+			.insert(document)
+			.values({ slug, categoryId, tier: 'public' })
+			.returning({ id: document.id });
+		await db
+			.insert(documentTranslation)
+			.values([{ documentId: doc!.id, locale: 'de', title: 'Informationssicherheit' }]);
+		const [file] = await db
+			.insert(documentFile)
+			.values({
+				documentId: doc!.id,
+				locale: 'de',
+				version: 1,
+				storageKey: `k-${crypto.randomUUID()}`,
+				filename: 'x.pdf',
+				contentType: 'application/pdf',
+				sizeBytes: 1024,
+				sha256: 'a'.repeat(64)
+			})
+			.returning({ id: documentFile.id });
+
+		await recordEvent(db, {
+			action: 'document.downloaded',
+			actor: { type: 'requester', id: null },
+			subjectType: 'document_file',
+			subjectId: file!.id,
+			meta: { documentId: doc!.id, locale: 'de', version: 1, tier: 'public', watermarked: false }
+		});
+
+		const outcome = await enrichEvent(db, await newestEvent('document.downloaded'), CONTEXT);
+
+		expect(outcome.kind).toBe('model');
+		if (outcome.kind !== 'model') return;
+		// Not 'Informationssicherheit': the German title is not a second choice.
+		expect(outcome.model.data).toMatchObject({ title: slug });
+	});
+
+	it('falls back to the slug when no translation exists at all', async () => {
+		const categoryId = await insertCategory();
+		const slug = `untranslated-${crypto.randomUUID()}`;
+		const [doc] = await db
+			.insert(document)
+			.values({ slug, categoryId, tier: 'public' })
+			.returning({ id: document.id });
+		const [file] = await db
+			.insert(documentFile)
+			.values({
+				documentId: doc!.id,
+				locale: 'de',
+				version: 1,
+				storageKey: `k-${crypto.randomUUID()}`,
+				filename: 'x.pdf',
+				contentType: 'application/pdf',
+				sizeBytes: 1024,
+				sha256: 'a'.repeat(64)
+			})
+			.returning({ id: documentFile.id });
+
+		await recordEvent(db, {
+			action: 'document.downloaded',
+			actor: { type: 'requester', id: null },
+			subjectType: 'document_file',
+			subjectId: file!.id,
+			meta: { documentId: doc!.id, locale: 'de', version: 1, tier: 'public', watermarked: false }
+		});
+
+		const outcome = await enrichEvent(db, await newestEvent('document.downloaded'), CONTEXT);
+
+		expect(outcome.kind).toBe('model');
+		if (outcome.kind !== 'model') return;
+		expect(outcome.model.data).toMatchObject({ title: slug });
+	});
+
+	it('enriches a gated document.downloaded with the requester', async () => {
+		const requesterId = await insertRequester({ name: 'Ines Roth', company: 'Beta AG' });
+		const categoryId = await insertCategory();
+		const [doc] = await db
+			.insert(document)
+			.values({ slug: `soc2-${crypto.randomUUID()}`, categoryId, tier: 'request' })
+			.returning({ id: document.id });
+		await db
+			.insert(documentTranslation)
+			.values({ documentId: doc!.id, locale: 'en', title: 'SOC 2' });
+		const [file] = await db
+			.insert(documentFile)
+			.values({
+				documentId: doc!.id,
+				locale: 'en',
+				version: 1,
+				storageKey: `k-${crypto.randomUUID()}`,
+				filename: 'soc2.pdf',
+				contentType: 'application/pdf',
+				sizeBytes: 2048,
+				sha256: 'b'.repeat(64)
+			})
+			.returning({ id: documentFile.id });
+
+		await recordEvent(db, {
+			action: 'document.downloaded',
+			actor: { type: 'requester', id: requesterId },
+			subjectType: 'document_file',
+			subjectId: file!.id,
+			meta: { documentId: doc!.id, locale: 'en', version: 1, tier: 'request', watermarked: true }
+		});
+
+		const outcome = await enrichEvent(db, await newestEvent('document.downloaded'), CONTEXT);
+
+		expect(outcome.kind).toBe('model');
+		if (outcome.kind !== 'model') return;
+		expect(outcome.model.verified).toBe(true);
+		expect(outcome.model.data).toMatchObject({
+			name: 'Ines Roth',
+			title: 'SOC 2',
+			tier: 'request'
+		});
+	});
+
+	it('skips a grant revocation whose grant is gone', async () => {
+		await recordEvent(db, {
+			action: 'access_grant.revoked',
+			actor: { type: 'staff', id: crypto.randomUUID() },
+			subjectType: 'access_grant',
+			subjectId: crypto.randomUUID()
+		});
+
+		const outcome = await enrichEvent(db, await newestEvent('access_grant.revoked'), CONTEXT);
+		expect(outcome).toEqual({ kind: 'skip', reason: 'subject_missing' });
+	});
+
+	it('enriches a grant revocation', async () => {
+		const requesterId = await insertRequester({ name: 'Lior Kaplan' });
+		const [grant] = await db
+			.insert(accessGrant)
+			.values({
+				requesterId,
+				termDays: 90,
+				expiresAt: new Date(Date.now() + 86_400_000)
+			})
+			.returning({ id: accessGrant.id });
+
+		await recordEvent(db, {
+			action: 'access_grant.revoked',
+			actor: { type: 'staff', id: crypto.randomUUID() },
+			subjectType: 'access_grant',
+			subjectId: grant!.id
+		});
+
+		const outcome = await enrichEvent(db, await newestEvent('access_grant.revoked'), CONTEXT);
+
+		expect(outcome.kind).toBe('model');
+		if (outcome.kind !== 'model') return;
+		expect(outcome.model.data).toMatchObject({ name: 'Lior Kaplan', grantId: grant!.id });
+		expect(outcome.model.link).toBe('https://trust.example.com/en/admin/grants');
+	});
+
+	it('skips an NDA acceptance whose subject row is gone', async () => {
+		await recordEvent(db, {
+			action: 'nda_record.downloaded',
+			actor: { type: 'requester', id: crypto.randomUUID() },
+			subjectType: 'nda_acceptance',
+			subjectId: crypto.randomUUID()
+		});
+
+		const outcome = await enrichEvent(db, await newestEvent('nda_record.downloaded'), CONTEXT);
+		expect(outcome).toEqual({ kind: 'skip', reason: 'subject_missing' });
+	});
+
+	it('enriches an NDA acceptance from the live requester', async () => {
+		const requesterId = await insertRequester({ name: 'Priya Nair', company: 'Nair Systems' });
+		const { versionId } = await insertNdaVersion();
+		const [acceptance] = await db
+			.insert(ndaAcceptance)
+			.values({
+				requesterId,
+				versionId,
+				typedName: 'Priya Nair',
+				email: 'priya@nair-systems.example',
+				company: 'Nair Systems',
+				companyDomain: 'nair-systems.example',
+				templateSha256: 'c'.repeat(64)
+			})
+			.returning({ id: ndaAcceptance.id });
+
+		await recordEvent(db, {
+			action: 'nda_acceptance.recorded',
+			actor: { type: 'requester', id: requesterId },
+			subjectType: 'nda_acceptance',
+			subjectId: acceptance!.id
+		});
+
+		const outcome = await enrichEvent(db, await newestEvent('nda_acceptance.recorded'), CONTEXT);
+
+		expect(outcome.kind).toBe('model');
+		if (outcome.kind !== 'model') return;
+		expect(outcome.model.verified).toBe(true);
+		expect(outcome.model.data).toMatchObject({
+			name: 'Priya Nair',
+			company: 'Nair Systems',
+			version: 1
+		});
+		expect(outcome.model.data.template).toBeDefined();
+	});
+
+	/**
+	 * Discriminating, not just passing: `nda_acceptance` keeps its own
+	 * typedName/email/company/companyDomain after a purge (purgeRequester's
+	 * comment — an Art. 17(3)(e) evidence exemption), so a naive fixture with
+	 * those columns already blank would pass even if the enricher read them
+	 * back instead of `requester`. This test leaves them populated with
+	 * values distinct from the (blanked) requester row, so an implementation
+	 * that "fixes" enrichNdaAcceptance to read `ndaAcceptance.email` — the
+	 * exact regression the function's why-comment warns against — fails this
+	 * test by returning a model instead of a skip.
+	 */
+	it('skips an NDA acceptance whose requester has been purged', async () => {
+		const requesterId = await insertRequester();
+		const { versionId } = await insertNdaVersion();
+		const [acceptance] = await db
+			.insert(ndaAcceptance)
+			.values({
+				requesterId,
+				versionId,
+				typedName: 'Retained Name',
+				email: 'retained@acme.example',
+				company: 'Retained Co',
+				companyDomain: 'acme.example',
+				templateSha256: 'd'.repeat(64)
+			})
+			.returning({ id: ndaAcceptance.id });
+
+		await recordEvent(db, {
+			action: 'nda_acceptance.recorded',
+			actor: { type: 'requester', id: requesterId },
+			subjectType: 'nda_acceptance',
+			subjectId: acceptance!.id
+		});
+
+		// Exactly what purgeRequester writes to `requester` — it does NOT touch
+		// `nda_acceptance`'s identity columns, which stay populated above.
+		await db
+			.update(requester)
+			.set({
+				email: `purged-${requesterId}@invalid`,
+				name: '',
+				company: '',
+				companyDomain: '',
+				purgedAt: new Date()
+			})
+			.where(eq(requester.id, requesterId));
+
+		const outcome = await enrichEvent(db, await newestEvent('nda_acceptance.recorded'), CONTEXT);
+		expect(outcome).toEqual({ kind: 'skip', reason: 'subject_purged' });
+	});
+});

@@ -1,5 +1,5 @@
 import { and, inArray, lt, sql } from 'drizzle-orm';
-import { outboundEmail, rateLimit } from './db/schema';
+import { eventDelivery, outboundEmail, rateLimit } from './db/schema';
 import type { Db } from './db';
 
 /**
@@ -62,4 +62,33 @@ export async function redactDeliveredMail(
 		.returning({ id: outboundEmail.id });
 
 	return { redacted: redacted.length };
+}
+
+/**
+ * Drops terminal `event_delivery` rows past the retention window.
+ *
+ * Terminal deliveries are a log of what went where, and thirty days is long
+ * enough to answer "did that approval reach n8n?". Pending rows are never
+ * swept, however old: one is still owed a delivery.
+ *
+ * Nothing here is personal data — `audit_seq` and `audit_id` are references,
+ * `last_error` is one of a fixed set of reason phrases (spec §2.3) — so this is
+ * a table-size measure rather than an erasure one, and the window is chosen
+ * for legibility rather than for a legal obligation.
+ */
+export async function sweepEventDeliveries(
+	db: Db,
+	options: { retentionDays: number }
+): Promise<{ deleted: number }> {
+	const deleted = await db
+		.delete(eventDelivery)
+		.where(
+			and(
+				inArray(eventDelivery.status, ['delivered', 'failed', 'skipped']),
+				lt(eventDelivery.createdAt, sql`now() - make_interval(days => ${options.retentionDays})`)
+			)
+		)
+		.returning({ id: eventDelivery.id });
+
+	return { deleted: deleted.length };
 }

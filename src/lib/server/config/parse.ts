@@ -1,4 +1,6 @@
 import { z } from 'zod';
+import { EgressDestinationRejected, parseAllowList } from '../egress/destination';
+import type { AllowEntry } from '../egress/destination';
 
 /**
  * A `.env` conventionally spells "unset" as `KEY=`, which reaches us as an empty
@@ -9,6 +11,38 @@ import { z } from 'zod';
 function blankAsUndefined<T extends z.ZodTypeAny>(schema: T) {
 	return z.preprocess((value) => (value === '' ? undefined : value), schema.optional());
 }
+
+/**
+ * `parseAllowList` reports a malformed entry by throwing, which is right for
+ * its own callers but would escape zod as an unhandled error rather than
+ * becoming the named boot-time refusal every other setting gets. Turned into
+ * an issue here so `EVENT_EGRESS_ALLOW=10.1.0.0/40` fails the same way
+ * `BASE_URL=nonsense` does.
+ */
+function parseAllowListOrIssue(raw: string, ctx: z.RefinementCtx): AllowEntry[] | typeof z.NEVER {
+	try {
+		return parseAllowList(raw);
+	} catch (cause) {
+		if (!(cause instanceof EgressDestinationRejected)) throw cause;
+		ctx.addIssue({ code: 'custom', message: cause.message });
+		return z.NEVER;
+	}
+}
+
+/**
+ * The schema's first boolean. `z.enum` rather than a truthiness check, so
+ * `EVENT_EGRESS_ENABLED=1` refuses to boot instead of silently reading as
+ * off — the same discipline the OTEL variables get, and this is the switch
+ * that answers "does this deployment call out at all".
+ *
+ * RUN_JOBS and RUN_MIGRATIONS deliberately stay outside this schema: they are
+ * read in hooks.server.ts's `init` to decide whether to *start* the subsystems
+ * that own config, so they are consulted before this parse runs.
+ */
+const booleanFlag = z.preprocess(
+	(value) => (value === '' || value === undefined ? 'false' : value),
+	z.enum(['true', 'false']).transform((value) => value === 'true')
+);
 
 /**
  * `k=v,k=v`, split on the *first* `=` only — an OTLP bearer token is a header
@@ -86,6 +120,12 @@ export interface AppConfig {
 		headers: Record<string, string>;
 		sampleRatio: number;
 	};
+	egress: {
+		enabled: boolean;
+		signingKey: string | undefined;
+		/** `EVENT_EGRESS_ALLOW`, parsed. Empty means no allowance was configured. */
+		allow: readonly AllowEntry[];
+	};
 }
 
 /**
@@ -162,7 +202,28 @@ function buildSchema(compiledLocales: readonly string[]) {
 					)
 					.transform((entries) => Object.fromEntries(entries))
 			),
-			OTEL_TRACES_SAMPLER_ARG: blankAsUndefined(z.coerce.number().min(0).max(1)).default(1)
+			OTEL_TRACES_SAMPLER_ARG: blankAsUndefined(z.coerce.number().min(0).max(1)).default(1),
+			// Deploy-time switch. Endpoints live in the database so they can be
+			// reconfigured by someone without shell access, and this is what keeps
+			// "does this deployment call out, and to where?" answerable from
+			// `docker inspect`: the environment answers whether, the database
+			// answers where (spec §1.1). Also the kill switch that is not
+			// RUN_JOBS=false, which would also stop mail.
+			EVENT_EGRESS_ENABLED: booleanFlag,
+			// Not blankAsUndefined + min(1): a signing key shorter than 32
+			// characters is a weak HMAC key, and the failure is silent.
+			EVENT_SIGNING_KEY: blankAsUndefined(z.string().min(32)),
+			// Parsed here rather than carried through as a raw string, so a
+			// malformed entry refuses to boot like every other setting.
+			// `parseAllowList` throws on a bad CIDR, and re-parsing per caller put
+			// that throw inside the delivery tick — where it logged every fifteen
+			// seconds and delivered nothing — and inside the admin actions, which
+			// 500'd the one surface an operator would use to fix it (spec §12).
+			//
+			// `egress/destination.ts` imports nothing but `node:dns` and
+			// `node:net`, so this stays acyclic and this module stays testable
+			// under plain Vitest.
+			EVENT_EGRESS_ALLOW: blankAsUndefined(z.string().min(1).transform(parseAllowListOrIssue))
 		})
 		.superRefine((value, ctx) => {
 			const unsupported = value.LOCALES.filter((locale) => !compiledLocales.includes(locale));
@@ -242,6 +303,11 @@ export function parseConfig(
 			serviceName: parsed.OTEL_SERVICE_NAME,
 			headers: parsed.OTEL_EXPORTER_OTLP_HEADERS ?? {},
 			sampleRatio: parsed.OTEL_TRACES_SAMPLER_ARG
+		},
+		egress: {
+			enabled: parsed.EVENT_EGRESS_ENABLED,
+			signingKey: parsed.EVENT_SIGNING_KEY,
+			allow: parsed.EVENT_EGRESS_ALLOW ?? []
 		}
 	};
 }

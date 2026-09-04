@@ -65,6 +65,16 @@ async function readQueueDepth(): Promise<number> {
 	return pendingCount(getDb());
 }
 
+/** The egress counterpart, and a module-level function for the same reason. */
+async function readEgressQueueDepth(): Promise<number> {
+	const [{ getDb }, { pendingDeliveryCount }] = await Promise.all([
+		import('../db/instance'),
+		import('../egress/deliver')
+	]);
+
+	return pendingDeliveryCount(getDb());
+}
+
 export async function startTelemetry(config: AppConfig['telemetry']): Promise<boolean> {
 	if (!config.endpoint || started.length > 0) return false;
 
@@ -121,7 +131,26 @@ export async function startTelemetry(config: AppConfig['telemetry']): Promise<bo
 	// provider on next use.
 	resetInstruments();
 
-	registerQueueDepthGauge(readQueueDepth);
+	// Nothing in this application sends mail inline: a deployment whose SMTP is
+	// misconfigured looks entirely healthy from the outside while the queue
+	// grows, and one with no SMTP_URL at all is a supported configuration whose
+	// queue grows by design. This gauge is what tells those two apart.
+	registerQueueDepthGauge(
+		'trustcenter.mail.queue.depth',
+		'Outbound emails queued and not yet sent',
+		readQueueDepth
+	);
+	// The egress counterpart, registered unconditionally rather than behind
+	// `config.egress.enabled`: the gauge reads a table, not the flag, and a
+	// deployment that turned egress off with rows still pending must not have
+	// the depth go silent — a gauge that stops reporting is indistinguishable
+	// from a collector that stopped scraping. It reports the true pending count
+	// either way; it does not zero itself when egress is off.
+	registerQueueDepthGauge(
+		'trustcenter.egress.queue.depth',
+		'Event deliveries queued and not yet delivered',
+		readEgressQueueDepth
+	);
 
 	started = [tracerProvider, meterProvider];
 	return true;

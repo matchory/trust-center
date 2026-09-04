@@ -7,9 +7,10 @@ import {
 	sendExpiryReminders
 } from '../access/expiry';
 import { accessRequest, requesterSession, staffSession } from '../db/schema';
+import { runEgressClaim, runEgressDeliveries } from '../egress';
 import { getMailer, MailNotConfigured } from '../mail';
 import { drainOutbox } from '../mail/queue';
-import { redactDeliveredMail, sweepRateLimits } from '../retention';
+import { redactDeliveredMail, sweepEventDeliveries, sweepRateLimits } from '../retention';
 import { getStorage } from '../storage';
 import { sweepUnconfirmedSubscriptions } from '../subscriptions';
 import { notifySubscribers } from '../subscriptions/notify';
@@ -61,12 +62,46 @@ export async function drainMailQueue(db: Db): Promise<void> {
 interface Job {
 	name: string;
 	everyMs: number;
+	/** Runs under the advisory lock. */
 	run: (db: Db) => Promise<void>;
+	/**
+	 * Runs after the lock's transaction has committed, on a pooled connection.
+	 * For work that talks to the network.
+	 *
+	 * `runJob` wraps `run` in `db.transaction`, so without this phase the lock
+	 * connection sits `idle in transaction` for the whole tick — up to 250
+	 * seconds for a 25-row egress batch on a 10 s timeout. That pins the xmin
+	 * horizon so autovacuum reclaims nothing on `ratelimit` and
+	 * `outbound_email`, is killed outright by
+	 * `idle_in_transaction_session_timeout`, and holds two of the pool's ten
+	 * connections behind which request-path queries queue. `mail:drain` gets
+	 * away with the single-phase shape because it talks to one configured relay
+	 * on a short timeout; egress talks to arbitrary operator-supplied hosts
+	 * (spec §5.1).
+	 *
+	 * Only runs when `run` actually held the lock: if another replica had it,
+	 * this replica claimed nothing and has nothing to deliver.
+	 *
+	 * The consequence is worth stating rather than discovering later:
+	 * `trustcenter.job.tick.duration` covers phase one only. The `event deliver`
+	 * spans and `trustcenter.egress.delivery.duration` cover phase two, which is
+	 * where the time goes.
+	 */
+	afterLock?: (db: Db) => Promise<void>;
 }
 
 export const JOBS: readonly Job[] = [
 	// Short, because a magic link arriving a minute late is a person waiting.
 	{ name: 'mail:drain', everyMs: 15_000, run: drainMailQueue },
+	// Fifteen seconds, matching mail:drain and on the same reasoning: a magic
+	// link a minute late is a person waiting, and a Teams notice fifteen
+	// minutes late is a defect (spec §5.1).
+	{
+		name: 'egress:deliver',
+		everyMs: 15_000,
+		run: runEgressClaim,
+		afterLock: runEgressDeliveries
+	},
 	{ name: 'sessions:cleanup', everyMs: 60 * 60 * 1000, run: cleanupExpiredSessions },
 	{
 		name: 'requests:sweep',
@@ -103,6 +138,10 @@ export const JOBS: readonly Job[] = [
 			// confirmed, so it holds an address nobody proved they control.
 			// Folded in here rather than becoming a seventh timer (spec §8).
 			await sweepUnconfirmedSubscriptions(db);
+			// Terminal deliveries older than 30 days, folded in for the reason the
+			// subscription sweep was: the interval is right and a tick that finds
+			// nothing costs one indexed query (event egress spec §5.6).
+			await sweepEventDeliveries(db, { retentionDays: 30 });
 		}
 	},
 	{
@@ -136,15 +175,17 @@ export function startJobRunner(): void {
 
 	for (const job of JOBS) {
 		const timer = setInterval(() => {
-			void runJob(getDb(), job.name, () => job.run(getDb())).catch((cause) => {
-				console.error(
-					JSON.stringify({
-						level: 'error',
-						job: job.name,
-						message: cause instanceof Error ? cause.message : String(cause)
-					})
-				);
-			});
+			void runJob(getDb(), job.name, () => job.run(getDb()))
+				.then((result) => (result.ran && job.afterLock ? job.afterLock(getDb()) : undefined))
+				.catch((cause) => {
+					console.error(
+						JSON.stringify({
+							level: 'error',
+							job: job.name,
+							message: cause instanceof Error ? cause.message : String(cause)
+						})
+					);
+				});
 		}, job.everyMs);
 
 		timer.unref();
