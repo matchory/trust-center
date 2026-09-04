@@ -2,7 +2,11 @@ import { randomUUID } from 'node:crypto';
 import { eq, sql } from 'drizzle-orm';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { recordEvent } from '../../src/lib/server/audit';
-import { attestationDue, buildAttestation } from '../../src/lib/server/auditsink/attest';
+import {
+	attestationDue,
+	buildAttestation,
+	markAttested
+} from '../../src/lib/server/auditsink/attest';
 import { buildBatch } from '../../src/lib/server/auditsink/reader';
 import { claimShipments, rebuildBatch, shipClaimed } from '../../src/lib/server/auditsink/ship';
 import { buildManifest } from '../../src/lib/server/auditsink/serialize';
@@ -279,5 +283,43 @@ describe('attestation', () => {
 
 	it('is due when none has been written within the interval', async () => {
 		expect(await attestationDue(db, 24 * 60 * 60_000)).toBe(true);
+	});
+
+	// The round trip below is the coverage that matters: `setting.value` is
+	// jsonb, so a bare-string write or a `value::timestamptz` read both fail
+	// at runtime, and neither is caught unless something writes and reads the
+	// same row back. Read findings, fix round 1.
+	it('is not due right after marking, for an interval comfortably longer than the elapsed time', async () => {
+		await markAttested(db, new Date());
+		expect(await attestationDue(db, 24 * 60 * 60_000)).toBe(false);
+	});
+
+	it("stores the mark as a value that round-trips through the same #>> '{}' extraction attestationDue uses", async () => {
+		const at = new Date('2026-01-01T00:00:00.000Z');
+		await markAttested(db, at);
+
+		const [row] = (await db.execute(
+			sql`SELECT value #>> '{}' AS value FROM setting WHERE key = 'auditsink.attested_at'`
+		)) as unknown as { value: string }[];
+
+		expect(new Date(row!.value).getTime()).toBe(at.getTime());
+	});
+
+	it('updates the existing row on a second mark rather than inserting a duplicate', async () => {
+		await markAttested(db, new Date('2026-01-01T00:00:00.000Z'));
+		await markAttested(db, new Date('2026-01-02T00:00:00.000Z'));
+
+		const rows = (await db.execute(
+			sql`SELECT value #>> '{}' AS value FROM setting WHERE key = 'auditsink.attested_at'`
+		)) as unknown as { value: string }[];
+
+		expect(rows).toHaveLength(1);
+		expect(new Date(rows[0]!.value).getTime()).toBe(new Date('2026-01-02T00:00:00.000Z').getTime());
+	});
+
+	it('is due again once the interval has elapsed since the mark', async () => {
+		await markAttested(db, new Date());
+		await new Promise((resolve) => setTimeout(resolve, 20));
+		expect(await attestationDue(db, 1)).toBe(true);
 	});
 });
