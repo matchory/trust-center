@@ -3,15 +3,16 @@ import { request as httpsRequest } from 'node:https';
 import {
 	EgressDestinationRejected,
 	resolveDestination,
+	validateEndpointUrl,
 	type AllowEntry,
 	type LookupAll,
 	type PinnedAddress
 } from './destination';
 import type { DeliveryErrorReason } from '../db/schema';
 
-export const EGRESS_TIMEOUT_MS = 10_000;
+const EGRESS_TIMEOUT_MS = 10_000;
 /** Read to a bound and discarded. Never stored, never returned. */
-export const MAX_RESPONSE_BYTES = 8192;
+const MAX_RESPONSE_BYTES = 8192;
 /** outbound_email's numbers verbatim (spec §5.3). */
 export const MAX_ATTEMPTS = 5;
 const RETRY_AFTER_CAP_SECONDS = 900;
@@ -50,7 +51,18 @@ export type PostOutcome =
 	  };
 
 export interface PostInput {
-	url: URL;
+	/**
+	 * The stored URL, unvalidated. A `URL` object cannot be accepted here: that
+	 * would mean the caller ran `validateEndpointUrl`, and a caller that can run
+	 * it is a caller that can forget to (spec §6.3).
+	 */
+	url: string;
+	/**
+	 * `EVENT_EGRESS_ENABLED`. Required rather than defaulted, so a new call site
+	 * has to answer the question instead of inheriting a `true` nobody chose —
+	 * off means nothing leaves the container, whatever the database says.
+	 */
+	enabled: boolean;
 	allow: readonly AllowEntry[];
 	body: string;
 	contentType: string;
@@ -61,40 +73,56 @@ export interface PostInput {
 	lookup?: LookupAll;
 }
 
+function refused(reason: DeliveryErrorReason): PostOutcome {
+	return { kind: 'failed', statusCode: null, reason, retryable: false, retryAfterSeconds: null };
+}
+
 /**
  * The one way out. Not a general HTTP client and not reusable as one (spec §6):
  * POST only, no redirects, no cookie jar, no operator-supplied header, a fixed
  * timeout, and the *validated* address handed to the socket through the
  * `lookup` option so the connection cannot go somewhere a second resolution
  * would return.
+ *
+ * The kill switch and `validateEndpointUrl` are enforced HERE rather than at
+ * each caller, because a caller is exactly what can omit them: the admin test
+ * send did, and reached an operator-supplied host with egress switched off.
  */
 export async function postEvent(input: PostInput): Promise<PostOutcome> {
-	let pinned: PinnedAddress;
+	if (!input.enabled) return refused('egress_disabled');
+
+	// Re-validated on every attempt, not only on save: an endpoint row can be
+	// changed by anyone with admin access between the two, and the allowlist can
+	// change under a row that was valid when it was written. A rejection is this
+	// delivery's terminal failure, never a throw — one unparseable stored URL
+	// used to abandon the rest of the claimed batch and repeat every tick.
+	let url: URL;
 	try {
-		pinned =
-			input.pinnedAddress ?? (await resolveDestination(input.url, input.allow, input.lookup));
+		url = validateEndpointUrl(input.url, input.allow);
 	} catch (cause) {
-		if (cause instanceof EgressDestinationRejected) {
-			return {
-				kind: 'failed',
-				statusCode: null,
-				reason: 'destination_denied',
-				retryable: false,
-				retryAfterSeconds: null
-			};
-		}
+		if (cause instanceof EgressDestinationRejected) return refused(cause.reason);
 		throw cause;
 	}
 
-	const send = input.url.protocol === 'https:' ? httpsRequest : httpRequest;
+	let pinned: PinnedAddress;
+	try {
+		pinned = input.pinnedAddress ?? (await resolveDestination(url, input.allow, input.lookup));
+	} catch (cause) {
+		// Deliberately not `cause.reason`: what a resolution refuses is the
+		// destination, whichever rule named it.
+		if (cause instanceof EgressDestinationRejected) return refused('destination_denied');
+		throw cause;
+	}
+
+	const send = url.protocol === 'https:' ? httpsRequest : httpRequest;
 	const payload = Buffer.from(input.body, 'utf8');
 
 	return new Promise<PostOutcome>((resolve) => {
 		const clientRequest = send({
-			protocol: input.url.protocol,
-			hostname: input.url.hostname,
+			protocol: url.protocol,
+			hostname: url.hostname,
 			port: pinned.port,
-			path: `${input.url.pathname}${input.url.search}`,
+			path: `${url.pathname}${url.search}`,
 			method: 'POST',
 			headers: {
 				...input.headers,

@@ -855,10 +855,10 @@ afterwards.
 Each endpoint's page has **Send test event**, which delivers a synthetic
 `egress.test` event immediately. It bypasses exactly three things — the cursor,
 the filter and the queue — and nothing else: the destination checks, the port
-and scheme restrictions and the redirect refusal all apply, because an
-admin-triggered request that skipped them would be a hand-built SSRF probe with
-a UI. `egress.test` is deliberately not an audit action, so no filter can match
-it and it never appears in the audit log.
+and scheme restrictions, the redirect refusal and `EVENT_EGRESS_ENABLED` all
+apply, because an admin-triggered request that skipped them would be a
+hand-built SSRF probe with a UI. `egress.test` is deliberately not an audit
+action, so no filter can match it and it never appears in the audit log.
 
 The failure it reports is one of a fixed set:
 
@@ -871,6 +871,7 @@ The failure it reports is one of a fixed set:
 | `network` | The connection failed outright — DNS, TLS, or a refused socket. |
 | `http_status` | The receiver answered with a status that is not a success. The code is shown next to it. |
 | `signing_key_missing` | A `generic` endpoint with no `EVENT_SIGNING_KEY` configured. |
+| `egress_disabled` | `EVENT_EGRESS_ENABLED` is off. The test send is refused like any other delivery — the switch means nothing leaves the container, and an admin-triggered send is not an exception to it. |
 
 A response body is never stored, only the status code and one of these fixed
 phrases. A receiver that echoes its input — n8n's "respond with incoming items"

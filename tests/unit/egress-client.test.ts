@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { postEvent } from '../../src/lib/server/egress/client';
-import { parseAllowList, validateEndpointUrl } from '../../src/lib/server/egress/destination';
+import { parseAllowList } from '../../src/lib/server/egress/destination';
 import { startWebhookServer } from '../helpers/webhook-server';
 
 let stop: (() => Promise<void>) | undefined;
@@ -37,7 +37,8 @@ describe('postEvent', () => {
 		// fixture's actual port, not just its address, for the URL to validate.
 		const allow = parseAllowList(`127.0.0.1:${server.port}`);
 		const outcome = await postEvent({
-			url: validateEndpointUrl(server.url, allow),
+			url: server.url,
+			enabled: true,
 			allow,
 			pinnedAddress: { address: '127.0.0.1', family: 4, port: server.port },
 			body: '{"event":"access_request.pending"}',
@@ -63,7 +64,8 @@ describe('postEvent', () => {
 		// Same fixture-port caveat as above.
 		const allow = parseAllowList(`127.0.0.1:${server.port}`);
 		const outcome = await postEvent({
-			url: validateEndpointUrl(server.url, allow),
+			url: server.url,
+			enabled: true,
 			allow,
 			pinnedAddress: { address: '127.0.0.1', family: 4, port: server.port },
 			body: '{}',
@@ -96,7 +98,8 @@ describe('postEvent', () => {
 		// Same fixture-port caveat as above.
 		const allow = parseAllowList(`127.0.0.1:${server.port}`);
 		const outcome = await postEvent({
-			url: validateEndpointUrl(server.url, allow),
+			url: server.url,
+			enabled: true,
 			allow,
 			pinnedAddress: { address: '127.0.0.1', family: 4, port: server.port },
 			body: '{}',
@@ -130,7 +133,8 @@ describe('postEvent', () => {
 
 		const allow = parseAllowList(`hooks.example.test:${server.port}`);
 		const outcome = await postEvent({
-			url: validateEndpointUrl(`http://hooks.example.test:${server.port}/webhook`, allow),
+			url: `http://hooks.example.test:${server.port}/webhook`,
+			enabled: true,
 			allow,
 			pinnedAddress: { address: '127.0.0.1', family: 4, port: server.port },
 			body: '{}',
@@ -144,7 +148,8 @@ describe('postEvent', () => {
 
 	it('reports a refused destination without making a request', async () => {
 		const outcome = await postEvent({
-			url: validateEndpointUrl('https://hooks.example.test/a'),
+			url: 'https://hooks.example.test/a',
+			enabled: true,
 			allow: [],
 			body: '{}',
 			contentType: 'application/json',
@@ -158,6 +163,66 @@ describe('postEvent', () => {
 			kind: 'failed',
 			statusCode: null,
 			reason: 'destination_denied',
+			retryable: false
+		});
+	});
+
+	/**
+	 * `EVENT_EGRESS_ENABLED` off means nothing leaves the container, and the
+	 * check belongs here rather than at each caller: the admin test send is the
+	 * caller that used to omit it and reach an operator-supplied host with the
+	 * switch off. The fixture is a real reachable server, so a request that is
+	 * not made is the assertion.
+	 */
+	it('sends nothing at all when the kill switch is off', async () => {
+		const server = await serve((_request, response) => {
+			response.writeHead(200).end('ok');
+		});
+
+		const allow = parseAllowList(`127.0.0.1:${server.port}`);
+		const outcome = await postEvent({
+			url: server.url,
+			enabled: false,
+			allow,
+			pinnedAddress: { address: '127.0.0.1', family: 4, port: server.port },
+			body: '{}',
+			contentType: 'application/json',
+			headers: {}
+		});
+
+		expect(outcome).toMatchObject({
+			kind: 'failed',
+			statusCode: null,
+			reason: 'egress_disabled',
+			// Terminal: the switch will not flip back mid-backoff, and burning
+			// five attempts against it would auto-disable the endpoint.
+			retryable: false
+		});
+		expect(server.requests).toHaveLength(0);
+	});
+
+	/**
+	 * A stored URL the allowlist no longer admits is this delivery's failure,
+	 * not a throw: `deliverClaimed` used to validate at the call site, so one
+	 * such row abandoned the rest of the claimed batch and did it again every
+	 * tick.
+	 */
+	it('reports an unvalidatable URL as a terminal failure rather than throwing', async () => {
+		const outcome = await postEvent({
+			// An OS-assigned port that no allow entry names: 80 and 443 are the
+			// only ports permitted by default.
+			url: 'https://hooks.example.test:8443/a',
+			enabled: true,
+			allow: [],
+			body: '{}',
+			contentType: 'application/json',
+			headers: {}
+		});
+
+		expect(outcome).toMatchObject({
+			kind: 'failed',
+			statusCode: null,
+			reason: 'url',
 			retryable: false
 		});
 	});

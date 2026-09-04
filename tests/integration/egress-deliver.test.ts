@@ -22,12 +22,10 @@ const webhooks = webhookFixture();
 
 const spans = recordingSpans();
 
-const OPTIONS = {
-	baseUrl: 'https://trust.example.com',
-	locale: 'en',
-	signingKey: 'k'.repeat(32),
-	allow: parseAllowList('127.0.0.1/32')
-};
+// The shared shape with a bare-CIDR allowlist: these two tests are about what
+// happens *before* a socket is opened, so neither needs the port-named entry
+// `deliverOptions` builds for tests that actually deliver.
+const OPTIONS = { ...deliverOptions(), allow: parseAllowList('127.0.0.1/32') };
 
 beforeAll(() => {
 	const url = process.env.TEST_DATABASE_URL;
@@ -268,6 +266,43 @@ describe('deliverClaimed', () => {
 			await healthy.close();
 		}
 	}, 30_000);
+
+	/**
+	 * A stored URL the allowlist no longer admits fails that one delivery and
+	 * nothing else. `deliverClaimed` used to call `validateEndpointUrl` itself,
+	 * inside the per-row loop but outside any try — so the rejection threw out
+	 * of `deliverClaimed` entirely, abandoning every row claimed after it and
+	 * repeating on the next tick, forever. `postEvent` owns the check now.
+	 */
+	it('fails only the row whose stored URL no longer validates', async () => {
+		const healthy = await webhooks.serve((_request, response) => response.writeHead(200).end());
+
+		// Port 8443 is not 80 or 443 and no allow entry below names it, so this
+		// row cannot validate at delivery time even though it saved.
+		const badId = await createEndpoint(db, ['certification.*'], {
+			url: 'https://hooks.example.test:8443/a'
+		});
+		const healthyId = await createEndpoint(db, ['certification.*'], { url: healthy.url });
+		await emitFallbackEvent();
+
+		const claimed = await db.transaction(async (tx) => {
+			await fanOut(tx);
+			return claimDeliveries(tx);
+		});
+		expect(new Set(claimed.map((row) => row.endpointId)).size).toBe(2);
+
+		const result = await deliverClaimed(db, claimed, deliverOptions(healthy.port));
+
+		expect(result).toMatchObject({ delivered: 1, failed: 1 });
+		expect(healthy.requests).toHaveLength(1);
+		expect((await deliveryRow(healthyId))?.status).toBe('delivered');
+		const bad = await deliveryRow(badId);
+		expect(bad?.lastError).toBe('url');
+		// Terminal on the first attempt: the URL will not fix itself, and
+		// retrying it four more times only walks the endpoint toward auto-disable.
+		expect(bad?.status).toBe('failed');
+		expect(bad?.attempts).toBe(1);
+	});
 
 	it('claims at most five rows per endpoint and twenty-five overall', async () => {
 		const server = await webhooks.serve((_request, response) => response.writeHead(200).end());

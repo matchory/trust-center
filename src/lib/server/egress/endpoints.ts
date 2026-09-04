@@ -73,6 +73,13 @@ export interface EndpointInput {
 export interface EndpointOptions {
 	signingKey: string | undefined;
 	allow?: readonly AllowEntry[];
+	/**
+	 * `EVENT_EGRESS_ENABLED`. Only meaningful on the injection seam described
+	 * above — when the whole object is omitted this comes from config, which is
+	 * what the route does. Defaults to `true` so a test has to opt *out* of
+	 * delivery rather than remember to opt in.
+	 */
+	enabled?: boolean;
 }
 
 export interface EndpointActor {
@@ -98,10 +105,25 @@ export class EndpointInvalid extends Error {
 function resolved(options: EndpointOptions | undefined): {
 	signingKey: string | undefined;
 	allow: readonly AllowEntry[];
+	enabled: boolean;
 } {
-	if (options) return { signingKey: options.signingKey, allow: options.allow ?? [] };
+	// The options branch is the injection seam: it exists so a test can drive
+	// this without a configured environment, and reading `getConfig()` here
+	// would defeat that. The route passes nothing, so the production test-send
+	// takes the branch below and does read the switch.
+	if (options) {
+		return {
+			signingKey: options.signingKey,
+			allow: options.allow ?? [],
+			enabled: options.enabled ?? true
+		};
+	}
 	const config = getConfig();
-	return { signingKey: config.egress.signingKey, allow: config.egress.allow };
+	return {
+		signingKey: config.egress.signingKey,
+		allow: config.egress.allow,
+		enabled: config.egress.enabled
+	};
 }
 
 /**
@@ -496,16 +518,13 @@ export async function actionRates(db: Db): Promise<Record<string, number>> {
 	return Object.fromEntries(rows.map((row) => [row.action, row.n]));
 }
 
-export interface TestEventOptions {
-	signingKey: string | undefined;
-	allow?: readonly AllowEntry[];
-	baseUrl?: string;
-	/**
-	 * Defaults to `config.defaultLocale`, for the reason the delivery path gives
-	 * for reading the same value: the audience of an egress payload is the
-	 * operator's own staff, not the requester (spec §3.2).
-	 */
-	locale?: string;
+/**
+ * `EndpointOptions` plus the resolver seam. Extended rather than restated: the
+ * two differed only by `lookup`, and a second copy is how one of them comes to
+ * be missing a field `resolved()` reads — which is exactly how `enabled` would
+ * have been forgotten here.
+ */
+export interface TestEventOptions extends EndpointOptions {
 	/** Test seam, as on `DeliverOptions`. Never set by a route. */
 	lookup?: LookupAll;
 }
@@ -570,9 +589,11 @@ export async function sendTestEvent(
 		.where(eq(eventEndpoint.id, id));
 	if (!endpoint) throw new EndpointInvalid('no such endpoint', 'id');
 
-	const { signingKey, allow } = resolved(options);
-	const baseUrl = options?.baseUrl ?? getConfig().baseUrl;
-	const locale = options?.locale ?? getConfig().defaultLocale;
+	const { signingKey, allow, enabled } = resolved(options);
+	// `defaultLocale` for the reason the delivery path gives for reading the
+	// same value: the audience of an egress payload is the operator's own
+	// staff, not the requester (spec §3.2).
+	const { baseUrl, defaultLocale: locale } = getConfig();
 
 	if (requiresSigning(endpoint.format) && signingKey === undefined) {
 		return { statusCode: null, reason: 'signing_key_missing' };
@@ -603,16 +624,6 @@ export async function sendTestEvent(
 
 	const { body, contentType } = formatEvent(endpoint.format, model);
 
-	let url: URL;
-	try {
-		url = validateEndpointUrl(endpoint.url, allow);
-	} catch (cause) {
-		if (cause instanceof EgressDestinationRejected) {
-			return { statusCode: null, reason: cause.reason };
-		}
-		throw cause;
-	}
-
 	// The same headers the delivery path sends, rotation overlap included: a
 	// test send that signed differently could not prove a rotation worked.
 	const headers = eventHeaders({
@@ -624,8 +635,12 @@ export async function sendTestEvent(
 		body
 	});
 
+	// The stored URL, unvalidated: `postEvent` owns both the kill switch and
+	// `validateEndpointUrl`, so an admin-triggered send cannot be the call site
+	// that skips either (spec §11).
 	const outcome = await postEvent({
-		url,
+		url: endpoint.url,
+		enabled,
 		allow,
 		body,
 		contentType,

@@ -36,7 +36,15 @@ export const DELIVERY_ERROR_REASONS = [
 	'timeout',
 	'network',
 	'signing_key_missing',
-	'body_too_large'
+	'body_too_large',
+	// The stored URL no longer satisfies `validateEndpointUrl` — an allowlist
+	// entry withdrawn under a row that was valid when it was saved. Distinct
+	// from `destination_denied`, which is about where the host *resolves*.
+	'url',
+	// `EVENT_EGRESS_ENABLED` is off. Never reached by the delivery path, which
+	// claims nothing while the switch is off; this is what the admin test send
+	// records instead of calling out.
+	'egress_disabled'
 ] as const;
 export type DeliveryErrorReason = (typeof DELIVERY_ERROR_REASONS)[number];
 

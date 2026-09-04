@@ -10,7 +10,7 @@ import {
 } from '../db/schema';
 import { recordEgressDelivery, withSpan } from '../telemetry';
 import { backoffMinutes, MAX_ATTEMPTS, postEvent } from './client';
-import { validateEndpointUrl, type AllowEntry, type LookupAll } from './destination';
+import type { AllowEntry, LookupAll } from './destination';
 import { enrichEvent, type EnrichOutcome } from './enrich';
 import { formatEvent, requiresSigning } from './format';
 import { eventHeaders } from './secret';
@@ -83,6 +83,13 @@ export interface DeliverOptions {
 	locale: string;
 	signingKey: string | undefined;
 	allow: readonly AllowEntry[];
+	/**
+	 * `EVENT_EGRESS_ENABLED`, forwarded to `postEvent` — which is where the
+	 * switch is enforced, so that no caller of it can be the exception.
+	 * Unreachable from here in practice: with the switch off phase one claims
+	 * nothing, so there is no batch to deliver.
+	 */
+	enabled: boolean;
 	/** Test seam, as on `PostInput`. Never set on the delivery path. */
 	lookup?: LookupAll;
 }
@@ -288,9 +295,11 @@ export async function deliverClaimed(
 			},
 			async (span) => {
 				const result = await postEvent({
-					// Re-validated here, not only on save: an endpoint row can be
-					// changed by anyone with admin access between the two.
-					url: validateEndpointUrl(row.endpoint.url, options.allow),
+					// The stored URL, unvalidated: `postEvent` re-validates it and
+					// turns a refusal into this delivery's failure. Validating here
+					// instead threw out of the loop and abandoned the rest of the batch.
+					url: row.endpoint.url,
+					enabled: options.enabled,
 					allow: options.allow,
 					body,
 					contentType,

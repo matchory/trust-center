@@ -873,10 +873,13 @@ derived secret, bumping `secret_version`, enabling and disabling — and **send 
 The test send renders a synthetic model and delivers it inline, bypassing the cursor, the filter and
 the queue. It is the only way an operator learns their URL is wrong before a real access request does.
 
-**It does not bypass §6.3.** The destination check, the scheme and port restrictions, the redirect
-refusal and §6.4's discard-the-body rule all apply unchanged — an inline, admin-triggered request that
-skipped them would be a hand-built SSRF probe with a UI. The three things it bypasses are named
-exhaustively above; nothing else is bypassed.
+**It does not bypass §6.3, and it does not bypass the kill switch.** The destination check, the
+scheme and port restrictions, the redirect refusal, §6.4's discard-the-body rule and
+`EVENT_EGRESS_ENABLED` all apply unchanged — an inline, admin-triggered request that skipped them
+would be a hand-built SSRF probe with a UI. The three things it bypasses are named exhaustively
+above; nothing else is bypassed. With the switch off the test send reports `egress_disabled` and
+opens no socket, because §1.1's claim is that nothing leaves the container, and an admin-triggered
+send is not an exception to it.
 
 Its `action` is `egress.test`, which is deliberately **not** an audit action: nothing writes it to
 `audit_event`, no filter can match it, and it is therefore outside the permanent-name convention §9
@@ -1114,6 +1117,8 @@ table governs.
 | §12 | `EVENT_EGRESS_ENABLED` parsed "like everything else" | `RUN_JOBS` and `RUN_MIGRATIONS` are read straight from `process.env`, so the run-flags are the wrong precedent. It goes in `parse.ts` and becomes the schema's first boolean. |
 | §2.1, §5.5 | Cursor initialisation stated as "start at the maximum" | Stated exactly: creation and skip-the-backlog both **jump** the cursor to the current horizon, so a transaction in flight commits below it and is never delivered. Harmless and intended; now in §16 rather than rediscovered. |
 | §16 | Three residuals | Eight. Added: the frozen-`xmin` row; the two cursor jumps; the sequential window scan with the row count at which to bound it; the swept-row re-enqueue; and `body_too_large`, a declared error reason nothing produces. |
+| §11, §1.1 | The test send enforces §6.3 | It enforces `EVENT_EGRESS_ENABLED` too. It never read the switch, so an admin could make a deployment with egress off call out to an operator-supplied host — the one claim §1.1 makes to a procurement reviewer. Enforced inside `postEvent` rather than at the call site, because the call site is what omitted it; `egress_disabled` joins the reason set. |
+| §6.3 | Each caller validates the stored URL before handing it to `postEvent` | `postEvent` validates it. `deliverClaimed` called `validateEndpointUrl` inside its per-row loop but outside any `try`, so one stored URL the allowlist no longer admitted threw out of the whole batch, abandoning every row claimed after it and repeating every tick. A refusal is now that one delivery's terminal failure, reason `url`. |
 
 Two things this implementation did **not** change, recorded so they are not relitigated:
 

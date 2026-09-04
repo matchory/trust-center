@@ -80,7 +80,8 @@ export async function runEgressDeliveries(db: Db): Promise<void> {
 			// because of who happened to submit the form (spec §3.2).
 			locale: config.defaultLocale,
 			signingKey: config.egress.signingKey,
-			allow: config.egress.allow
+			allow: config.egress.allow,
+			enabled: config.egress.enabled
 		});
 	}
 

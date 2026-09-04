@@ -52,6 +52,10 @@ export function deliverOptions(...ports: number[]) {
 		locale: 'en',
 		signingKey: 'k'.repeat(32),
 		allow: parseAllowList(ports.map((port) => `127.0.0.1:${port}`).join(',')),
+		// The switch a real deployment reads from `EVENT_EGRESS_ENABLED`. On here
+		// because these suites are about what delivery does when it is allowed to
+		// run; `egress-switch.test.ts` owns the off case.
+		enabled: true,
 		lookup: async () => [{ address: '10.1.2.3', family: 4 }]
 	};
 }

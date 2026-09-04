@@ -350,6 +350,37 @@ describe('sendTestEvent', () => {
 		expect(server.requests).toHaveLength(0);
 	});
 
+	/**
+	 * §11 names exactly three things the inline test send bypasses — the cursor,
+	 * the filter and the queue — and says so exhaustively. The kill switch is not
+	 * one of them. It used to be: `sendTestEvent` never consulted
+	 * `EVENT_EGRESS_ENABLED`, so an admin could make the deployment call out to
+	 * an operator-supplied host with egress switched off, contradicting both
+	 * `.env.example` and the notice the same page renders. The fixture is a real
+	 * reachable server, so a request that is never made is the assertion.
+	 */
+	it('sends nothing when the kill switch is off', async () => {
+		const server = await webhook.serve((_request, response) => {
+			response.writeHead(200);
+			response.end();
+		});
+		const id = await seedEndpointRow(db, [], {
+			name: 'reachable',
+			url: server.url,
+			format: 'generic'
+		});
+
+		const outcome = await sendTestEvent(db, id, {
+			signingKey: 'k'.repeat(32),
+			allow: parseAllowList(`127.0.0.1:${server.port}`),
+			enabled: false,
+			lookup: async () => [{ address: '10.1.2.3', family: 4 }]
+		});
+
+		expect(outcome).toEqual({ statusCode: null, reason: 'egress_disabled' });
+		expect(server.requests).toHaveLength(0);
+	});
+
 	it('delivers inline when the destination passes, writing no delivery row', async () => {
 		const server = await webhook.serve((_request, response) => {
 			response.writeHead(204);
