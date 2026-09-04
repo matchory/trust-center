@@ -35,11 +35,12 @@ export const PER_ENDPOINT_LIMIT = 5;
  * predicate below, exactly as `pendingCount` sits beside `drainOutbox`'s.
  */
 export async function pendingDeliveryCount(db: Db): Promise<number> {
-	const rows = (await db.execute(
-		sql`SELECT count(*)::int AS depth FROM event_delivery WHERE status = 'pending'`
-	)) as unknown as { depth: number }[];
+	const [row] = await db
+		.select({ depth: sql<number>`count(*)::int` })
+		.from(eventDelivery)
+		.where(eq(eventDelivery.status, 'pending'));
 
-	return rows[0]?.depth ?? 0;
+	return row?.depth ?? 0;
 }
 
 /**
@@ -139,7 +140,7 @@ export async function claimDeliveries(tx: Db): Promise<ClaimedDelivery[]> {
 		       e.url, e.format, e.secret_version
 		FROM event_delivery d
 		JOIN event_endpoint e ON e.id = d.endpoint_id
-		WHERE d.id = ANY(${sql.raw(`ARRAY['${candidates.map((row) => row.id).join("','")}']::uuid[]`)})
+		WHERE d.id = ANY(${sql.param(candidates.map((row) => row.id))}::uuid[])
 		  AND d.status = 'pending' AND d.next_attempt_at <= now() AND e.enabled = true
 		ORDER BY d.next_attempt_at
 		FOR UPDATE OF d SKIP LOCKED
@@ -158,8 +159,7 @@ export async function claimDeliveries(tx: Db): Promise<ClaimedDelivery[]> {
 
 	// A crash mid-delivery retries later rather than being retried by the very
 	// next tick. Through the query builder, unlike the two SELECTs above that it
-	// cannot express, so the ids travel as parameters rather than in a
-	// string-built array literal.
+	// cannot express.
 	await tx
 		.update(eventDelivery)
 		.set({ nextAttemptAt: sql`now() + interval '5 minutes'` })

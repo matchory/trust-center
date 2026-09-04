@@ -13,7 +13,6 @@ import { parseAllowList } from '../../src/lib/server/egress/destination';
 import { fanOut } from '../../src/lib/server/egress/fanout';
 import { expectNoSensitiveAttributes, recordingSpans } from '../helpers/telemetry';
 import { createEndpoint, deliverOptions, webhookFixture } from '../helpers/egress';
-import { startWebhookServer } from '../helpers/webhook-server';
 
 let db: Db;
 let close: () => Promise<void>;
@@ -242,29 +241,25 @@ describe('deliverClaimed', () => {
 		const blackhole = await webhooks.serve(() => {
 			/* never responds */
 		});
-		const healthy = await startWebhookServer((_request, response) => response.writeHead(200).end());
+		const healthy = await webhooks.serve((_request, response) => response.writeHead(200).end());
 
-		try {
-			await createEndpoint(db, ['certification.*'], { url: blackhole.url });
-			const healthyId = await createEndpoint(db, ['certification.*'], { url: healthy.url });
-			await emitFallbackEvent();
+		await createEndpoint(db, ['certification.*'], { url: blackhole.url });
+		const healthyId = await createEndpoint(db, ['certification.*'], { url: healthy.url });
+		await emitFallbackEvent();
 
-			const claimed = await db.transaction(async (tx) => {
-				await fanOut(tx);
-				return claimDeliveries(tx);
-			});
+		const claimed = await db.transaction(async (tx) => {
+			await fanOut(tx);
+			return claimDeliveries(tx);
+		});
 
-			// Both endpoints are represented in one claim.
-			expect(new Set(claimed.map((row) => row.endpointId)).size).toBe(2);
+		// Both endpoints are represented in one claim.
+		expect(new Set(claimed.map((row) => row.endpointId)).size).toBe(2);
 
-			await deliverClaimed(db, claimed, deliverOptions(blackhole.port, healthy.port));
-			expect(healthy.requests).toHaveLength(1);
+		await deliverClaimed(db, claimed, deliverOptions(blackhole.port, healthy.port));
+		expect(healthy.requests).toHaveLength(1);
 
-			const row = await deliveryRow(healthyId);
-			expect(row?.status).toBe('delivered');
-		} finally {
-			await healthy.close();
-		}
+		const row = await deliveryRow(healthyId);
+		expect(row?.status).toBe('delivered');
 	}, 30_000);
 
 	/**

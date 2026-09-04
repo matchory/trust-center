@@ -135,7 +135,6 @@
 	"admin_integrations_error_url": "Diese URL ist als Ziel nicht zulässig.",
 	"admin_integrations_format": "Format",
 	"admin_integrations_high_frequency": "„{pattern}“ traf in den letzten sieben Tagen auf {count} Ereignisse zu, mehr als {threshold}. In diesen Kanal wird häufiger geschrieben, als er gelesen wird.",
-	"admin_integrations_host": "Host",
 	"admin_integrations_intro": "Wohin diese Installation Ereignisse sendet. Endpunkte liegen in der Datenbank; ob überhaupt nach außen gesendet wird, legt die Umgebung fest.",
 	"admin_integrations_last_outcome": "Letzte Zustellung",
 	"admin_integrations_name": "Name",

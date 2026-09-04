@@ -230,24 +230,27 @@ interface EndpointRow {
 /**
  * Turns endpoint rows into details, with the filters, the pending depth and
  * the newest delivery answered for the whole set at once rather than once per
- * row — three round trips regardless of how many endpoints exist.
+ * row — three concurrent round trips regardless of how many endpoints exist.
  */
 async function detail(db: Db, rows: EndpointRow[]): Promise<EndpointDetail[]> {
 	if (rows.length === 0) return [];
 	const ids = rows.map((row) => row.id);
 
-	const patterns = await patternsByEndpoint(db, ids);
-	const depths = await pendingDepthByEndpoint(db, ids);
-
-	// Raw for the `DISTINCT ON`, which the query builder cannot express — but the
-	// id list goes through `inArray` rather than a string-built array literal,
-	// so the values stay parameters.
-	const outcomes = (await db.execute(sql`
-		SELECT DISTINCT ON (endpoint_id) endpoint_id, status, last_status_code
-		FROM event_delivery
-		WHERE ${inArray(eventDelivery.endpointId, ids)}
-		ORDER BY endpoint_id, created_at DESC, id DESC
-	`)) as unknown as { endpoint_id: string; status: string; last_status_code: number | null }[];
+	// None of the three reads takes input from another, so they go out together
+	// rather than paying three serial round trips on every admin page render.
+	const [patterns, depths, outcomes] = await Promise.all([
+		patternsByEndpoint(db, ids),
+		pendingDepthByEndpoint(db, ids),
+		// Raw for the `DISTINCT ON`, which the query builder cannot express — but
+		// the id list goes through `inArray` rather than a string-built array
+		// literal, so the values stay parameters.
+		db.execute(sql`
+			SELECT DISTINCT ON (endpoint_id) endpoint_id, status, last_status_code
+			FROM event_delivery
+			WHERE ${inArray(eventDelivery.endpointId, ids)}
+			ORDER BY endpoint_id, created_at DESC, id DESC
+		`) as unknown as Promise<{ endpoint_id: string; status: string; last_status_code: number | null }[]>
+	]);
 	const outcomeByEndpoint = new Map(
 		outcomes.map((row) => [
 			row.endpoint_id,
@@ -493,8 +496,7 @@ export const HIGH_FREQUENCY_WEEKLY_EVENTS = 200;
  */
 export function highFrequencyPatterns(
 	patterns: readonly string[],
-	rates: Record<string, number>,
-	threshold: number = HIGH_FREQUENCY_WEEKLY_EVENTS
+	rates: Record<string, number>
 ): { pattern: string; weekly: number }[] {
 	return patterns
 		.map((pattern) => ({
@@ -503,7 +505,7 @@ export function highFrequencyPatterns(
 				.filter(([action]) => matchesPattern(pattern, action))
 				.reduce((total, [, count]) => total + count, 0)
 		}))
-		.filter((entry) => entry.weekly > threshold);
+		.filter((entry) => entry.weekly > HIGH_FREQUENCY_WEEKLY_EVENTS);
 }
 
 /** How often each action was written over the last seven days. */

@@ -135,7 +135,6 @@
 	"admin_integrations_error_url": "This URL cannot be used as a destination.",
 	"admin_integrations_format": "Format",
 	"admin_integrations_high_frequency": "“{pattern}” matched {count} events in the last seven days, above {threshold}. This channel will be written to more often than it is read.",
-	"admin_integrations_host": "Host",
 	"admin_integrations_intro": "Where this deployment posts events. Endpoints live in the database; whether this deployment calls out at all is set in the environment.",
 	"admin_integrations_last_outcome": "Last delivery",
 	"admin_integrations_name": "Name",

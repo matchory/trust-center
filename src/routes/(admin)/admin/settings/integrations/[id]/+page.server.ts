@@ -49,7 +49,10 @@ export const load: PageServerLoad = async ({ locals, params }) => {
 	requireAdmin(locals);
 
 	const db = getDb();
-	const endpoint = await getEndpoint(db, params.id);
+	// `actionRates` is a seven-day aggregate over `audit_event` that takes
+	// nothing from the endpoint, so it goes out alongside the endpoint read
+	// rather than after it.
+	const [endpoint, rates] = await Promise.all([getEndpoint(db, params.id), actionRates(db)]);
 	if (!endpoint) error(404, 'Endpoint not found');
 
 	// `document.downloaded` is registered and deliberately not throttled: one
@@ -57,7 +60,7 @@ export const load: PageServerLoad = async ({ locals, params }) => {
 	// Throttling it here would be this subsystem deciding what an operator's
 	// channel should contain, so the operator chooses and is told what they are
 	// choosing (spec §9.1).
-	const highFrequency = highFrequencyPatterns(endpoint.patterns, await actionRates(db));
+	const highFrequency = highFrequencyPatterns(endpoint.patterns, rates);
 
 	return {
 		endpoint,

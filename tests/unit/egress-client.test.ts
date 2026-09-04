@@ -1,14 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { postEvent } from '../../src/lib/server/egress/client';
 import { parseAllowList } from '../../src/lib/server/egress/destination';
-import { startWebhookServer } from '../helpers/webhook-server';
-
-let stop: (() => Promise<void>) | undefined;
-
-afterEach(async () => {
-	await stop?.();
-	stop = undefined;
-});
+import { webhookFixture } from '../helpers/webhook-server';
 
 /**
  * The fixture listens on 127.0.0.1, which `classifyAddress` denies
@@ -19,11 +12,10 @@ afterEach(async () => {
  * test (headers, redirect refusal, the discarded body, the timeout) is
  * unaffected by which address it is.
  */
-async function serve(handler: Parameters<typeof startWebhookServer>[0]) {
-	const server = await startWebhookServer(handler);
-	stop = server.close;
-	return server;
-}
+const webhooks = webhookFixture();
+const serve = webhooks.serve;
+
+afterEach(webhooks.closeAll);
 
 describe('postEvent', () => {
 	it('POSTs the body with the given headers and reports the status', async () => {

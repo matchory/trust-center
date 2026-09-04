@@ -1124,9 +1124,13 @@ table governs.
 Two things this implementation did **not** change, recorded so they are not relitigated:
 
 - **`sql.raw` array interpolation in the delivery and admin queries.** Flagged during review as
-  unparameterised SQL. It is the established idiom at all four sites, including one predating this
-  subsystem, and every interpolated value is a uuid the database itself returned. If it is ever worth
-  parameterising, all four go together.
+  unparameterised SQL. Recorded here as unchanged, and then changed: the post-implementation
+  simplification passes moved three of the four sites — `claimDeliveries` and its retry-stamp update
+  in `deliver.ts`, and the endpoint-id list in `endpoints.ts` — onto `sql.param` and `inArray` while
+  they were being rewritten for other reasons. Every interpolated value was a uuid the database
+  itself returned, so this closed no hole; it is recorded because the note above promised all four
+  would go together and they did not. The fourth, `mail/queue.ts`, predates this subsystem and is
+  deliberately untouched on an egress branch — it is the one site where the idiom still stands.
 - **`outbound_email.last_error` stores raw SMTP messages** and survives both a purge and the
   retention window. Real, pre-existing, and unrelated to egress. Deliberately not fixed on this
   branch.

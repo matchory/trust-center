@@ -28,7 +28,7 @@ interface FormatSpec {
  * registry and the reason `format` is a column rather than two branches
  * (spec §3.3).
  */
-export const FORMATTERS: Record<EgressFormat, FormatSpec> = {
+const FORMATTERS: Record<EgressFormat, FormatSpec> = {
 	generic: { render: formatGeneric, signed: true },
 	// Teams verifies nothing, so a Teams-only operator should not have to manage
 	// a key they cannot use.

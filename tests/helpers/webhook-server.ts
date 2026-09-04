@@ -52,3 +52,29 @@ export async function startWebhookServer(
 		}
 	};
 }
+
+/**
+ * Owns the lifetime of every fixture server a test starts, so each suite
+ * closes them in `afterEach` without repeating the bookkeeping.
+ *
+ * Lives here rather than beside the egress helpers so the DB-free unit suite
+ * can use it too: this module imports `node:http` and nothing else, while
+ * `helpers/egress.ts` pulls in the Drizzle schema.
+ */
+export function webhookFixture() {
+	const stops: (() => Promise<void>)[] = [];
+
+	return {
+		serve: async (handler: Parameters<typeof startWebhookServer>[0]) => {
+			const server = await startWebhookServer(handler);
+			stops.push(server.close);
+			return server;
+		},
+		closeAll: async () => {
+			// Copied and cleared first so a failing close cannot leave a stale
+			// entry that the next test's teardown closes a second time.
+			const pending = stops.splice(0);
+			await Promise.all(pending.map((stop) => stop()));
+		}
+	};
+}

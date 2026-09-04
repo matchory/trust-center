@@ -2,7 +2,6 @@ import { eventEndpoint, eventEndpointFilter } from '../../src/lib/server/db/sche
 import type { Db } from '../../src/lib/server/db';
 import { parseAllowList } from '../../src/lib/server/egress/destination';
 import { currentHorizon } from '../../src/lib/server/egress/fanout';
-import { startWebhookServer } from './webhook-server';
 
 /**
  * An endpoint whose cursor starts where a real one does: the live horizon.
@@ -60,22 +59,7 @@ export function deliverOptions(...ports: number[]) {
 	};
 }
 
-/**
- * Owns the lifetime of the one fixture server a test starts, so each suite
- * closes it in `afterEach` without repeating the bookkeeping.
- */
-export function webhookFixture() {
-	let stop: (() => Promise<void>) | undefined;
-
-	return {
-		serve: async (handler: Parameters<typeof startWebhookServer>[0]) => {
-			const server = await startWebhookServer(handler);
-			stop = server.close;
-			return server;
-		},
-		closeAll: async () => {
-			await stop?.();
-			stop = undefined;
-		}
-	};
-}
+// Re-exported so the integration suites keep importing their egress helpers
+// from one module; it lives in `webhook-server.ts` because the unit suite needs
+// it without this module's Drizzle imports.
+export { webhookFixture } from './webhook-server';
