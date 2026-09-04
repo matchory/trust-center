@@ -1,5 +1,5 @@
 import { and, eq, inArray, sql } from 'drizzle-orm';
-import { recordEvent } from '../audit';
+import { currentHorizon, recordEvent } from '../audit';
 import { localizePath } from '../../i18n/locale';
 import { getConfig } from '../config';
 import {
@@ -17,7 +17,6 @@ import {
 	type LookupAll
 } from './destination';
 import { pendingDepthByEndpoint } from './deliver';
-import { currentHorizon } from './fanout';
 import { isValidPattern, matchesPattern, patternsByEndpoint } from './filter';
 import { formatEvent, requiresSigning } from './format';
 import { endpointSecret, eventHeaders } from './secret';

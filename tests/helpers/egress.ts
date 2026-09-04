@@ -1,7 +1,7 @@
 import { eventEndpoint, eventEndpointFilter } from '../../src/lib/server/db/schema';
 import type { Db } from '../../src/lib/server/db';
+import { currentHorizon } from '../../src/lib/server/audit';
 import { parseAllowList } from '../../src/lib/server/egress/destination';
-import { currentHorizon } from '../../src/lib/server/egress/fanout';
 
 /**
  * An endpoint whose cursor starts where a real one does: the live horizon.
