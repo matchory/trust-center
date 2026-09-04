@@ -62,6 +62,12 @@ function build() {
 		}),
 		egressFanout: meter.createCounter('trustcenter.egress.fanout', {
 			description: 'Deliveries enqueued by fan-out'
+		}),
+		auditSinkBatch: meter.createCounter('trustcenter.auditsink.batch', {
+			description: 'Audit batch shipments by sink and outcome'
+		}),
+		auditSinkDigestMismatch: meter.createCounter('trustcenter.auditsink.digest_mismatch', {
+			description: 'Rebuilt batches whose digest no longer matches the recorded one'
 		})
 	};
 }
@@ -136,6 +142,29 @@ export function recordEgressDelivery(input: {
  */
 export function recordEgressFanout(enqueued: number): void {
 	if (enqueued > 0) get().egressFanout.add(enqueued);
+}
+
+/**
+ * The sink name, never a key, bucket or endpoint: `sink` is a closed set of two
+ * values (SINK_NAMES), so it cannot become a cardinality problem, and none of
+ * the configuration around it belongs in a metric label (spec §9).
+ *
+ * No duration histogram beside it, unlike egress: a shipment's time is
+ * dominated by the size of the batch, which the operator chose, so the number
+ * would answer "how big are the batches" rather than "is the sink slow".
+ */
+export function recordAuditSinkBatch(input: { sink: string; outcome: 'shipped' | 'failed' }): void {
+	get().auditSinkBatch.add(1, { 'auditsink.sink': input.sink, outcome: input.outcome });
+}
+
+/**
+ * Unattributed: §4.3's mismatch is a property of the batch, not of a sink — the
+ * bytes were rebuilt once and every sink would then report the same event.
+ * Expected to be non-zero on any deployment that has honoured an erasure
+ * request, which is why it is a counter to correlate rather than an alarm.
+ */
+export function recordAuditSinkDigestMismatch(): void {
+	get().auditSinkDigestMismatch.add(1);
 }
 
 /** Called by `startTelemetry` after the real meter provider is registered. */

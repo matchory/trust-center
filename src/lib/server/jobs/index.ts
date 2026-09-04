@@ -6,6 +6,7 @@ import {
 	sendAcceptanceReminders,
 	sendExpiryReminders
 } from '../access/expiry';
+import { runAuditSinkBatch, runAuditSinkShip } from '../auditsink';
 import { accessRequest, requesterSession, staffSession } from '../db/schema';
 import { runEgressClaim, runEgressDeliveries } from '../egress';
 import { getMailer, MailNotConfigured } from '../mail';
@@ -101,6 +102,17 @@ export const JOBS: readonly Job[] = [
 		everyMs: 15_000,
 		run: runEgressClaim,
 		afterLock: runEgressDeliveries
+	},
+	// Sixty seconds rather than mail's and egress's fifteen: the latency budget
+	// for the audit sink is minutes to hours, and a batch is worth more than a
+	// prompt one (audit sink spec §3.1). The shipping phase is `afterLock` for
+	// the reason egress's is — it talks to operator-supplied storage, and the
+	// lock's transaction must not be held across the network.
+	{
+		name: 'auditsink:batch',
+		everyMs: 60_000,
+		run: runAuditSinkBatch,
+		afterLock: runAuditSinkShip
 	},
 	{ name: 'sessions:cleanup', everyMs: 60 * 60 * 1000, run: cleanupExpiredSessions },
 	{

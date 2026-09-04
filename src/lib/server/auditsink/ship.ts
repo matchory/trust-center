@@ -1,5 +1,6 @@
 import { and, eq, sql } from 'drizzle-orm';
 import { auditBatch, auditBatchShipment } from '../db/schema';
+import { recordAuditSinkBatch, recordAuditSinkDigestMismatch } from '../telemetry';
 import { AUDIT_SELECT, buildManifest, seqRange, serializeBatch } from './serialize';
 import { SinkError } from './port';
 import type { AuditSinkAdapter, SinkBatch } from './port';
@@ -63,6 +64,28 @@ export function classifyError(cause: unknown): {
  * configured against a large existing log catches up `limit` batches per tick
  * rather than scanning (and re-conflicting on) the whole table forever.
  */
+/**
+ * Batches this sink has not shipped, counted from `audit_batch` rather than
+ * from the shipment rows: a batch that phase one has not claimed yet has no
+ * shipment row at all, and counting rows would report a growing backlog as
+ * depth zero — exactly the "stuck or quiet" question the gauge exists to
+ * answer (spec §9). The synthetic zero-row re-seed batch is excluded, on the
+ * same reasoning as the claim's own predicate.
+ */
+export async function pendingShipmentCount(db: Db, sink: SinkName): Promise<number> {
+	const rows = (await db.execute(sql`
+		SELECT count(*)::int AS depth
+		FROM audit_batch b
+		WHERE b.row_count > 0
+		  AND NOT EXISTS (
+		    SELECT 1 FROM audit_batch_shipment sh
+		    WHERE sh.batch_id = b.id AND sh.sink = ${sink} AND sh.shipped_at IS NOT NULL
+		  )
+	`)) as unknown as { depth: number }[];
+
+	return rows[0]?.depth ?? 0;
+}
+
 export async function claimShipments(
 	tx: Db,
 	sinks: readonly SinkName[],
@@ -137,6 +160,13 @@ export async function rebuildBatch(db: Db, batchId: string): Promise<SinkBatch> 
 	const { body, digest } = serializeBatch(rows);
 	const { min: minSeq, max: maxSeq } = seqRange(rows);
 
+	// Expected, not alarming: a purge between the build and this rebuild takes
+	// its row out of the range entirely, so the bytes legitimately differ. The
+	// counter is here rather than at the ship site because the mismatch is a
+	// property of the rebuild, and shipping the same batch to two sinks would
+	// otherwise count one erasure twice (spec §4.3, §9).
+	if (digest !== meta.digest) recordAuditSinkDigestMismatch();
+
 	return {
 		id: meta.id,
 		body,
@@ -192,6 +222,7 @@ export async function shipClaimed(
 					const batch =
 						prebuilt.get(shipment.batchId) ?? (await rebuildBatch(db, shipment.batchId));
 					const objectKey = await adapter.ship(batch);
+					recordAuditSinkBatch({ sink: adapter.name, outcome: 'shipped' });
 
 					await db
 						.update(auditBatchShipment)
@@ -214,6 +245,7 @@ export async function shipClaimed(
 				} catch (cause) {
 					const { reason, statusCode } = classifyError(cause);
 					const attempts = shipment.attempts + 1;
+					recordAuditSinkBatch({ sink: adapter.name, outcome: 'failed' });
 
 					await db
 						.update(auditBatchShipment)

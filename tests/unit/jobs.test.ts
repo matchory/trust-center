@@ -68,6 +68,18 @@ describe('JOBS', () => {
 		// not inside runJob's transaction (spec §5.1).
 		expect(job?.afterLock).toBeTypeOf('function');
 	});
+
+	it('registers auditsink:batch on a minute, shipping outside the lock', () => {
+		const job = JOBS.find((entry) => entry.name === 'auditsink:batch');
+
+		expect(job).toBeDefined();
+		// A minute rather than fifteen seconds: the sink's latency budget is
+		// minutes to hours (audit sink spec §3.1).
+		expect(job?.everyMs).toBe(60_000);
+		// Same property as egress: shipping talks to operator-supplied storage,
+		// so it must not run inside runJob's transaction.
+		expect(job?.afterLock).toBeTypeOf('function');
+	});
 });
 
 describe('startJobRunner', () => {

@@ -1,5 +1,7 @@
 export { requestAttributes, requestSpanName } from './attributes';
 export {
+	recordAuditSinkBatch,
+	recordAuditSinkDigestMismatch,
 	recordEgressDelivery,
 	recordEgressFanout,
 	recordJobTick,

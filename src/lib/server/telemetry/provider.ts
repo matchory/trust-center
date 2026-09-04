@@ -1,4 +1,6 @@
 import { diag, DiagLogLevel, metrics, trace } from '@opentelemetry/api';
+import { SINK_NAMES } from '../db/schema/auditsink';
+import type { SinkName } from '../db/schema/auditsink';
 import type { AppConfig } from '../config';
 import { registerQueueDepthGauge, resetInstruments } from './metrics';
 
@@ -73,6 +75,17 @@ async function readEgressQueueDepth(): Promise<number> {
 	]);
 
 	return pendingDeliveryCount(getDb());
+}
+
+/** The audit-sink counterpart, per sink because registerQueueDepthGauge
+ * observes a single number and takes no attributes (spec §9). */
+async function readSinkQueueDepth(sink: SinkName): Promise<number> {
+	const [{ getDb }, { pendingShipmentCount }] = await Promise.all([
+		import('../db/instance'),
+		import('../auditsink/ship')
+	]);
+
+	return pendingShipmentCount(getDb(), sink);
 }
 
 export async function startTelemetry(config: AppConfig['telemetry']): Promise<boolean> {
@@ -151,6 +164,19 @@ export async function startTelemetry(config: AppConfig['telemetry']): Promise<bo
 		'Event deliveries queued and not yet delivered',
 		readEgressQueueDepth
 	);
+	// Two names rather than one instrument with a `sink` attribute:
+	// registerQueueDepthGauge observes a single number and takes no attributes,
+	// and registering one name twice raises an OTel duplicate-instrument
+	// warning (spec §9). Registered unconditionally for the reason the egress
+	// gauge above is — a sink switched off with batches still pending must
+	// report the true depth, not go silent.
+	for (const sink of SINK_NAMES) {
+		registerQueueDepthGauge(
+			`trustcenter.auditsink.${sink}.queue.depth`,
+			`Audit batches not yet shipped to the ${sink} sink`,
+			() => readSinkQueueDepth(sink)
+		);
+	}
 
 	started = [tracerProvider, meterProvider];
 	return true;
