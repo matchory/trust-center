@@ -38,6 +38,21 @@ describe('the syslog sink configuration', () => {
 		expect(() => parse({ AUDIT_SINK_SYSLOG_URL: 'udp://siem.example.com:514' })).toThrow();
 	});
 
+	it('refuses a URL with no host', () => {
+		// `url.hostname` is '' for both, and net.connect defaults a falsy host to
+		// localhost — a "configured" sink would otherwise quietly point at itself.
+		expect(() => parse({ AUDIT_SINK_SYSLOG_URL: 'tls://' })).toThrow();
+		expect(() => parse({ AUDIT_SINK_SYSLOG_URL: 'tls:///path' })).toThrow();
+	});
+
+	it('strips the brackets from an IPv6 literal host', () => {
+		// URL#hostname keeps them ('[::1]'), but net.connect does not strip them
+		// and fails getaddrinfo ENOTFOUND [::1] forever rather than connecting.
+		const { syslog } = parse({ AUDIT_SINK_SYSLOG_URL: 'tls://[::1]:6514' }).auditSink;
+
+		expect(syslog?.host).toBe('::1');
+	});
+
 	it('refuses a facility it cannot map', () => {
 		expect(() =>
 			parse({
@@ -49,6 +64,20 @@ describe('the syslog sink configuration', () => {
 
 	it('defaults the facility to local0 and the message cap to 8 KiB', () => {
 		const { syslog } = parse({ AUDIT_SINK_SYSLOG_URL: 'tls://siem.example.com' }).auditSink;
+
+		expect(syslog).toMatchObject({ facility: 'local0', maxMessageBytes: 8192 });
+	});
+
+	it('treats an empty-string facility and message cap as unset, not a value to reject', () => {
+		// A `.env` copied from .env.example verbatim spells "unset" as `KEY=`,
+		// same as every other AUDIT_SINK_SYSLOG_* variable — without
+		// blankAsUndefined this fails the enum, and the byte cap coerces '' to 0
+		// and fails .positive(), refusing to boot on the documented default spelling.
+		const { syslog } = parse({
+			AUDIT_SINK_SYSLOG_URL: 'tls://siem.example.com',
+			AUDIT_SINK_SYSLOG_FACILITY: '',
+			AUDIT_SINK_SYSLOG_MAX_MESSAGE_BYTES: ''
+		}).auditSink;
 
 		expect(syslog).toMatchObject({ facility: 'local0', maxMessageBytes: 8192 });
 	});

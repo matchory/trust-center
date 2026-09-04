@@ -49,7 +49,7 @@ vi.mock('../../src/lib/server/config', () => ({
 
 const buildBatch = vi.fn(async () => null);
 const claimShipments = vi.fn(async () => [] as { batchId: string; sink: 's3'; attempts: number }[]);
-const shipClaimed = vi.fn(async () => {});
+const shipClaimed = vi.fn<(...args: unknown[]) => Promise<void>>(async () => {});
 const attestationDue = vi.fn(async () => false);
 const buildAttestation = vi.fn(async () => ({ at: '2026-09-04T12:00:00.000Z' }));
 const markAttested = vi.fn(async () => {});
@@ -61,7 +61,7 @@ vi.mock('../../src/lib/server/auditsink/reader', () => ({
 
 vi.mock('../../src/lib/server/auditsink/ship', () => ({
 	claimShipments: () => claimShipments(),
-	shipClaimed: () => shipClaimed()
+	shipClaimed: (...args: unknown[]) => shipClaimed(...args)
 }));
 
 vi.mock('../../src/lib/server/auditsink/attest', () => ({
@@ -195,7 +195,12 @@ describe('the audit sink kill switch', () => {
 		await runAuditSinkShip(db);
 
 		// One call, two adapters — shipClaimed fans out internally, and the
-		// property here is that both were passed to it.
+		// property here is that both were passed to it. Asserting only the call
+		// count would pass just as well with S3-only wiring, so the adapters
+		// argument (index 2 of the call, see auditsink/index.ts's `shipClaimed(db,
+		// claimed, active, prebuilt)`) is what actually proves both reached it.
 		expect(shipClaimed).toHaveBeenCalledTimes(1);
+		const active = shipClaimed.mock.calls[0]?.[2] as { name: string }[];
+		expect(active.map((adapter) => adapter.name)).toEqual(expect.arrayContaining(['s3', 'syslog']));
 	});
 });

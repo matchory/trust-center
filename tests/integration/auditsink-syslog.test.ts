@@ -104,12 +104,6 @@ describe('the syslog adapter', () => {
 		await expect(adapterFor(running.port).ship(batch())).resolves.toBeNull();
 	});
 
-	it('verifies the server certificate against the configured CA', async () => {
-		running = await startSyslogServer({ tls: server });
-
-		await expect(adapterFor(running.port).ship(batch())).resolves.toBeNull();
-	});
-
 	it('refuses a server it cannot verify, and never disables rejectUnauthorized', async () => {
 		// Spec §5.3: there is no variable that turns this off, so an untrusted
 		// receiver must fail rather than degrade.

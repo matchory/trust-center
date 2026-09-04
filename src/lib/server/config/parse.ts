@@ -33,6 +33,22 @@ function isValidUrl(value: string): boolean {
 }
 
 /**
+ * `tls://` and `tls:///path` are both syntactically valid URLs with an empty
+ * `hostname`, and `net.connect` treats a falsy host as `localhost` — so a
+ * missing host would boot a "configured" sink that quietly talks to itself
+ * rather than refusing to boot like every other malformed setting here.
+ * Returns true (no issue) for a value that already fails `isValidUrl`, so the
+ * two refinements don't both fire over the same malformed string.
+ */
+function hasHost(value: string): boolean {
+	try {
+		return new URL(value).hostname !== '';
+	} catch {
+		return true;
+	}
+}
+
+/**
  * `parseAllowList` reports a malformed entry by throwing, which is right for
  * its own callers but would escape zod as an unhandled error rather than
  * becoming the named boot-time refusal every other setting gets. Turned into
@@ -308,15 +324,18 @@ function buildSchema(compiledLocales: readonly string[]) {
 						message: 'AUDIT_SINK_SYSLOG_URL must start with tls:// or tcp:// — UDP is not supported'
 					})
 					.refine(isValidUrl, { message: 'AUDIT_SINK_SYSLOG_URL is not a valid URL' })
+					.refine(hasHost, { message: 'AUDIT_SINK_SYSLOG_URL must include a host' })
 			),
 			AUDIT_SINK_SYSLOG_CA: blankAsUndefined(pemText(z.string().min(1))),
 			AUDIT_SINK_SYSLOG_CLIENT_CERT: blankAsUndefined(pemText(z.string().min(1))),
 			AUDIT_SINK_SYSLOG_CLIENT_KEY: blankAsUndefined(pemText(z.string().min(1))),
-			AUDIT_SINK_SYSLOG_FACILITY: z.enum(SYSLOG_FACILITIES).default('local0'),
+			AUDIT_SINK_SYSLOG_FACILITY: blankAsUndefined(z.enum(SYSLOG_FACILITIES)).default('local0'),
 			// 8 KiB, matching rsyslog's default. A row above it fails the batch
 			// rather than being truncated: a truncated row can never reproduce
 			// its digest (spec §5.3).
-			AUDIT_SINK_SYSLOG_MAX_MESSAGE_BYTES: z.coerce.number().int().positive().default(8192)
+			AUDIT_SINK_SYSLOG_MAX_MESSAGE_BYTES: blankAsUndefined(
+				z.coerce.number().int().positive()
+			).default(8192)
 		})
 		.superRefine((value, ctx) => {
 			const unsupported = value.LOCALES.filter((locale) => !compiledLocales.includes(locale));
@@ -474,7 +493,11 @@ export function parseConfig(
 						return {
 							url: parsed.AUDIT_SINK_SYSLOG_URL!,
 							tls,
-							host: url.hostname,
+							// `URL#hostname` keeps the brackets an IPv6 literal is written
+							// with (`[::1]`), but `net.connect` does not strip them and
+							// fails `getaddrinfo ENOTFOUND [::1]` forever rather than
+							// connecting.
+							host: url.hostname.replace(/^\[|\]$/g, ''),
 							// The scheme's default, because an operator who writes
 							// `tls://siem.example.com` means 6514 and should not have to
 							// say so.

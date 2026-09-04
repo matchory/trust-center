@@ -1135,14 +1135,20 @@ live database.
 
 ### At-least-once, and how to deduplicate
 
-An event may be shipped more than once — a crash between a successful PUT and
-the row that records it, a restore, a re-ship after an erasure. When you load
-these objects somewhere:
+An event may be shipped more than once — a crash between a successful
+delivery and the row that records it, a restore, a re-ship after an erasure,
+and for the syslog sink also a receiver that reset the connection after
+taking the batch — that sink's steady-state failure, not a rare one (see
+*What shipping to a SIEM cannot promise*, below). When you load what was
+shipped, from either sink:
 
-- **Deduplicate on `id`**, and order by the **manifest's cursor**, not by `seq`.
-  Sequence numbers are assigned when a transaction starts, so they do not arrive
-  in order and a later event can carry a lower `seq` than one already shipped.
-  Object keys are dated, not ordered.
+- **Deduplicate on `id`**, and order by the **manifest's cursor**, not by
+  `seq`. `id` is a field of every row wherever you load it from — an NDJSON
+  line in the bucket, or the JSON body of an `audit` message at a SIEM, where
+  messages belonging to one batch also share that batch's id in PROCID.
+  Sequence numbers are assigned when a transaction starts, so they do not
+  arrive in order and a later event can carry a lower `seq` than one already
+  shipped. Object keys are dated, not ordered, and PROCID is not either.
 - **Nulls alone do not indicate an erasure.** Most audit events have no IP
   address to begin with — anything a background job or the system itself did.
   Only a *differing pair* under one `id` shows that a purge happened.
@@ -1182,7 +1188,7 @@ purge reaches. Look it up here:
 | `config` | The batch's own metadata could not be read. Not a network problem. |
 | `tls` | The TLS handshake failed. |
 | `timeout` | No response within thirty seconds. |
-| `network` | The connection failed outright — DNS, TLS, or a refused socket. |
+| `network` | The connection failed outright — DNS, TLS, or a refused socket. For syslog, also a receiver that reset the connection after taking the batch — see *What shipping to a SIEM cannot promise* below. |
 | `auth` | The credentials were rejected. Check the access key and secret. |
 | `permission` | The credentials are valid but not allowed to write. Check the policy above. |
 | `not_found` | The bucket does not exist, or the endpoint points somewhere else. |
@@ -1200,7 +1206,9 @@ receiver — a SIEM, an rsyslog relay, whatever collects logs where you are — 
 RFC 5424 messages framed per RFC 6587. This is the sink to reach for when the
 audit log needs to land where your alerting already lives. It does not replace
 the bucket, and the subsection **What shipping to a SIEM cannot promise** below
-is the part to read before you make it your only sink.
+is the part to read before you make it your only sink. Duplicates arrive
+routinely here — see **At-least-once, and how to deduplicate**, above, for
+what to key on at your SIEM.
 
 The scheme decides both the transport and the default port: `tls://` connects on
 6514, `tcp://` on 514, and a port written into the URL overrides either.
@@ -1326,6 +1334,19 @@ receiver that looks perfectly healthy from its own side. It is the deliberate
 choice: the alternative is recording a batch as shipped that the receiver
 actually rejected, and a false entry is worse than a duplicate in a record whose
 whole value is that it is true.
+
+**A receiver that resets the connection has the same cause and the opposite
+symptom.** Some receivers — or an L4 proxy in front of one — end a batch with
+`SO_LINGER 0` or an abrupt `destroy()` rather than a clean `end()`, which
+arrives here as a connection reset (`ECONNRESET`) after every byte was already
+written. It is recorded as `network`, not `timeout` — and rejected for the
+same reason as the stall above: a reset after our FIN can just as easily mean
+the receiver rejected the batch, so this deployment cannot tell the two apart
+and must not guess. In practice the batch was usually delivered whole, so you
+would see every batch recorded as failed, retried forever on the normal
+backoff, one duplicate landing in your SIEM per retry, and `network` in the
+panel against a receiver whose own logs show nothing wrong. Deduplicating on
+`id`, above, is what makes this survivable.
 
 ### Watching it
 

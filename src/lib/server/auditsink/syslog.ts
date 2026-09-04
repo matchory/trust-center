@@ -4,8 +4,12 @@ import { SinkError } from './port';
 import { buildMessage, frame, MessageTooLarge } from './syslog-message';
 import type { Attestation, AuditSinkAdapter, SinkBatch } from './port';
 
-/** Matches `TIMEOUT_MS` in s3.ts: one deadline for every sink, so a stalled
- * receiver and a stalled bucket look the same to the shipper's backoff. */
+/** Named the same as `TIMEOUT_MS` in s3.ts, but a different kind of deadline:
+ * S3's is per HTTP request, so one `ship()` of body plus manifest can take up
+ * to 60s of wall clock. This one is a socket *idle* timer — reset by every
+ * write — so a slow-but-steady batch can run past 30s without ever tripping
+ * it, while a receiver that stops making progress for 30s does, however long
+ * the batch has been running. */
 const TIMEOUT_MS = 30_000;
 
 export interface SyslogSinkConfig {
