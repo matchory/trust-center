@@ -1,0 +1,1 @@
+CREATE INDEX "event_delivery_outcome_idx" ON "event_delivery" USING btree ("endpoint_id","created_at" DESC NULLS LAST,"id" DESC NULLS LAST);

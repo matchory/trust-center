@@ -164,6 +164,16 @@ export const eventDelivery = pgTable(
 		index('event_delivery_endpoint_idx')
 			.on(table.endpointId, table.status)
 			.where(sql`${table.status} = 'pending'`),
+		// The newest delivery per endpoint: the admin pages' `DISTINCT ON` and the
+		// staleness check's scalar subquery. NOT partial, unlike the two above —
+		// what those exclude is exactly what this reads, so without it the last
+		// outcome is a scan and sort of every retained row for the endpoint, on
+		// every render of a page whose seven form actions each re-run `load`.
+		index('event_delivery_outcome_idx').on(
+			table.endpointId,
+			table.createdAt.desc(),
+			table.id.desc()
+		),
 		check(
 			'event_delivery_status_check',
 			sql`${table.status} IN ('pending', 'delivered', 'failed', 'skipped')`
