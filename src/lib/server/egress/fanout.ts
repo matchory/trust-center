@@ -1,6 +1,7 @@
-import { eq, inArray, sql } from 'drizzle-orm';
-import { eventDelivery, eventEndpoint, eventEndpointFilter } from '../db/schema';
-import { matchesPattern } from './filter';
+import { eq, sql } from 'drizzle-orm';
+import { eventDelivery, eventEndpoint } from '../db/schema';
+import { pendingDepthByEndpoint } from './deliver';
+import { matchesPattern, patternsByEndpoint } from './filter';
 import type { Db } from '../db';
 
 /** How much of the log one tick reads per endpoint. */
@@ -106,25 +107,11 @@ export async function fanOut(tx: Db): Promise<{ enqueued: number; paused: string
 	// Both of these are answered for every endpoint at once rather than once
 	// per endpoint inside the loop: two round trips per tick instead of two per
 	// endpoint per tick, on a job that runs every fifteen seconds.
-	const depths = (await tx.execute(
-		sql`SELECT endpoint_id, count(*)::int AS depth FROM event_delivery
-		    WHERE status = 'pending' GROUP BY endpoint_id`
-	)) as unknown as { endpoint_id: string; depth: number }[];
-	const depthByEndpoint = new Map(depths.map((row) => [row.endpoint_id, row.depth]));
-
-	const filters = await tx
-		.select({ endpointId: eventEndpointFilter.endpointId, pattern: eventEndpointFilter.pattern })
-		.from(eventEndpointFilter)
-		.where(inArray(eventEndpointFilter.endpointId, endpointIds));
-	const patternsByEndpoint = new Map<string, string[]>();
-	for (const filter of filters) {
-		const existing = patternsByEndpoint.get(filter.endpointId);
-		if (existing) existing.push(filter.pattern);
-		else patternsByEndpoint.set(filter.endpointId, [filter.pattern]);
-	}
+	const depths = await pendingDepthByEndpoint(tx);
+	const patterns = await patternsByEndpoint(tx, endpointIds);
 
 	for (const endpoint of endpoints) {
-		if ((depthByEndpoint.get(endpoint.id) ?? 0) > BACKPRESSURE_THRESHOLD) {
+		if ((depths.get(endpoint.id) ?? 0) > BACKPRESSURE_THRESHOLD) {
 			// Pausing must leave the cursor where it is — the cursor is the
 			// backlog's durable record, so a paused endpoint resumes exactly where
 			// it stopped once the queue drains.
@@ -132,7 +119,7 @@ export async function fanOut(tx: Db): Promise<{ enqueued: number; paused: string
 			continue;
 		}
 
-		const patterns = patternsByEndpoint.get(endpoint.id) ?? [];
+		const endpointPatterns = patterns.get(endpoint.id) ?? [];
 
 		// The window is read WITHOUT the filter applied, so the cursor advances
 		// past events that were scanned but did not match — advancing only past
@@ -151,9 +138,11 @@ export async function fanOut(tx: Db): Promise<{ enqueued: number; paused: string
 		if (window.length === 0) continue;
 
 		const matching =
-			patterns.length === 0
+			endpointPatterns.length === 0
 				? []
-				: window.filter((row) => patterns.some((pattern) => matchesPattern(pattern, row.action)));
+				: window.filter((row) =>
+						endpointPatterns.some((pattern) => matchesPattern(pattern, row.action))
+					);
 
 		if (matching.length > 0) {
 			// `returning` so `enqueued` is rows INSERTED, not rows attempted: the

@@ -3,6 +3,8 @@
 	import FormField from '$lib/components/admin/FormField.svelte';
 	import { localizePath } from '$lib/i18n/locale';
 	import { m } from '$lib/paraglide/messages.js';
+	import EgressOffNotice from './EgressOffNotice.svelte';
+	import EndpointFormError from './EndpointFormError.svelte';
 	import type { PageProps } from './$types';
 
 	let { data, form }: PageProps = $props();
@@ -11,14 +13,7 @@
 <h1 class="mb-2 text-2xl font-semibold">{m.admin_integrations()}</h1>
 <p class="mb-6 max-w-2xl text-sm text-neutral-600">{m.admin_integrations_intro()}</p>
 
-{#if !data.egressEnabled}
-	<p
-		data-testid="integrations-egress-off"
-		class="mb-6 rounded border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900"
-	>
-		{m.admin_integrations_egress_off()}
-	</p>
-{/if}
+<EgressOffNotice enabled={data.egressEnabled} />
 
 <form
 	method="POST"
@@ -42,8 +37,9 @@
 
 	<FormField label={m.admin_integrations_format()}>
 		<select data-testid="endpoint-format" name="format" class="rounded border px-2 py-1">
-			<option value="teams">teams</option>
-			<option value="generic">generic</option>
+			{#each data.formats as format (format)}
+				<option value={format}>{format}</option>
+			{/each}
 		</select>
 	</FormField>
 
@@ -57,17 +53,7 @@
 		<span class="text-xs text-neutral-500">{m.admin_integrations_patterns_hint()}</span>
 	</FormField>
 
-	{#if form?.field}
-		<p data-testid="endpoint-error" class="text-sm text-red-700">
-			{form.field === 'url'
-				? m.admin_integrations_error_url()
-				: form.field === 'patterns'
-					? m.admin_integrations_error_patterns()
-					: form.field === 'format'
-						? m.admin_integrations_error_format()
-						: m.admin_integrations_error_name()}
-		</p>
-	{/if}
+	<EndpointFormError field={form?.field} />
 
 	<button
 		data-testid="endpoint-create"

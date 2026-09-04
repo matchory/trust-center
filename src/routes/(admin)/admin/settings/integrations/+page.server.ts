@@ -1,22 +1,22 @@
-import { error, fail } from '@sveltejs/kit';
+import { fail } from '@sveltejs/kit';
 import { getConfig } from '$lib/server/config';
 import { getDb } from '$lib/server/db/instance';
-import { EGRESS_FORMATS, type EgressFormat } from '$lib/server/db/schema';
+import { EGRESS_FORMATS } from '$lib/server/db/schema';
 import { clientIp } from '$lib/server/http/client-ip';
 import { createEndpoint, EndpointInvalid, listEndpoints } from '$lib/server/egress/endpoints';
+import { requireAdmin } from './guard';
 import { parsePatterns } from './patterns';
 import type { Actions, PageServerLoad } from './$types';
 
 export const load: PageServerLoad = async ({ locals }) => {
-	// Admin only, not approver: an endpoint URL is where a prospect's name and
-	// address get sent, and §6's threat model is the compromised admin. Same
-	// gate, same shape as /admin/audit.
-	if (locals.staff?.role !== 'admin') {
-		error(403, 'Integrations are restricted to administrators.');
-	}
+	requireAdmin(locals);
 
 	return {
 		endpoints: await listEndpoints(getDb()),
+		// The same list the edit page renders, so the create form's options come
+		// from the enum rather than being spelled out in markup — a format added
+		// to the enum but not to the dropdown is one nothing can select.
+		formats: EGRESS_FORMATS,
 		// So the page can say why nothing is being delivered — a configured
 		// endpoint that delivers nothing otherwise looks like a bug.
 		egressEnabled: getConfig().egress.enabled
@@ -25,15 +25,8 @@ export const load: PageServerLoad = async ({ locals }) => {
 
 export const actions: Actions = {
 	create: async (event) => {
-		if (event.locals.staff?.role !== 'admin') {
-			error(403, 'Integrations are restricted to administrators.');
-		}
-
+		const staff = requireAdmin(event.locals);
 		const form = await event.request.formData();
-		const format = String(form.get('format') ?? '');
-		if (!(EGRESS_FORMATS as readonly string[]).includes(format)) {
-			return fail(400, { field: 'format' });
-		}
 
 		try {
 			await createEndpoint(
@@ -41,17 +34,20 @@ export const actions: Actions = {
 				{
 					name: String(form.get('name') ?? ''),
 					url: String(form.get('url') ?? ''),
-					format: format as EgressFormat,
+					// Not narrowed here: `validate()` owns the format rule and already
+					// throws `EndpointInvalid(…, 'format')`, which the catch below turns
+					// into exactly the `fail` a route-level check would have returned.
+					format: String(form.get('format') ?? ''),
 					patterns: parsePatterns(form.get('patterns'))
 				},
-				{ staffUserId: event.locals.staff.id, ip: clientIp(event) }
+				{ staffUserId: staff.id, ip: clientIp(event) }
 			);
 		} catch (cause) {
 			// A URL the destination rules refuse, or a malformed pattern, is an
 			// operator typo — the same `fail(400, { field })` shape
 			// /admin/settings/access uses, not a 500.
 			if (cause instanceof EndpointInvalid) {
-				return fail(400, { field: cause.field, message: cause.message });
+				return fail(400, { field: cause.field });
 			}
 			throw cause;
 		}

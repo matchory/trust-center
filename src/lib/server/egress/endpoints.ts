@@ -16,10 +16,11 @@ import {
 	type AllowEntry,
 	type LookupAll
 } from './destination';
+import { pendingDepthByEndpoint } from './deliver';
 import { currentHorizon } from './fanout';
-import { isValidPattern, matchesPattern } from './filter';
-import { formatEvent } from './format';
-import { endpointSecret, signatureHeader } from './secret';
+import { isValidPattern, matchesPattern, patternsByEndpoint } from './filter';
+import { formatEvent, requiresSigning } from './format';
+import { endpointSecret, eventHeaders } from './secret';
 import type { Db } from '../db';
 import type { EventModel } from './model';
 
@@ -51,7 +52,13 @@ export interface EndpointDetail extends EndpointSummary {
 export interface EndpointInput {
 	name: string;
 	url: string;
-	format: EgressFormat;
+	/**
+	 * Unnarrowed, because `validate` is what narrows it. A route reading this
+	 * off a form would otherwise have to re-check `EGRESS_FORMATS` purely to
+	 * satisfy the type, which is a second copy of the rule that then has to
+	 * agree with this module's.
+	 */
+	format: string;
 	patterns: string[];
 }
 
@@ -106,13 +113,14 @@ function validate(
 	input: EndpointInput,
 	allow: readonly AllowEntry[],
 	signingKey: string | undefined
-): { name: string; patterns: string[] } {
+): { name: string; format: EgressFormat; patterns: string[] } {
 	const name = input.name.trim();
 	if (name === '') throw new EndpointInvalid('a name is required', 'name');
 
 	if (!(EGRESS_FORMATS as readonly string[]).includes(input.format)) {
 		throw new EndpointInvalid(`${input.format} is not a supported format`, 'format');
 	}
+	const format = input.format as EgressFormat;
 
 	try {
 		validateEndpointUrl(input.url, allow);
@@ -135,18 +143,46 @@ function validate(
 		}
 	}
 
-	// A `generic` payload is what a consumer authenticates, so saving one with
+	// This format's payload is what a consumer authenticates, so saving one with
 	// no key configured would be the thing happening without its security
-	// property. Teams verifies nothing, so a Teams-only operator needs no key
-	// (spec §7.1).
-	if (input.format === 'generic' && signingKey === undefined) {
+	// property (spec §7.1). Which formats those are is `requiresSigning`'s to
+	// say — a literal here is what would silently not apply to a format added
+	// later.
+	if (requiresSigning(format) && signingKey === undefined) {
 		throw new EndpointInvalid(
-			'EVENT_SIGNING_KEY must be configured before a generic endpoint can be saved',
+			`EVENT_SIGNING_KEY must be configured before a ${format} endpoint can be saved`,
 			'format'
 		);
 	}
 
-	return { name, patterns };
+	return { name, format, patterns };
+}
+
+/**
+ * The five endpoint writes all record against the same subject, with the same
+ * actor shape and the same ip convention. One preamble so `subjectType` cannot
+ * be mistyped on a sixth, and so §9's fixed set of action names is the only
+ * thing a caller has to choose.
+ *
+ * `event_endpoint` events carry no requester personal data, and `meta` never
+ * carries the URL — a Teams Workflows URL holds its shared secret in the query
+ * string, and this table cannot be deleted from (spec §9).
+ */
+async function recordEndpointEvent(
+	tx: Db,
+	actor: EndpointActor,
+	id: string,
+	action: 'event_endpoint.created' | 'event_endpoint.updated' | 'event_endpoint.deleted',
+	meta: Record<string, unknown>
+): Promise<void> {
+	await recordEvent(tx, {
+		action,
+		actor: { type: 'staff', id: actor.staffUserId },
+		subjectType: 'event_endpoint',
+		subjectId: id,
+		ip: actor.ip ?? undefined,
+		meta
+	});
 }
 
 /** The host, or the raw string when a stored row somehow no longer parses. */
@@ -178,32 +214,16 @@ async function detail(db: Db, rows: EndpointRow[]): Promise<EndpointDetail[]> {
 	if (rows.length === 0) return [];
 	const ids = rows.map((row) => row.id);
 
-	const filters = await db
-		.select({ endpointId: eventEndpointFilter.endpointId, pattern: eventEndpointFilter.pattern })
-		.from(eventEndpointFilter)
-		.where(inArray(eventEndpointFilter.endpointId, ids))
-		.orderBy(eventEndpointFilter.pattern);
-	const patternsByEndpoint = new Map<string, string[]>();
-	for (const filter of filters) {
-		const existing = patternsByEndpoint.get(filter.endpointId);
-		if (existing) existing.push(filter.pattern);
-		else patternsByEndpoint.set(filter.endpointId, [filter.pattern]);
-	}
+	const patterns = await patternsByEndpoint(db, ids);
+	const depths = await pendingDepthByEndpoint(db, ids);
 
-	// The same partial index the backpressure check reads
-	// (`event_delivery_endpoint_idx`), so this stays a small index scan as
-	// delivered rows accumulate.
-	const depths = await db
-		.select({ endpointId: eventDelivery.endpointId, depth: sql<number>`count(*)::int` })
-		.from(eventDelivery)
-		.where(and(inArray(eventDelivery.endpointId, ids), eq(eventDelivery.status, 'pending')))
-		.groupBy(eventDelivery.endpointId);
-	const depthByEndpoint = new Map(depths.map((row) => [row.endpointId, row.depth]));
-
+	// Raw for the `DISTINCT ON`, which the query builder cannot express — but the
+	// id list goes through `inArray` rather than a string-built array literal,
+	// so the values stay parameters.
 	const outcomes = (await db.execute(sql`
 		SELECT DISTINCT ON (endpoint_id) endpoint_id, status, last_status_code
 		FROM event_delivery
-		WHERE endpoint_id = ANY(${sql.raw(`ARRAY['${ids.join("','")}']::uuid[]`)})
+		WHERE ${inArray(eventDelivery.endpointId, ids)}
 		ORDER BY endpoint_id, created_at DESC, id DESC
 	`)) as unknown as { endpoint_id: string; status: string; last_status_code: number | null }[];
 	const outcomeByEndpoint = new Map(
@@ -224,8 +244,8 @@ async function detail(db: Db, rows: EndpointRow[]): Promise<EndpointDetail[]> {
 		disabledReason: row.disabledReason,
 		lastSuccessAt: row.lastSuccessAt,
 		lastOutcome: outcomeByEndpoint.get(row.id) ?? null,
-		pendingDepth: depthByEndpoint.get(row.id) ?? 0,
-		patterns: patternsByEndpoint.get(row.id) ?? []
+		pendingDepth: depths.get(row.id) ?? 0,
+		patterns: patterns.get(row.id) ?? []
 	}));
 }
 
@@ -277,7 +297,7 @@ export async function createEndpoint(
 	options?: EndpointOptions
 ): Promise<string> {
 	const { signingKey, allow } = resolved(options);
-	const { name, patterns } = validate(input, allow, signingKey);
+	const { name, format, patterns } = validate(input, allow, signingKey);
 
 	// One transaction, so a half-created endpoint — a row with no filters, or
 	// filters an operator cannot see — cannot exist.
@@ -287,7 +307,7 @@ export async function createEndpoint(
 			.values({
 				name,
 				url: input.url,
-				format: input.format,
+				format,
 				// Not zero: a new endpoint must not replay eighteen months of
 				// history into a Teams channel on its first tick (spec §2.1).
 				cursorXmin: await currentHorizon(tx),
@@ -300,17 +320,7 @@ export async function createEndpoint(
 			.insert(eventEndpointFilter)
 			.values(patterns.map((pattern) => ({ endpointId: id, pattern })));
 
-		// `meta` carries the name and format but NOT the URL: a Teams Workflows
-		// URL carries its shared secret in the query string, and this table
-		// cannot be deleted from (spec §9).
-		await recordEvent(tx, {
-			action: 'event_endpoint.created',
-			actor: { type: 'staff', id: actor.staffUserId },
-			subjectType: 'event_endpoint',
-			subjectId: id,
-			ip: actor.ip ?? undefined,
-			meta: { name, format: input.format, patterns }
-		});
+		await recordEndpointEvent(tx, actor, id, 'event_endpoint.created', { name, format, patterns });
 
 		return id;
 	});
@@ -324,14 +334,14 @@ export async function updateEndpoint(
 	options?: EndpointOptions
 ): Promise<void> {
 	const { signingKey, allow } = resolved(options);
-	const { name, patterns } = validate(input, allow, signingKey);
+	const { name, format, patterns } = validate(input, allow, signingKey);
 
 	await db.transaction(async (tx) => {
 		// The cursor is deliberately untouched: an operator narrowing a filter is
 		// not asking to re-send anything.
 		const updated = await tx
 			.update(eventEndpoint)
-			.set({ name, url: input.url, format: input.format })
+			.set({ name, url: input.url, format })
 			.where(eq(eventEndpoint.id, id))
 			.returning({ id: eventEndpoint.id });
 		if (updated.length === 0) throw new EndpointInvalid('no such endpoint', 'id');
@@ -343,14 +353,7 @@ export async function updateEndpoint(
 			.insert(eventEndpointFilter)
 			.values(patterns.map((pattern) => ({ endpointId: id, pattern })));
 
-		await recordEvent(tx, {
-			action: 'event_endpoint.updated',
-			actor: { type: 'staff', id: actor.staffUserId },
-			subjectType: 'event_endpoint',
-			subjectId: id,
-			ip: actor.ip ?? undefined,
-			meta: { name, format: input.format, patterns }
-		});
+		await recordEndpointEvent(tx, actor, id, 'event_endpoint.updated', { name, format, patterns });
 	});
 }
 
@@ -366,13 +369,9 @@ export async function deleteEndpoint(db: Db, id: string, actor: EndpointActor): 
 			.returning({ name: eventEndpoint.name, format: eventEndpoint.format });
 		if (!deleted) throw new EndpointInvalid('no such endpoint', 'id');
 
-		await recordEvent(tx, {
-			action: 'event_endpoint.deleted',
-			actor: { type: 'staff', id: actor.staffUserId },
-			subjectType: 'event_endpoint',
-			subjectId: id,
-			ip: actor.ip ?? undefined,
-			meta: { name: deleted.name, format: deleted.format }
+		await recordEndpointEvent(tx, actor, id, 'event_endpoint.deleted', {
+			name: deleted.name,
+			format: deleted.format
 		});
 	});
 }
@@ -419,13 +418,10 @@ export async function setEndpointEnabled(
 
 		// `updated`, not a fifth action name: §9 fixes the four an endpoint may
 		// ever carry, and they are permanent once written.
-		await recordEvent(tx, {
-			action: 'event_endpoint.updated',
-			actor: { type: 'staff', id: actor.staffUserId },
-			subjectType: 'event_endpoint',
-			subjectId: id,
-			ip: actor.ip ?? undefined,
-			meta: { enabled: input.enabled, reason, skippedBacklog: input.skipBacklog === true }
+		await recordEndpointEvent(tx, actor, id, 'event_endpoint.updated', {
+			enabled: input.enabled,
+			reason,
+			skippedBacklog: input.skipBacklog === true
 		});
 	});
 }
@@ -441,13 +437,8 @@ export async function bumpSecretVersion(db: Db, id: string, actor: EndpointActor
 			.returning({ secretVersion: eventEndpoint.secretVersion });
 		if (!row) throw new EndpointInvalid('no such endpoint', 'id');
 
-		await recordEvent(tx, {
-			action: 'event_endpoint.updated',
-			actor: { type: 'staff', id: actor.staffUserId },
-			subjectType: 'event_endpoint',
-			subjectId: id,
-			ip: actor.ip ?? undefined,
-			meta: { secretVersion: row.secretVersion }
+		await recordEndpointEvent(tx, actor, id, 'event_endpoint.updated', {
+			secretVersion: row.secretVersion
 		});
 
 		return row.secretVersion;
@@ -520,6 +511,34 @@ export interface TestEventOptions {
 }
 
 /**
+ * The endpoint's current signing secret, hex-encoded for the operator to paste
+ * into their consumer.
+ *
+ * Here rather than in the route that renders it: the route would otherwise
+ * hold the derivation's inputs and its wire encoding, so a change to the
+ * scheme — another input, a KDF, a v2 — would have to be made outside the
+ * module it belongs to and outside the tests that cover it. The return is
+ * shaped like `sendTestEvent`'s so "no key is configured" reaches the page as
+ * its own reason instead of being borrowed onto a form field it is not about.
+ */
+export async function revealEndpointSecret(
+	db: Db,
+	id: string,
+	options?: EndpointOptions
+): Promise<{ secret: string } | { reason: 'signing_key_missing' }> {
+	const { signingKey } = resolved(options);
+	if (signingKey === undefined) return { reason: 'signing_key_missing' };
+
+	const [endpoint] = await db
+		.select({ secretVersion: eventEndpoint.secretVersion })
+		.from(eventEndpoint)
+		.where(eq(eventEndpoint.id, id));
+	if (!endpoint) throw new EndpointInvalid('no such endpoint', 'id');
+
+	return { secret: endpointSecret(signingKey, id, endpoint.secretVersion).toString('hex') };
+}
+
+/**
  * Renders a synthetic model and delivers it inline. The only way an operator
  * learns their URL is wrong before a real access request does.
  *
@@ -542,7 +561,9 @@ export async function sendTestEvent(
 	const [endpoint] = await db
 		.select({
 			url: eventEndpoint.url,
-			format: eventEndpoint.format,
+			// Typed at the read, as `COLUMNS` does, so neither the signing check
+			// below nor `formatEvent` needs a cast at its call site.
+			format: sql<EgressFormat>`${eventEndpoint.format}`,
 			secretVersion: eventEndpoint.secretVersion
 		})
 		.from(eventEndpoint)
@@ -553,7 +574,7 @@ export async function sendTestEvent(
 	const baseUrl = options?.baseUrl ?? getConfig().baseUrl;
 	const locale = options?.locale ?? getConfig().defaultLocale;
 
-	if (endpoint.format === 'generic' && signingKey === undefined) {
+	if (requiresSigning(endpoint.format) && signingKey === undefined) {
 		return { statusCode: null, reason: 'signing_key_missing' };
 	}
 
@@ -580,7 +601,7 @@ export async function sendTestEvent(
 		link: `${baseUrl}${localizePath(`/admin/settings/integrations/${id}`, locale)}`
 	};
 
-	const { body, contentType } = formatEvent(endpoint.format as EgressFormat, model);
+	const { body, contentType } = formatEvent(endpoint.format, model);
 
 	let url: URL;
 	try {
@@ -592,18 +613,16 @@ export async function sendTestEvent(
 		throw cause;
 	}
 
-	const headers: Record<string, string> = {
-		'x-trust-center-event': model.action,
-		'x-trust-center-delivery': model.deliveryId
-	};
-	if (signingKey !== undefined) {
-		const timestamp = Math.floor(Date.now() / 1000);
-		headers['x-trust-center-signature'] = signatureHeader(
-			[endpointSecret(signingKey, id, endpoint.secretVersion)],
-			timestamp,
-			body
-		);
-	}
+	// The same headers the delivery path sends, rotation overlap included: a
+	// test send that signed differently could not prove a rotation worked.
+	const headers = eventHeaders({
+		action: model.action,
+		deliveryId: model.deliveryId,
+		endpointId: id,
+		secretVersion: endpoint.secretVersion,
+		signingKey,
+		body
+	});
 
 	const outcome = await postEvent({
 		url,

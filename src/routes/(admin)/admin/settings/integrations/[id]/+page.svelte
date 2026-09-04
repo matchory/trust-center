@@ -2,6 +2,8 @@
 	import { enhance } from '$app/forms';
 	import FormField from '$lib/components/admin/FormField.svelte';
 	import { m } from '$lib/paraglide/messages.js';
+	import EgressOffNotice from '../EgressOffNotice.svelte';
+	import EndpointFormError from '../EndpointFormError.svelte';
 	import type { PageProps } from './$types';
 
 	let { data, form }: PageProps = $props();
@@ -12,14 +14,7 @@
 	{m.admin_integrations_secret_version({ version: data.endpoint.secretVersion })}
 </p>
 
-{#if !data.egressEnabled}
-	<p
-		data-testid="integrations-egress-off"
-		class="mb-6 rounded border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900"
-	>
-		{m.admin_integrations_egress_off()}
-	</p>
-{/if}
+<EgressOffNotice enabled={data.egressEnabled} />
 
 <!-- The operator chooses what their channel contains; they are told what they
      are choosing (spec §9.1). -->
@@ -85,17 +80,7 @@
 		<span class="text-xs text-neutral-500">{m.admin_integrations_patterns_hint()}</span>
 	</FormField>
 
-	{#if form?.field}
-		<p data-testid="endpoint-error" class="text-sm text-red-700">
-			{form.field === 'url'
-				? m.admin_integrations_error_url()
-				: form.field === 'patterns'
-					? m.admin_integrations_error_patterns()
-					: form.field === 'format'
-						? m.admin_integrations_error_format()
-						: m.admin_integrations_error_name()}
-		</p>
-	{/if}
+	<EndpointFormError field={form?.field} />
 
 	{#if form?.saved}
 		<p data-testid="endpoint-saved" class="text-sm text-green-700">{m.admin_saved()}</p>

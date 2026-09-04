@@ -47,6 +47,51 @@ export function signatureHeader(
 }
 
 /**
+ * Every header an event carries, for both the delivery path and a test send.
+ *
+ * One function rather than one copy per caller because the two copies had
+ * already diverged: the delivery path emitted the rotation overlap and the
+ * test send did not, so the tool an operator reaches for right after rotating
+ * was the one that could not prove the rotation worked. The overlap is a
+ * property of the signing scheme (spec §7.2), not of one code path.
+ *
+ * `signingKey === undefined` yields the two unsigned headers. Whether that is
+ * allowed for this endpoint's format is `requiresSigning`'s question, asked by
+ * the caller before it gets here — a header builder is the wrong place to
+ * refuse a delivery.
+ */
+export function eventHeaders(input: {
+	action: string;
+	deliveryId: string;
+	endpointId: string;
+	secretVersion: number;
+	signingKey: string | undefined;
+	body: string;
+}): Record<string, string> {
+	const headers: Record<string, string> = {
+		'x-trust-center-event': input.action,
+		'x-trust-center-delivery': input.deliveryId
+	};
+
+	if (input.signingKey === undefined) return headers;
+
+	const secrets = [endpointSecret(input.signingKey, input.endpointId, input.secretVersion)];
+	// The rotation overlap: the previous version travels alongside the current
+	// one, without which a rotation makes every consumer return 401 — which
+	// §5.3 makes terminal on the first attempt (spec §7.2).
+	if (input.secretVersion > 1) {
+		secrets.push(endpointSecret(input.signingKey, input.endpointId, input.secretVersion - 1));
+	}
+
+	headers['x-trust-center-signature'] = signatureHeader(
+		secrets,
+		Math.floor(Date.now() / 1000),
+		input.body
+	);
+	return headers;
+}
+
+/**
  * Stored on first use and compared at the head of every delivery tick — NOT
  * at boot; `checkSigningKeyCanary`'s own docstring records why a database row
  * must not be able to stop the container. Without it, restoring a

@@ -2,7 +2,7 @@ import { error, fail, redirect } from '@sveltejs/kit';
 import { localizePath } from '$lib/i18n/locale';
 import { getConfig } from '$lib/server/config';
 import { getDb } from '$lib/server/db/instance';
-import { EGRESS_FORMATS, type EgressFormat } from '$lib/server/db/schema';
+import { EGRESS_FORMATS } from '$lib/server/db/schema';
 import {
 	actionRates,
 	bumpSecretVersion,
@@ -11,25 +11,18 @@ import {
 	getEndpoint,
 	HIGH_FREQUENCY_WEEKLY_EVENTS,
 	highFrequencyPatterns,
+	revealEndpointSecret,
 	sendTestEvent,
 	setEndpointEnabled,
 	updateEndpoint
 } from '$lib/server/egress/endpoints';
-import { endpointSecret } from '$lib/server/egress/secret';
 import { clientIp } from '$lib/server/http/client-ip';
+import { requireAdmin } from '../guard';
 import { parsePatterns } from '../patterns';
 import type { Actions, PageServerLoad, RequestEvent } from './$types';
 
-/** The page's own gate: a layout cannot refuse what only this route knows. */
-function requireAdmin(event: Pick<RequestEvent, 'locals'>): { id: string } {
-	if (event.locals.staff?.role !== 'admin') {
-		error(403, 'Integrations are restricted to administrators.');
-	}
-	return { id: event.locals.staff.id };
-}
-
 function actor(event: RequestEvent) {
-	return { staffUserId: requireAdmin(event).id, ip: clientIp(event) };
+	return { staffUserId: requireAdmin(event.locals).id, ip: clientIp(event) };
 }
 
 /**
@@ -53,7 +46,7 @@ async function onExistingEndpoint<T>(run: () => Promise<T>): Promise<T> {
 }
 
 export const load: PageServerLoad = async ({ locals, params }) => {
-	requireAdmin({ locals });
+	requireAdmin(locals);
 
 	const db = getDb();
 	const endpoint = await getEndpoint(db, params.id);
@@ -80,10 +73,6 @@ export const actions: Actions = {
 	save: async (event) => {
 		const who = actor(event);
 		const form = await event.request.formData();
-		const format = String(form.get('format') ?? '');
-		if (!(EGRESS_FORMATS as readonly string[]).includes(format)) {
-			return fail(400, { field: 'format' });
-		}
 
 		try {
 			await onExistingEndpoint(() =>
@@ -93,7 +82,9 @@ export const actions: Actions = {
 					{
 						name: String(form.get('name') ?? ''),
 						url: String(form.get('url') ?? ''),
-						format: format as EgressFormat,
+						// Unnarrowed on purpose: `updateEndpoint`'s `validate` owns the
+						// format rule and reports it through the same `field` as the rest.
+						format: String(form.get('format') ?? ''),
 						patterns: parsePatterns(form.get('patterns'))
 					},
 					who
@@ -101,7 +92,7 @@ export const actions: Actions = {
 			);
 		} catch (cause) {
 			if (cause instanceof EndpointInvalid) {
-				return fail(400, { field: cause.field, message: cause.message });
+				return fail(400, { field: cause.field });
 			}
 			throw cause;
 		}
@@ -151,20 +142,18 @@ export const actions: Actions = {
 	 * spec's word is "revealing" (spec §11).
 	 */
 	reveal: async (event) => {
-		requireAdmin(event);
-		const signingKey = getConfig().egress.signingKey;
-		if (signingKey === undefined) return fail(400, { field: 'format' });
+		requireAdmin(event.locals);
+		const outcome = await onExistingEndpoint(() => revealEndpointSecret(getDb(), event.params.id));
 
-		const endpoint = await getEndpoint(getDb(), event.params.id);
-		if (!endpoint) error(404, 'Endpoint not found');
-
-		return {
-			secret: endpointSecret(signingKey, endpoint.id, endpoint.secretVersion).toString('hex')
-		};
+		// A missing signing key needs no message of its own: the page already
+		// renders `secret_missing` from `load` whenever none is configured, and
+		// borrowing the `format` field for it put "choose a supported format"
+		// under the save form.
+		return 'secret' in outcome ? { secret: outcome.secret } : fail(400, {});
 	},
 
 	test: async (event) => {
-		requireAdmin(event);
+		requireAdmin(event.locals);
 		const outcome = await onExistingEndpoint(() => sendTestEvent(getDb(), event.params.id));
 		return { test: outcome };
 	},

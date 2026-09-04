@@ -12,8 +12,8 @@ import { recordEgressDelivery, withSpan } from '../telemetry';
 import { backoffMinutes, MAX_ATTEMPTS, postEvent } from './client';
 import { validateEndpointUrl, type AllowEntry, type LookupAll } from './destination';
 import { enrichEvent, type EnrichOutcome } from './enrich';
-import { formatEvent } from './format';
-import { endpointSecret, signatureHeader } from './secret';
+import { formatEvent, requiresSigning } from './format';
+import { eventHeaders } from './secret';
 import type { Db } from '../db';
 
 /** Global per tick, subdivided by the per-endpoint cap below. */
@@ -40,6 +40,33 @@ export async function pendingDeliveryCount(db: Db): Promise<number> {
 	)) as unknown as { depth: number }[];
 
 	return rows[0]?.depth ?? 0;
+}
+
+/**
+ * The same depth, split per endpoint. Both callers — the backpressure check in
+ * fan-out and the admin list page — read it for every endpoint at once rather
+ * than once per endpoint, and both read it through here so "pending" keeps one
+ * definition beside the claim predicate below.
+ *
+ * Covered by the partial `event_delivery_endpoint_idx`, so this stays a small
+ * index scan as delivered rows accumulate. Omitting `ids` counts every
+ * endpoint, which is what fan-out wants.
+ */
+export async function pendingDepthByEndpoint(
+	db: Db,
+	ids?: readonly string[]
+): Promise<Map<string, number>> {
+	const rows = await db
+		.select({ endpointId: eventDelivery.endpointId, depth: sql<number>`count(*)::int` })
+		.from(eventDelivery)
+		.where(
+			ids
+				? and(inArray(eventDelivery.endpointId, ids), eq(eventDelivery.status, 'pending'))
+				: eq(eventDelivery.status, 'pending')
+		)
+		.groupBy(eventDelivery.endpointId);
+
+	return new Map(rows.map((row) => [row.endpointId, row.depth]));
 }
 
 export interface ClaimedDelivery {
@@ -123,11 +150,18 @@ export async function claimDeliveries(tx: Db): Promise<ClaimedDelivery[]> {
 	if (rows.length === 0) return [];
 
 	// A crash mid-delivery retries later rather than being retried by the very
-	// next tick.
-	await tx.execute(sql`
-		UPDATE event_delivery SET next_attempt_at = now() + interval '5 minutes'
-		WHERE id = ANY(${sql.raw(`ARRAY['${rows.map((row) => row.id).join("','")}']::uuid[]`)})
-	`);
+	// next tick. Through the query builder, unlike the two SELECTs above that it
+	// cannot express, so the ids travel as parameters rather than in a
+	// string-built array literal.
+	await tx
+		.update(eventDelivery)
+		.set({ nextAttemptAt: sql`now() + interval '5 minutes'` })
+		.where(
+			inArray(
+				eventDelivery.id,
+				rows.map((row) => row.id)
+			)
+		);
 
 	return rows.map((row) => ({
 		id: row.id,
@@ -225,36 +259,24 @@ export async function deliverClaimed(
 		const model = { ...enriched.model, deliveryId: row.id };
 		const { body, contentType } = formatEvent(row.endpoint.format, model);
 
-		// Required for `generic` because that payload is what a consumer
-		// authenticates. Teams verifies nothing, so a Teams-only operator should
-		// not have to manage a key they cannot use (spec §7.1).
-		if (row.endpoint.format === 'generic' && options.signingKey === undefined) {
+		// Refused rather than delivered unsigned, because this format's payload is
+		// what a consumer authenticates (spec §7.1). Which formats those are is
+		// the registry's to say, not this loop's.
+		if (requiresSigning(row.endpoint.format) && options.signingKey === undefined) {
 			await recordFailure(db, row, null, 'signing_key_missing', false, null);
 			record('failed');
 			failed++;
 			continue;
 		}
 
-		const headers: Record<string, string> = {
-			'x-trust-center-event': model.action,
-			'x-trust-center-delivery': row.id
-		};
-
-		if (options.signingKey !== undefined) {
-			const timestamp = Math.floor(Date.now() / 1000);
-			const secrets = [
-				endpointSecret(options.signingKey, row.endpointId, row.endpoint.secretVersion)
-			];
-			// The rotation overlap: the previous version travels alongside the
-			// current one, without which a rotation makes every consumer return
-			// 401 — which §5.3 makes terminal on the first attempt (spec §7.2).
-			if (row.endpoint.secretVersion > 1) {
-				secrets.push(
-					endpointSecret(options.signingKey, row.endpointId, row.endpoint.secretVersion - 1)
-				);
-			}
-			headers['x-trust-center-signature'] = signatureHeader(secrets, timestamp, body);
-		}
+		const headers = eventHeaders({
+			action: model.action,
+			deliveryId: row.id,
+			endpointId: row.endpointId,
+			secretVersion: row.endpoint.secretVersion,
+			signingKey: options.signingKey,
+			body
+		});
 
 		const outcome = await withSpan(
 			'event deliver',
@@ -276,11 +298,8 @@ export async function deliverClaimed(
 					lookup: options.lookup
 				});
 
-				if (result.kind === 'delivered' || result.statusCode !== null) {
-					span.setAttribute(
-						'http.response.status_code',
-						result.kind === 'delivered' ? result.statusCode : result.statusCode!
-					);
+				if (result.statusCode !== null) {
+					span.setAttribute('http.response.status_code', result.statusCode);
 				}
 				return result;
 			},
