@@ -178,9 +178,16 @@ export async function shipClaimed(
 	await Promise.all(
 		adapters.map(async (adapter) => {
 			for (const shipment of bySink.get(adapter.name) ?? []) {
-				const batch = prebuilt.get(shipment.batchId) ?? (await rebuildBatch(db, shipment.batchId));
-
 				try {
+					// Guarded, not just adapter.ship() below: a rebuild failure — a
+					// transient error on the range query, anything — is exactly as much
+					// this sink's failure as a rejected upload, and must land in the same
+					// catch that records the reason and backs off. Subsystem A shipped
+					// this bug once already (spec §18: a stored value the allowlist no
+					// longer admitted threw outside deliverClaimed's try, abandoning
+					// every row claimed after it); it does not get to recur here.
+					const batch =
+						prebuilt.get(shipment.batchId) ?? (await rebuildBatch(db, shipment.batchId));
 					await adapter.ship(batch);
 
 					await db

@@ -3,6 +3,7 @@ import { eq, sql } from 'drizzle-orm';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { buildBatch } from '../../src/lib/server/auditsink/reader';
 import { claimShipments, rebuildBatch, shipClaimed } from '../../src/lib/server/auditsink/ship';
+import { buildManifest } from '../../src/lib/server/auditsink/serialize';
 import { createDb } from '../../src/lib/server/db';
 import { auditBatchShipment, staffUser } from '../../src/lib/server/db/schema';
 import { purgeRequester } from '../../src/lib/server/purge';
@@ -142,6 +143,77 @@ describe('shipClaimed', () => {
 		const rows = await db.select().from(auditBatchShipment);
 		expect(rows.find((r) => r.sink === 's3')!.shippedAt).toBeNull();
 		expect(rows.find((r) => r.sink === 'syslog')!.shippedAt).not.toBeNull();
+	});
+
+	// Review finding (fix round 1): the rebuildBatch call in shipClaimed's loop
+	// used to sit outside the try/catch, so any failure other than a clean
+	// SinkError from ship() escaped classifyError, the attempts bump, and the
+	// backoff write, and rejected the whole adapter's Promise.all entry — the
+	// exact shape of spec §18's issue, which subsystem A already shipped and
+	// fixed once. This proves the guard: a batch outside `prebuilt` forces a
+	// rebuild, and the db handle's `select` always throws for it, standing in
+	// for "rebuildBatch fails for any reason" — while a sibling batch supplied
+	// through `prebuilt` (so it never calls rebuildBatch, and never touches the
+	// stubbed method) still ships in the same call.
+	it('catches a rebuildBatch failure through the same path as a ship failure, without losing a sibling shipment', async () => {
+		await seedCursorAtHorizon(db);
+		const healthy = await insertBatch(db);
+		const broken = await insertBatch(db);
+		const claimed = await claimShipments(db, ['s3'], 25);
+
+		const digest = 'a'.repeat(64);
+		const prebuilt = new Map([
+			[
+				healthy.id,
+				{
+					id: healthy.id,
+					body: new Uint8Array(),
+					digest,
+					manifest: buildManifest({
+						id: healthy.id,
+						createdAt: new Date().toISOString(),
+						prevCursor: { xmin: 0n, seq: 0n },
+						cursor: { xmin: 1n, seq: 1n },
+						rowCount: 0,
+						minSeq: 0n,
+						maxSeq: 0n,
+						byteCount: 0,
+						digest
+					})
+				}
+			]
+		]);
+
+		// select() always throws; update() is left alone so the catch block's
+		// own write still lands. The healthy shipment is served from `prebuilt`
+		// and so never calls select() at all.
+		const dbWithBrokenRebuild = new Proxy(db, {
+			get(target, prop, receiver) {
+				if (prop === 'select') {
+					return () => {
+						throw new Error('stubbed: select is unavailable');
+					};
+				}
+				return Reflect.get(target, prop, receiver);
+			}
+		});
+
+		await expect(
+			shipClaimed(dbWithBrokenRebuild, claimed, [alwaysSucceeds('s3')], prebuilt)
+		).resolves.toBeUndefined();
+
+		const rows = await db.select().from(auditBatchShipment);
+		const healthyRow = rows.find((r) => r.batchId === healthy.id)!;
+		const brokenRow = rows.find((r) => r.batchId === broken.id)!;
+
+		expect(healthyRow.shippedAt).not.toBeNull();
+
+		// (b) — the point of this test: the failure is recorded, not swallowed
+		// by an unhandled rejection.
+		expect(brokenRow.shippedAt).toBeNull();
+		expect(brokenRow.attempts).toBe(1);
+		expect(brokenRow.lastError).toBe('network');
+		expect(brokenRow.nextAttemptAt.getTime()).toBeGreaterThan(Date.now());
 	});
 
 	it('backs off exponentially without ever giving up', async () => {
