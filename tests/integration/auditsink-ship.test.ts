@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { eq, sql } from 'drizzle-orm';
+import { desc, eq, sql } from 'drizzle-orm';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { recordEvent } from '../../src/lib/server/audit';
 import {
@@ -11,7 +11,7 @@ import { buildBatch } from '../../src/lib/server/auditsink/reader';
 import { claimShipments, rebuildBatch, shipClaimed } from '../../src/lib/server/auditsink/ship';
 import { buildManifest } from '../../src/lib/server/auditsink/serialize';
 import { createDb } from '../../src/lib/server/db';
-import { auditBatchShipment, staffUser } from '../../src/lib/server/db/schema';
+import { auditBatch, auditBatchShipment, staffUser } from '../../src/lib/server/db/schema';
 import { purgeRequester } from '../../src/lib/server/purge';
 import {
 	alwaysFails,
@@ -58,6 +58,12 @@ beforeEach(async () => {
 	await db.execute(sql`TRUNCATE TABLE audit_batch_shipment, audit_batch`);
 	await db.execute(sql`ALTER TABLE audit_batch_shipment ENABLE TRIGGER USER`);
 	await db.execute(sql`ALTER TABLE audit_batch ENABLE TRIGGER USER`);
+
+	// Finding 12: the "is due when none has been written" test below only
+	// passed because it happened to run before the first markAttested in this
+	// file — clear the mark so every test starts from the same "never marked"
+	// state regardless of run order.
+	await db.execute(sql`DELETE FROM setting WHERE key = 'auditsink.attested_at'`);
 });
 
 describe('claimShipments', () => {
@@ -276,9 +282,35 @@ describe('attestation', () => {
 			sql`SELECT count(*)::text AS c, coalesce(max(seq), 0)::text AS m FROM audit_event`
 		)) as unknown as { c: string; m: string }[];
 
+		const [head] = await db
+			.select({ id: auditBatch.id, seq: auditBatch.cursorSeq })
+			.from(auditBatch)
+			.orderBy(desc(auditBatch.cursorXmin), desc(auditBatch.cursorSeq))
+			.limit(1);
+
 		expect(attestation.event_count).toBe(row!.c);
 		expect(attestation.max_seq).toBe(row!.m);
-		expect(attestation.cursor.seq).toBeDefined();
+		expect(attestation.cursor.seq).toBe(String(head!.seq));
+		// Finding 10: last_batch_id and batches_since went unasserted, which is
+		// why finding 1 (max(id::text) instead of the true most-recent batch)
+		// survived review. seedCursorAtHorizon is the only batch in this test,
+		// and the setting was never marked, so it must be named and counted.
+		expect(attestation.last_batch_id).toBe(head!.id);
+		expect(attestation.batches_since).toBe(1);
+	});
+
+	// Finding 1, as a direct reproduction: three batches inserted out of UUID
+	// lexicographic order must still name the cursor-order head, not
+	// whichever id happens to sort last as text.
+	it('names the cursor-order head as last_batch_id, not the lexicographic max id', async () => {
+		await seedCursorAtHorizon(db);
+		await insertBatch(db);
+		await insertBatch(db);
+		const last = await insertBatch(db);
+
+		const attestation = await buildAttestation(db);
+
+		expect(attestation.last_batch_id).toBe(last.id);
 	});
 
 	it('is due when none has been written within the interval', async () => {
