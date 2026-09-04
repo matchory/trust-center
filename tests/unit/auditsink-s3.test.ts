@@ -1,5 +1,9 @@
-import { describe, expect, it, vi } from 'vitest';
-import { createS3Adapter, objectKeys } from '../../src/lib/server/auditsink/s3';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+	createS3Adapter,
+	objectKeys,
+	resetObjectLockProbes
+} from '../../src/lib/server/auditsink/s3';
 import { buildManifest } from '../../src/lib/server/auditsink/serialize';
 import type { SinkBatch } from '../../src/lib/server/auditsink/port';
 import type { SinkError } from '../../src/lib/server/auditsink/port';
@@ -215,6 +219,91 @@ describe('createS3Adapter', () => {
 		const adapter = createS3Adapter({ ...config, fetch: fetchMock });
 
 		await expect(adapter.ship(batch())).rejects.toThrow();
+		expect(fetchMock).toHaveBeenCalledTimes(1);
+	});
+});
+
+describe('the object-lock probe', () => {
+	beforeEach(() => {
+		resetObjectLockProbes();
+	});
+
+	function lockConfig(xml: string, status = 200) {
+		return vi.fn<(input: URL | RequestInfo, init?: RequestInit) => Promise<Response>>(
+			async () => new Response(xml, { status })
+		);
+	}
+
+	it('reads governance and compliance out of the bucket configuration', async () => {
+		const governance =
+			'<ObjectLockConfiguration><ObjectLockEnabled>Enabled</ObjectLockEnabled>' +
+			'<Rule><DefaultRetention><Mode>GOVERNANCE</Mode><Days>3650</Days></DefaultRetention></Rule>' +
+			'</ObjectLockConfiguration>';
+
+		await expect(
+			createS3Adapter({ ...config, fetch: lockConfig(governance) }).objectLock!()
+		).resolves.toBe('governance');
+
+		resetObjectLockProbes();
+		await expect(
+			createS3Adapter({
+				...config,
+				bucket: 'other',
+				fetch: lockConfig(governance.replace('GOVERNANCE', 'COMPLIANCE'))
+			}).objectLock!()
+		).resolves.toBe('compliance');
+	});
+
+	it('reports none for a bucket with lock enabled but no default rule', async () => {
+		// Honest rather than reassuring: the adapter sends no per-object
+		// retention, so nothing it writes is retained.
+		const enabledOnly =
+			'<ObjectLockConfiguration><ObjectLockEnabled>Enabled</ObjectLockEnabled>' +
+			'</ObjectLockConfiguration>';
+
+		await expect(
+			createS3Adapter({ ...config, fetch: lockConfig(enabledOnly) }).objectLock!()
+		).resolves.toBe('none');
+	});
+
+	it('reports none for a bucket created without lock', async () => {
+		const missing = '<Error><Code>ObjectLockConfigurationNotFoundError</Code></Error>';
+
+		await expect(
+			createS3Adapter({ ...config, fetch: lockConfig(missing, 404) }).objectLock!()
+		).resolves.toBe('none');
+	});
+
+	it('reports unknown when the write-only policy forbids reading it', async () => {
+		// Spec §5.2: we cannot prove the bucket is locked, and being loud about
+		// what we could not see is the point.
+		await expect(
+			createS3Adapter({
+				...config,
+				fetch: lockConfig('<Error><Code>AccessDenied</Code></Error>', 403)
+			}).objectLock!()
+		).resolves.toBe('unknown');
+	});
+
+	it('reports unknown rather than throwing when the store is unreachable', async () => {
+		const adapter = createS3Adapter({
+			...config,
+			fetch: async () => {
+				throw new TypeError('fetch failed');
+			}
+		});
+
+		await expect(adapter.objectLock!()).resolves.toBe('unknown');
+	});
+
+	it('probes once per bucket, so a page render is not an S3 round trip', async () => {
+		const fetchMock = lockConfig('<ObjectLockConfiguration/>');
+		const adapter = createS3Adapter({ ...config, fetch: fetchMock });
+
+		await adapter.objectLock!();
+		await adapter.objectLock!();
+		await createS3Adapter({ ...config, fetch: fetchMock }).objectLock!();
+
 		expect(fetchMock).toHaveBeenCalledTimes(1);
 	});
 });

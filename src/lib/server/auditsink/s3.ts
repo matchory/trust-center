@@ -1,6 +1,6 @@
 import { AwsClient } from 'aws4fetch';
 import { SinkError } from './port';
-import type { Attestation, AuditSinkAdapter, SinkBatch } from './port';
+import type { Attestation, AuditSinkAdapter, ObjectLockStatus, SinkBatch } from './port';
 
 const TIMEOUT_MS = 30_000;
 
@@ -54,6 +54,30 @@ function transportReason(cause: unknown): SinkError {
 	const name = cause instanceof Error ? cause.name : '';
 
 	return new SinkError(name === 'TimeoutError' || name === 'AbortError' ? 'timeout' : 'network');
+}
+
+/**
+ * One probe per bucket for the life of the process (spec §5.2), keyed by origin
+ * because the adapter is rebuilt every tick and an admin page render must not
+ * mean an S3 round trip. A failure is cached too: a bucket whose configuration
+ * we may not read will not become readable by asking again on every render, and
+ * a restart is the deployment's own answer to a changed policy.
+ */
+const lockProbes = new Map<string, Promise<ObjectLockStatus>>();
+
+/** Exposed for tests; production never needs to forget a probe. */
+export function resetObjectLockProbes(): void {
+	lockProbes.clear();
+}
+
+function parseLockMode(xml: string): ObjectLockStatus {
+	if (/<Mode>\s*COMPLIANCE\s*<\/Mode>/i.test(xml)) return 'compliance';
+	if (/<Mode>\s*GOVERNANCE\s*<\/Mode>/i.test(xml)) return 'governance';
+
+	// Lock enabled with no default rule lands here, and `none` is the honest
+	// answer: the adapter sends no per-object retention, so nothing it writes
+	// is retained.
+	return 'none';
 }
 
 export function createS3Adapter(config: S3SinkConfig): AuditSinkAdapter {
@@ -126,6 +150,31 @@ export function createS3Adapter(config: S3SinkConfig): AuditSinkAdapter {
 			);
 
 			return keys.body;
+		},
+		async objectLock(): Promise<ObjectLockStatus> {
+			const cached = lockProbes.get(origin);
+			if (cached) return cached;
+
+			const probe = (async (): Promise<ObjectLockStatus> => {
+				try {
+					const signed = await client.sign(`${origin}?object-lock=`, { method: 'GET' });
+					const response = await doFetch(signed, { signal: AbortSignal.timeout(TIMEOUT_MS) });
+
+					// A bucket created without lock answers 404 with
+					// ObjectLockConfigurationNotFoundError; 403 is the write-only
+					// policy §5.2 recommends, which does not include
+					// s3:GetBucketObjectLockConfiguration.
+					if (response.status === 404) return 'none';
+					if (!response.ok) return 'unknown';
+
+					return parseLockMode(await response.text());
+				} catch {
+					return 'unknown';
+				}
+			})();
+
+			lockProbes.set(origin, probe);
+			return probe;
 		},
 		async attest(attestation: Attestation): Promise<void> {
 			const at = new Date(attestation.at);

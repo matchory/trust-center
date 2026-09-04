@@ -15,7 +15,7 @@ const SETTING_KEY = 'auditsink.attested_at';
  * second idiom for one table, and it would skip the `updatedAt` the other
  * writers of this table maintain.
  */
-async function lastAttestedAt(db: Db): Promise<Date | null> {
+export async function lastAttestedAt(db: Db): Promise<Date | null> {
 	const [row] = await db
 		.select({ value: setting.value })
 		.from(setting)

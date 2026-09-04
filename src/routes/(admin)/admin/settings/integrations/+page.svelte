@@ -3,6 +3,7 @@
 	import FormField from '$lib/components/admin/FormField.svelte';
 	import { localizePath } from '$lib/i18n/locale';
 	import { m } from '$lib/paraglide/messages.js';
+	import AuditSinkPanel from './AuditSinkPanel.svelte';
 	import EgressOffNotice from './EgressOffNotice.svelte';
 	import EndpointFormError from './EndpointFormError.svelte';
 	import type { PageProps } from './$types';
@@ -116,3 +117,5 @@
 		<li class="p-4 text-neutral-500">{m.admin_no_entries()}</li>
 	{/each}
 </ul>
+
+<AuditSinkPanel status={data.auditSink} locale={data.locale} />

@@ -8,6 +8,15 @@ export interface SinkBatch {
 	manifest: BatchManifest;
 }
 
+/**
+ * `none` means our objects get no retention — a bucket with lock disabled and a
+ * bucket with lock enabled but no default rule are the same fact from here,
+ * because the adapter sends no per-object retention (spec §5.2). `unknown` is
+ * what an absent permission looks like: we cannot prove the bucket is locked,
+ * and saying so is the point (spec §5.2).
+ */
+export type ObjectLockStatus = 'compliance' | 'governance' | 'none' | 'unknown';
+
 export interface Attestation {
 	at: string;
 	event_count: string;
@@ -32,6 +41,12 @@ export interface AuditSinkAdapter {
 	 */
 	ship(batch: SinkBatch): Promise<string | null>;
 	attest(attestation: Attestation): Promise<void>;
+	/**
+	 * What the receiving store does to protect what has been written, for §10's
+	 * panel. Optional because it is not a property every transport has: a syslog
+	 * receiver's retention is the receiver's business and nothing we can ask it.
+	 */
+	objectLock?(): Promise<ObjectLockStatus>;
 }
 
 /** Thrown by an adapter so the shipper records a closed-set reason rather than

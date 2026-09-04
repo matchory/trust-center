@@ -65,25 +65,38 @@ export function classifyError(cause: unknown): {
  * rather than scanning (and re-conflicting on) the whole table forever.
  */
 /**
- * Batches this sink has not shipped, counted from `audit_batch` rather than
- * from the shipment rows: a batch that phase one has not claimed yet has no
- * shipment row at all, and counting rows would report a growing backlog as
- * depth zero — exactly the "stuck or quiet" question the gauge exists to
- * answer (spec §9). The synthetic zero-row re-seed batch is excluded, on the
- * same reasoning as the claim's own predicate.
+ * Batches this sink has not shipped, and the creation time of the oldest,
+ * counted from `audit_batch` rather than from the shipment rows: a batch that
+ * phase one has not claimed yet has no shipment row at all, and counting rows
+ * would report a growing backlog as depth zero — exactly the "stuck or quiet"
+ * question §9's gauge and §10's panel both exist to answer. The synthetic
+ * zero-row re-seed batch is excluded, on the same reasoning as the claim's own
+ * predicate.
+ *
+ * Count and age come from one query because they must come from one predicate:
+ * a depth the gauge reports and an age the panel reports that disagree about
+ * what "pending" means is worse than either alone.
  */
-export async function pendingShipmentCount(db: Db, sink: SinkName): Promise<number> {
+export async function pendingShipments(
+	db: Db,
+	sink: SinkName
+): Promise<{ count: number; oldestAt: Date | null }> {
 	const rows = (await db.execute(sql`
-		SELECT count(*)::int AS depth
+		SELECT count(*)::int AS depth, min(b.created_at) AS oldest_at
 		FROM audit_batch b
 		WHERE b.row_count > 0
 		  AND NOT EXISTS (
 		    SELECT 1 FROM audit_batch_shipment sh
 		    WHERE sh.batch_id = b.id AND sh.sink = ${sink} AND sh.shipped_at IS NOT NULL
 		  )
-	`)) as unknown as { depth: number }[];
+	`)) as unknown as { depth: number; oldest_at: Date | string | null }[];
 
-	return rows[0]?.depth ?? 0;
+	const row = rows[0];
+
+	return {
+		count: row?.depth ?? 0,
+		oldestAt: row?.oldest_at ? new Date(row.oldest_at) : null
+	};
 }
 
 export async function claimShipments(

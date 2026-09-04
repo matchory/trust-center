@@ -80,12 +80,12 @@ async function readEgressQueueDepth(): Promise<number> {
 /** The audit-sink counterpart, per sink because registerQueueDepthGauge
  * observes a single number and takes no attributes (spec §9). */
 async function readSinkQueueDepth(sink: SinkName): Promise<number> {
-	const [{ getDb }, { pendingShipmentCount }] = await Promise.all([
+	const [{ getDb }, { pendingShipments }] = await Promise.all([
 		import('../db/instance'),
 		import('../auditsink/ship')
 	]);
 
-	return pendingShipmentCount(getDb(), sink);
+	return (await pendingShipments(getDb(), sink)).count;
 }
 
 export async function startTelemetry(config: AppConfig['telemetry']): Promise<boolean> {

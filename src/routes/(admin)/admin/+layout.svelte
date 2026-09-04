@@ -30,12 +30,24 @@
 	<nav class="border-b border-neutral-200 bg-white px-6" aria-label={m.nav_admin()}>
 		<ul class="mx-auto flex max-w-5xl gap-4 py-2 text-sm">
 			{#each ADMIN_SECTIONS.filter((section) => !section.role || section.role === data.staff.role) as section (section.path)}
-				<li>
+				<li class="flex items-center gap-1">
 					<a
 						href={localizePath(section.path, data.locale)}
 						data-testid="admin-nav-{section.path.split('/').pop()}"
 						class="hover:underline">{section.label()}</a
 					>
+					<!-- The audit sink's failure mode is that the compliance record
+					     quietly stops leaving the box, and on a deployment with no
+					     metrics collector nothing else would say so (spec §9, §10). -->
+					{#if section.path === '/admin/settings/integrations' && data.auditSinkBacklog}
+						<span
+							data-testid="admin-nav-auditsink-backlog"
+							title={m.admin_auditsink_backlog()}
+							class="rounded bg-amber-100 px-1.5 py-0.5 text-xs text-amber-900"
+						>
+							!
+						</span>
+					{/if}
 				</li>
 			{/each}
 		</ul>
