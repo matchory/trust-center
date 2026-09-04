@@ -50,6 +50,19 @@ Either declare it (a line in the CI workflow and in the testing notes) or remove
 the certificate in Node. A checked-in fixture certificate is the third option and the worst one: it
 expires, and nobody notices an expiry until CI turns red for an unrelated-looking reason.
 
+### A literal U+FEFF in source has slipped through three times
+
+**From:** subsystem B2, 2026-09-05. **Blocks:** nothing. **Cost:** minutes.
+
+The syslog message format prefixes its payload with a UTF-8 BOM (RFC 5424 §6.4), and the rule for
+this codebase is that it is written as the escape `\ufeff`, never as the character. During B2 a
+literal U+FEFF was typed into source three separate times — once into the implementation, once into
+the carry-over, once into a report. Every one was caught, twice only by a deliberate byte-scan.
+
+A character that is invisible in every editor and diff viewer should not be guarded by remembering to
+look for it. An eslint rule banning literal U+FEFF outside string escapes, or a prettier check, turns
+the fourth occurrence into a failed lint instead of a fourth catch — or a miss.
+
 ### Subsystem A has no carry-over document
 
 **From:** noticed 2026-09-04 while writing B1's. **Cost:** an hour of reconstruction, rising.
