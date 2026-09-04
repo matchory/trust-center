@@ -26,7 +26,17 @@ import type { StorageAdapter } from './storage';
  * `storage` is an argument rather than a `getStorage()` call, as everywhere
  * else below the route layer.
  *
- * Irreversible by construction: nothing here keeps a copy of what it cleared.
+ * Irreversible by construction, and this side keeps no copy of what it
+ * cleared — but that is a statement about this database, not about every copy
+ * that exists. **With `AUDIT_SINK_ENABLED` set, audit events shipped before the
+ * purge are already in the sink's storage, carrying the three columns this
+ * clears** (audit sink spec §6.1). Under the recommended governance-mode object
+ * lock the operator retains a principal that can discharge them; under
+ * compliance mode nobody can, for the retention period they chose. The purge
+ * reaches the sink structurally as well — the UPDATE below bumps each row's
+ * `xmin`, so the row re-ships with the columns nulled — but that adds a
+ * corrected copy, it does not remove the earlier one. `docs/self-hosting.md`
+ * §13 states the boundary for an operator.
  */
 export async function purgeRequester(
 	db: Db,

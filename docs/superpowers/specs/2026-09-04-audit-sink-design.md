@@ -301,6 +301,12 @@ what §17's rejected hash chain was for, at a fraction of the cost and without s
 It is not a heartbeat batch (§15): it carries no audit rows, has its own key prefix, and is never
 confused with the record itself.
 
+**Phase two writes it, not the reader.** This section originally said "the reader writes" it, but
+writing is network I/O and the reader runs inside the advisory lock, which §3.1 forbids holding
+across the network. Phase one decides whether an attestation is *due* and builds the payload from the
+database; phase two writes it to each adapter and only then advances the stamp, so a mark can never
+claim an attestation that failed to land (correction C4).
+
 ---
 
 ## 4. Serialization and the digest
@@ -324,7 +330,13 @@ One JSON object per `audit_event` row, LF-terminated, UTF-8, no insignificant wh
   `12345678901234567000`; and `seq` already comes back as a string from `db.execute`, while
   `JSON.stringify` throws on a `BigInt`. §4.1 refuses to depend on normalization rules belonging to
   components we do not control, and the driver is one of them.
-- `meta`'s keys are sorted recursively before serialization.
+- **`meta` is embedded as `meta::text` verbatim, and is not re-serialized.** The first draft asked
+  for recursive key sorting here as belt and braces. That is **withdrawn as actively harmful**: the
+  only way to sort keys in JS is `JSON.parse` → sort → `JSON.stringify`, and the parse converts an
+  arbitrary-precision `numeric` to an IEEE double — precisely the corruption the bullet above reads
+  text to prevent. Postgres `jsonb` already normalizes object key order (by key length, then
+  bytewise) and stores it that way, so `meta::text` renders a deterministic ordering without a round
+  trip. Both goals are satisfied by doing less (correction C1).
 - Timestamps are RFC 3339 in UTC. `seq` is emitted as a JSON number; the 2^53 bound is unreachable at
   any plausible volume, and emitting a string would break the ordinary tools an auditor reaches for.
 
@@ -866,6 +878,17 @@ document changed, because several items reverse positions the first draft argued
 | §5.4 | A list of eight reason values | A list is a menu, not a key: S3 returns 403 for both a bad signature and a denied action. Now a **first-match decision procedure**, with `tls` given a producible rule so it does not become A §16's `body_too_large`. |
 | §6.3 | The README checked; qualification placed in a new §13 | The README was the least important site. **`docs/self-hosting.md` §10 and `purge.ts`'s docstring both assert "nothing keeps a copy of what it cleared"**, which a sink makes false — and §10 is what someone reads while handling an erasure request. |
 | §9 | "Observable gauge per sink, through the existing `registerQueueDepthGauge`" | Does not typecheck — that helper takes one name and one read, with no attributes. Two named instruments. And **on a default deployment there is no gauge at all**, since `startTelemetry` returns early without an OTLP endpoint; the panel and a nav badge carry the story. |
+
+### Corrections the implementation plan encoded — 2026-09-04
+
+Four more, found while writing the B1 plan against this document and applied here on implementation.
+
+| Changed | Was | Now |
+| --- | --- | --- |
+| §4.1 (C1) | "`meta`'s keys are sorted recursively before serialization", as belt and braces beside reading values as text | **Withdrawn as actively harmful.** Sorting in JS means `JSON.parse` → sort → `JSON.stringify`, and the parse converts arbitrary-precision `numeric` to an IEEE double — the exact corruption the same section reads text to prevent. `jsonb` already normalizes key order and `meta::text` renders it deterministically. |
+| §1.1 (C2) | `currentHorizon` implied a new shared module | It lives in `src/lib/server/audit/index.ts`. That directory already owns facts about the audit log; a third location would be one more place to look. |
+| §19 (C3) | The object-lock spike was a prerequisite to be completed before planning | It is **Task 1 of the plan**. Its findings gate the S3 adapter only, so the schema, reader, serialization and ship loop do not wait on a container. Findings in `2026-09-04-audit-sink-spike.md`. |
+| §3.4 (C4) | "The reader writes" the attestation | **Phase two writes it.** Writing is network I/O and the reader holds the advisory lock, which §3.1 forbids holding across the network. Phase one decides it is due and builds the payload; phase two writes it and only then advances the stamp. |
 | §10 | Panel shows "rows not yet batched" | An unindexable sequential scan per render, and it reads **zero** in exactly the forged-cursor and sink-was-off cases. Replaced by a coverage comparison, plus an object-lock status row. |
 | §4.1 | "Every column, in schema order"; driver types trusted | "Schema order" is ambiguous and wrong read as attribute order (`seq` is physically last). Values are now read as **text** from Postgres: `Date` loses microseconds, `jsonb` numbers lose precision past 2^53, and `JSON.stringify` throws on the `BigInt` `seq` already returns. A column-drift test is added. |
 | §16 | A §16's frozen-`xmin` residual inherited implicitly | **Verified on PostgreSQL 18.6 and does not apply**: `VACUUM FREEZE` leaves the reported `xmin` unchanged. A's own document should be corrected on a separate commit. |
@@ -899,6 +922,34 @@ design attention the S3 one did, and §5.3's absent TLS story was the symptom.
   serialization and the digest, the attestation, the S3 adapter, the panel, `docs/self-hosting.md` §13
   and the §6.3 corrections.
 - **B2** — the syslog adapter, its TLS configuration, its docs and its tests.
+
+### What B1 shipped, and what B2 owns — 2026-09-04
+
+Recorded so a reader of the merged branch does not have to guess whether syslog was forgotten or
+deferred.
+
+**Shipped in B1.** `currentHorizon` moved into the audit module; `audit_batch` and
+`audit_batch_shipment` with their append-only and monotonicity triggers (`drizzle/0028`); the keyset
+reader and the three batch-build rules; canonical NDJSON, the digest and the manifest; the port, the
+shipment claim and the ship loop with §5.4's decision procedure; the S3 adapter over `aws4fetch`,
+including the object-lock probe; the attestation and its stamp; configuration with the
+partial-configuration boot failure; the two-phase `auditsink:batch` job; §9's three instruments; §10's
+read-only panel and its nav badge; `docs/self-hosting.md` §13 and the two §6.3 corrections.
+
+**Two things the plan did not name, done anyway.** The port's `ship()` returns the object key it
+wrote (or `null` from a transport that addresses no object), because `audit_batch_shipment.object_key`
+was otherwise permanently null — the asymmetry the plan's own self-review flagged for the reviewer.
+And the object-lock probe §5.2 requires had no home in any task, so it is an optional port method
+implemented by the S3 adapter and memoised per bucket.
+
+**B2 owns**: the syslog adapter (§5.3), its TLS configuration including private-CA and mutual TLS,
+its message-size cap, its docs, and its tests against an in-process TLS server. `SINK_NAMES` and the
+`audit_batch_shipment` CHECK constraint already carry `'syslog'`, and the panel already renders it as
+not configured, so B2 adds an adapter rather than reworking the spine. The `AUDIT_SINK_SYSLOG_*`
+variables in §11 are **not read today**; `docs/self-hosting.md` §13 says so.
+
+**One residual carried out of B1**: §16's note that the object-lock premises are verified against
+MinIO and not against Amazon.
 
 Each carries one reviewable theme in the sense §11 of the governing design uses.
 

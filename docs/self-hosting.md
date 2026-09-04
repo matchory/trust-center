@@ -70,6 +70,17 @@ refusal is recorded in the audit log.
 | `EVENT_EGRESS_ENABLED` | no | `false` | Whether configured endpoints actually deliver. Unset, nothing leaves the container however many endpoints exist. See §12. |
 | `EVENT_SIGNING_KEY` | for `generic` endpoints | — | Root key, minimum 32 characters, from which each endpoint's signing secret is derived. Never stored. Required before a `generic` endpoint can be saved; `teams` endpoints do not need one. Changing it re-keys every endpoint and halts delivery until the stored canary matches. See §12. |
 | `EVENT_EGRESS_ALLOW` | no | — | Comma-separated `host:port` entries permitting delivery to private address ranges, for a receiver inside your own network. Loopback and link-local are refused regardless. See §12. |
+| `AUDIT_SINK_ENABLED` | no | `false` | Whether the audit log is shipped to external storage. Unset, no batch is cut and nothing leaves the container. Setting it with no sink configured refuses to boot. See §13. |
+| `AUDIT_SINK_BATCH_ROWS` | no | `1000` | Maximum audit events per shipped batch. See §13. |
+| `AUDIT_SINK_BATCH_MAX_AGE` | no | `15` | Minutes before a partly filled batch is shipped anyway, so a quiet deployment still ships. See §13. |
+| `AUDIT_SINK_BATCH_MAX_BYTES` | no | `8388608` | Byte ceiling per batch, for deployments whose events carry large `meta`. See §13. |
+| `AUDIT_SINK_ATTEST_INTERVAL` | no | `24` | Hours between attestation objects. A gap in the series is the signal that the sink was not running. See §13. |
+| `AUDIT_SINK_S3_BUCKET` | with a sink | — | Bucket the batches are written to. Required together with `_REGION`, `_ACCESS_KEY_ID` and `_SECRET_ACCESS_KEY`; setting some and not others refuses to boot. See §13. |
+| `AUDIT_SINK_S3_REGION` | with a sink | — | Region for request signing. |
+| `AUDIT_SINK_S3_ACCESS_KEY_ID` | with a sink | — | Access key. A write-only policy is what §13 documents and recommends. |
+| `AUDIT_SINK_S3_SECRET_ACCESS_KEY` | with a sink | — | Secret key. |
+| `AUDIT_SINK_S3_ENDPOINT` | no | — | For an S3-compatible store. Omit for Amazon S3. Addressed path-style. |
+| `AUDIT_SINK_S3_PREFIX` | no | — | Key prefix, if one bucket holds more than one deployment. |
 | `PORT` | no | `3000` | Port the server listens on. |
 | `BODY_SIZE_LIMIT` | no | `32M` | Largest request body `adapter-node` accepts, uploads included. |
 | `ADDRESS_HEADER` | behind a proxy | — | Header to read the client address from. Set to `X-Forwarded-For`. See §8 — without it every audit event records your proxy's address. |
@@ -546,7 +557,18 @@ container, not the page.
 
 A requester — someone who asked for a gated document and confirmed their email
 address — can be erased from `/admin/requesters/{id}`. Purging is immediate and
-**cannot be undone**; nothing keeps a copy of what it cleared.
+**cannot be undone**; nothing in this database keeps a copy of what it cleared.
+
+**If you have enabled the audit log sink (`AUDIT_SINK_ENABLED`), read this
+before you tell anyone their data is gone.** Audit events shipped to the sink
+before the purge are already in your object storage, carrying the IP address,
+user agent and actor id this clears. The purge does reach the sink: each
+pseudonymized row ships again with those columns nulled, so the sink ends up
+holding both the original and the corrected copy. Removing the original is a
+deletion in your bucket, and whether you can perform it depends on the lock mode
+you chose — under the recommended governance mode you can, under compliance mode
+nobody can until the retention period expires. See
+[§13](#13-audit-log-sink).
 
 **What it removes**
 
@@ -894,3 +916,286 @@ mail queued but not yet sent; it cannot reach an n8n execution history, a Teams
 channel, or a CRM record that an earlier delivery caused to be written. Those
 are your systems, on your subprocessor list, and your Art. 17 obligation
 reaches them exactly as it reaches the HubSpot record your automation wrote.
+
+## 13. Audit log sink
+
+Off unless you turn it on. With `AUDIT_SINK_ENABLED` unset, no batch is cut and
+nothing leaves the container — the same shape as §12's switch, and answerable
+the same way, with `docker inspect` rather than a database query.
+
+The audit log records what happened in this deployment: who approved a request,
+when a document was downloaded, when a grant was revoked. It lives in a table
+that refuses DELETE and TRUNCATE at the database level. The sink copies it, in
+batches, into storage you control and this application cannot delete.
+
+**What it lets you claim, and what it does not.** With the sink running against
+a locked bucket you can show an auditor a record this application had no ability
+to alter after the fact, with a digest per batch they can re-verify themselves.
+You cannot claim the log is complete: a batch reaches the bucket only if the job
+ran, so the honest statement is "everything the sink shipped is intact and
+unaltered", not "everything that happened is here". The attestation series below
+is what turns the second question into an answerable one.
+
+### The variables
+
+They are in §3 with the rest; repeated here because this is the section you are
+reading when you set them.
+
+| Variable | Default | What it does |
+| --- | --- | --- |
+| `AUDIT_SINK_ENABLED` | `false` | The switch. Off, no batch is cut and nothing ships. |
+| `AUDIT_SINK_BATCH_ROWS` | `1000` | Maximum audit events per batch. |
+| `AUDIT_SINK_BATCH_MAX_AGE` | `15` | Minutes. Ships a partly filled batch rather than waiting for `BATCH_ROWS` on a quiet deployment. |
+| `AUDIT_SINK_BATCH_MAX_BYTES` | `8388608` | 8 MiB. A second ceiling, for deployments whose events carry large `meta`. |
+| `AUDIT_SINK_ATTEST_INTERVAL` | `24` | Hours between attestation objects. |
+| `AUDIT_SINK_S3_BUCKET`, `_REGION`, `_ACCESS_KEY_ID`, `_SECRET_ACCESS_KEY` | — | All four together, or none. |
+| `AUDIT_SINK_S3_ENDPOINT` | — | For an S3-compatible store. Omit for Amazon S3. |
+| `AUDIT_SINK_S3_PREFIX` | — | A key prefix, if one bucket holds more than one deployment. |
+
+`AUDIT_SINK_ENABLED=true` with no sink configured is a **boot failure**, not a
+silently disabled sink. So is setting some of the four required S3 variables and
+not the others. A deployment that accepted either would accumulate batches
+nothing ships while you believed something was running.
+
+### Setting up the bucket
+
+Object lock can only be enabled when a bucket is **created**, and it requires
+versioning. There is no way to add it to an existing bucket, so this is the one
+decision to get right first.
+
+```bash
+aws s3api create-bucket --bucket audit-log --region eu-central-1 \
+  --create-bucket-configuration LocationConstraint=eu-central-1 \
+  --object-lock-enabled-for-bucket
+
+aws s3api put-object-lock-configuration --bucket audit-log \
+  --object-lock-configuration '{
+    "ObjectLockEnabled": "Enabled",
+    "Rule": { "DefaultRetention": { "Mode": "GOVERNANCE", "Days": 365 } }
+  }'
+```
+
+The default retention on the bucket is what protects each object: this
+application sends **no** per-object retention headers, deliberately, so that
+retention stays your decision and the credentials it holds need no permission to
+set one.
+
+**Governance mode is the recommended default.** It refuses every delete —
+including one made with the root credentials of the account — unless the caller
+holds `s3:BypassGovernanceRetention` and asks for the bypass explicitly. That is
+a real lock: the credentials this container holds cannot delete anything, which
+is the property the audit record needs. It is also dischargeable by you, which
+matters for the erasure case below.
+
+**Compliance mode** makes deletion impossible for anybody, including you,
+including AWS support, until the retention period expires. Choose it only if you
+have decided the immutability is worth the consequence in the next paragraph,
+because you cannot undo the choice for objects already written.
+
+### Erasure, and the boundary this creates
+
+§10 says a purge cannot be undone and this database keeps no copy. With a sink
+enabled, that is a statement about this database and not about your bucket.
+
+Audit events shipped **before** a purge are in the bucket carrying the IP
+address, user agent and actor id the purge cleared. The purge does reach the
+sink, structurally: each pseudonymized row is picked up again and re-shipped
+with those columns nulled, so the bucket ends up holding both the original and
+the corrected copy. Removing the original is a deletion in your bucket:
+
+- **Under governance mode** you can perform it, with a principal holding
+  `s3:BypassGovernanceRetention`. You will need the object's version id — a
+  retried batch writes a second version under the same key.
+- **Under compliance mode** nobody can, until the retention period expires. If
+  you chose compliance mode, you have chosen that an erasure request cannot be
+  fully honoured in this one place for that period. Say so in your privacy
+  notice rather than discovering it during a DSAR.
+
+### Choosing a retention period
+
+Pick the shortest period that satisfies the obligation you are keeping this
+record for, and write that period into your privacy notice and your records of
+processing. A ten-year or unbounded lock on data that includes IP addresses is
+the version that is hardest to defend under the storage-limitation principle,
+and nothing else in this design steers you away from it.
+
+**365 days is the recommended starting point**: it covers a full SOC 2
+observation window and a year of ISO 27001 surveillance, which is what most
+people are keeping this for. Extend it deliberately, with a reason you could
+state to a supervisory authority. This paragraph is not legal advice and does
+not substitute for your counsel; it exists so the default is not "forever" by
+inattention.
+
+### The credentials this deployment needs
+
+A write-only policy, so the sovereignty claim is checkable rather than a
+promise. This one was applied to a MinIO bucket on 2026-09-04 and exercised: a
+PUT succeeded, a DELETE was refused with `Insufficient permissions`, and a
+listing was refused.
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ShipAuditBatches",
+      "Effect": "Allow",
+      "Action": ["s3:PutObject"],
+      "Resource": "arn:aws:s3:::audit-log/*"
+    },
+    {
+      "Sid": "ReadLockStatusForTheAdminPanel",
+      "Effect": "Allow",
+      "Action": ["s3:GetBucketObjectLockConfiguration"],
+      "Resource": "arn:aws:s3:::audit-log"
+    }
+  ]
+}
+```
+
+No `s3:DeleteObject`, no `s3:BypassGovernanceRetention`, no `s3:ListBucket`. The
+second statement is optional and grants nothing but the ability to read the
+bucket's lock configuration; without it the admin panel reports the lock status
+as **unknown**, because it genuinely cannot see one. Grant it — a panel that
+says "unknown" is doing its job, but it cannot confirm the thing you set the
+bucket up for.
+
+### S3-compatible stores
+
+Verified here against **MinIO** (`quay.io/minio/minio`, 2026-09-04): bucket
+creation with lock, a governance default, a re-PUT to an existing key adding a
+version rather than being refused, and a delete refused without the bypass and
+permitted with it. The integration test suite runs against it on every CI run.
+
+For **Amazon S3** the behaviour above is what the Object Lock documentation
+specifies, and it has not been exercised against a real Amazon bucket by this
+project — see the design's §16.
+
+For any other S3-compatible store, do not take object-lock support on the
+vendor's feature list. Configure it, grant the optional statement above, and
+read the lock row in **Settings → Integrations**: it reports `governance`,
+`compliance`, `none` or `unknown` from what the store actually answers. A store
+that reports `none` accepts the writes and protects nothing.
+
+### What arrives in the bucket
+
+Two objects per batch, plus a periodic attestation:
+
+```
+audit/2026/09/04/{batch-id}.ndjson           one JSON object per audit event
+audit/2026/09/04/{batch-id}.manifest.json    row count, cursor, digest
+attest/2026/09/04/{timestamp}.json           the periodic attestation
+```
+
+Keys are prefixed with `AUDIT_SINK_S3_PREFIX` when you set one.
+
+**Verifying a batch** is one command:
+
+```bash
+sha256sum batch.ndjson   # must equal .digest in the manifest
+```
+
+The manifest is the authority for what that object contains. It carries the row
+count and the digest of the bytes actually written, so a batch rebuilt after an
+erasure describes itself honestly rather than claiming the contents it would
+have had.
+
+### The attestation, and why coverage is a comparison
+
+Every `AUDIT_SINK_ATTEST_INTERVAL` hours the sink writes an attestation object:
+the total number of audit events, the highest sequence number, the reader's
+cursor, and how many batches have been shipped since the last one.
+
+It exists because the sink writes no audit events of its own — recording a
+shipment would create an event that needs shipping, which would create an event.
+So the log cannot testify that the sink was running. Without a regular series,
+switching the sink off, removing rows and switching it back on would leave no
+trace anywhere. **A gap in the attestation series is the signal.** An auditor
+should ask what happened during it.
+
+To check coverage, compare the newest attestation's `event_count` and `max_seq`
+against the batches you hold. The admin panel shows the same comparison for the
+live database.
+
+### At-least-once, and how to deduplicate
+
+An event may be shipped more than once — a crash between a successful PUT and
+the row that records it, a restore, a re-ship after an erasure. When you load
+these objects somewhere:
+
+- **Deduplicate on `id`**, and order by the **manifest's cursor**, not by `seq`.
+  Sequence numbers are assigned when a transaction starts, so they do not arrive
+  in order and a later event can carry a lower `seq` than one already shipped.
+  Object keys are dated, not ordered.
+- **Nulls alone do not indicate an erasure.** Most audit events have no IP
+  address to begin with — anything a background job or the system itself did.
+  Only a *differing pair* under one `id` shows that a purge happened.
+- **A duplicate is not evidence of an erasure.** It has several other causes,
+  listed above.
+
+Detect gaps over the union of all batches you hold, not within one: batches are
+not contiguous in `seq`, and a manifest's `min_seq`/`max_seq` are
+informational.
+
+### After restoring a database backup
+
+`pg_restore`, a `\copy` migration and a logical-replication upgrade all rewrite
+the internal transaction ids the reader's cursor is built on. The reader detects
+this and **stops, loudly, rather than guessing** — it will not silently re-ship
+your entire history into storage nothing can delete, and it will not silently
+skip everything either.
+
+Re-seed the cursor after such a restore: insert a zero-row batch whose cursor is
+the restored cluster's current position. Until you do, the sink ships nothing
+and the admin panel's oldest-pending age grows, which is the intended behaviour
+— a loud stop is the point.
+
+### When a shipment fails
+
+There is no attempt ceiling and no auto-disable. A sink that cannot be reached
+is retried, with a backoff from one minute up to one hour, forever. The audit
+record is not something to give up on delivering, and unlike an event endpoint
+there is no channel being flooded.
+
+The reason is recorded from a fixed set, never the provider's message — a store
+that echoes its input would otherwise write a prospect's details into a table no
+purge reaches. Look it up here:
+
+| Reason | What it means |
+| --- | --- |
+| `config` | The batch's own metadata could not be read. Not a network problem. |
+| `tls` | The TLS handshake failed. |
+| `timeout` | No response within thirty seconds. |
+| `network` | The connection failed outright — DNS, TLS, or a refused socket. |
+| `auth` | The credentials were rejected. Check the access key and secret. |
+| `permission` | The credentials are valid but not allowed to write. Check the policy above. |
+| `not_found` | The bucket does not exist, or the endpoint points somewhere else. |
+| `http_status` | The store answered with something else. The code is shown next to it. |
+
+### Watching it
+
+**Settings → Integrations** carries a read-only panel: per sink, whether it is
+configured, the object-lock status, how many batches are waiting and since when,
+what shipped last, the error it is still carrying, and the digest-mismatch
+count. Above them, coverage.
+
+A digest mismatch is **expected** after an erasure request and is not an alarm:
+the batch was rebuilt without the erased rows, so its bytes no longer match the
+digest recorded when it was cut.
+
+If the oldest waiting batch is more than six hours old, a marker appears next to
+**Integrations** in the admin navigation, on every admin page. That exists
+because this subsystem's failure mode is that the compliance record quietly
+stops leaving the box, and on a deployment with no metrics collector — the
+default — nothing else would tell you.
+
+With telemetry configured (§11) there are three instruments:
+`trustcenter.auditsink.batch` (by sink and outcome),
+`trustcenter.auditsink.s3.queue.depth`, and
+`trustcenter.auditsink.digest_mismatch`.
+
+### Not yet shipped
+
+The syslog transport described in the design is **not implemented**. Only the S3
+sink exists today; `AUDIT_SINK_SYSLOG_*` variables are not read and setting them
+does nothing.
