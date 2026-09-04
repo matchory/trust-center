@@ -1,15 +1,15 @@
 import { and, eq, sql } from 'drizzle-orm';
 import { auditBatch, auditBatchShipment } from '../db/schema';
-import { AUDIT_SELECT, buildManifest, serializeBatch } from './serialize';
+import { AUDIT_SELECT, buildManifest, seqRange, serializeBatch } from './serialize';
 import { SinkError } from './port';
 import type { AuditSinkAdapter, SinkBatch } from './port';
+import type { AuditRowText } from './serialize';
+import type { ShipmentErrorReason, SinkName } from '../db/schema';
+import type { Db } from '../db';
 
 // Re-exported so callers of the ship loop and its tests need one import path
 // for both the classifier and the error type it classifies.
 export { SinkError };
-import type { AuditRowText } from './serialize';
-import type { ShipmentErrorReason, SinkName } from '../db/schema';
-import type { Db } from '../db';
 
 const BACKOFF_BASE_MS = 60_000;
 const BACKOFF_CAP_MS = 60 * 60_000;
@@ -135,7 +135,7 @@ export async function rebuildBatch(db: Db, batchId: string): Promise<SinkBatch> 
 	`)) as unknown as AuditRowText[];
 
 	const { body, digest } = serializeBatch(rows);
-	const seqs = rows.map((row) => BigInt(row.seq));
+	const { min: minSeq, max: maxSeq } = seqRange(rows);
 
 	return {
 		id: meta.id,
@@ -147,8 +147,8 @@ export async function rebuildBatch(db: Db, batchId: string): Promise<SinkBatch> 
 			prevCursor: { xmin: meta.prevCursorXmin, seq: meta.prevCursorSeq },
 			cursor: { xmin: meta.cursorXmin, seq: meta.cursorSeq },
 			rowCount: rows.length,
-			minSeq: seqs.length > 0 ? seqs.reduce((a, b) => (b < a ? b : a)) : 0n,
-			maxSeq: seqs.length > 0 ? seqs.reduce((a, b) => (b > a ? b : a)) : 0n,
+			minSeq,
+			maxSeq,
 			byteCount: body.byteLength,
 			digest
 		})

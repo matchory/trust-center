@@ -1,16 +1,10 @@
 import { sql } from 'drizzle-orm';
 import { currentHorizon } from '../audit';
 import { auditBatch } from '../db/schema';
-import { AUDIT_SELECT, buildManifest, serializeBatch } from './serialize';
-import type { AuditRowText, BatchManifest } from './serialize';
+import { AUDIT_SELECT, buildManifest, seqRange, serializeBatch } from './serialize';
+import type { AuditRowText } from './serialize';
+import type { SinkBatch } from './port';
 import type { Db } from '../db';
-
-export interface BuiltBatch {
-	id: string;
-	body: Uint8Array;
-	digest: string;
-	manifest: BatchManifest;
-}
 
 export interface ReaderOptions {
 	batchRows: number;
@@ -53,9 +47,9 @@ export async function readCursor(tx: Db): Promise<{ xmin: bigint; seq: bigint }>
  * (spec §1.1 — both subsystems answer "which rows are final" the same way,
  * without sharing code that crosses the subsystem boundary).
  */
-export async function buildBatch(tx: Db, options: ReaderOptions): Promise<BuiltBatch | null> {
-	const horizon = await currentHorizon(tx);
-	const cursor = await readCursor(tx);
+export async function buildBatch(tx: Db, options: ReaderOptions): Promise<SinkBatch | null> {
+	// Independent of each other, so one round trip rather than two.
+	const [horizon, cursor] = await Promise.all([currentHorizon(tx), readCursor(tx)]);
 
 	const window = (await tx.execute(sql`
 		SELECT ${sql.raw(AUDIT_SELECT)},
@@ -88,9 +82,7 @@ export async function buildBatch(tx: Db, options: ReaderOptions): Promise<BuiltB
 	if (!full && !aged && !overflowed) return null;
 
 	const last = rows[rows.length - 1]!;
-	const seqs = rows.map((row) => BigInt(row.seq));
-	const minSeq = seqs.reduce((a, b) => (b < a ? b : a));
-	const maxSeq = seqs.reduce((a, b) => (b > a ? b : a));
+	const { min: minSeq, max: maxSeq } = seqRange(rows);
 
 	const [inserted] = await tx
 		.insert(auditBatch)

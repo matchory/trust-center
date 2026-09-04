@@ -11,7 +11,7 @@ import { buildBatch } from '../../src/lib/server/auditsink/reader';
 import { claimShipments, rebuildBatch, shipClaimed } from '../../src/lib/server/auditsink/ship';
 import { buildManifest } from '../../src/lib/server/auditsink/serialize';
 import { createDb } from '../../src/lib/server/db';
-import { auditBatch, auditBatchShipment, staffUser } from '../../src/lib/server/db/schema';
+import { auditBatch, auditBatchShipment, setting, staffUser } from '../../src/lib/server/db/schema';
 import { purgeRequester } from '../../src/lib/server/purge';
 import {
 	alwaysFails,
@@ -336,35 +336,42 @@ describe('attestation', () => {
 	});
 
 	// The round trip below is the coverage that matters: `setting.value` is
-	// jsonb, so a bare-string write or a `value::timestamptz` read both fail
-	// at runtime, and neither is caught unless something writes and reads the
-	// same row back. Read findings, fix round 1.
+	// jsonb, so nothing catches a write that stores the wrong shape unless
+	// something writes and reads the same row back. It is read through the
+	// query builder because that is what `attestationDue` does — asserting
+	// against a hand-written extraction would stop mirroring production the
+	// moment the two diverge.
 	it('is not due right after marking, for an interval comfortably longer than the elapsed time', async () => {
 		await markAttested(db, new Date());
 		expect(await attestationDue(db, 24 * 60 * 60_000)).toBe(false);
 	});
 
-	it("stores the mark as a value that round-trips through the same #>> '{}' extraction attestationDue uses", async () => {
+	it('stores the mark so it reads back through the same query builder attestationDue uses', async () => {
 		const at = new Date('2026-01-01T00:00:00.000Z');
 		await markAttested(db, at);
 
-		const [row] = (await db.execute(
-			sql`SELECT value #>> '{}' AS value FROM setting WHERE key = 'auditsink.attested_at'`
-		)) as unknown as { value: string }[];
+		const [row] = await db
+			.select({ value: setting.value })
+			.from(setting)
+			.where(eq(setting.key, 'auditsink.attested_at'))
+			.limit(1);
 
-		expect(new Date(row!.value).getTime()).toBe(at.getTime());
+		expect(new Date(String(row!.value)).getTime()).toBe(at.getTime());
 	});
 
 	it('updates the existing row on a second mark rather than inserting a duplicate', async () => {
 		await markAttested(db, new Date('2026-01-01T00:00:00.000Z'));
 		await markAttested(db, new Date('2026-01-02T00:00:00.000Z'));
 
-		const rows = (await db.execute(
-			sql`SELECT value #>> '{}' AS value FROM setting WHERE key = 'auditsink.attested_at'`
-		)) as unknown as { value: string }[];
+		const rows = await db
+			.select({ value: setting.value })
+			.from(setting)
+			.where(eq(setting.key, 'auditsink.attested_at'));
 
 		expect(rows).toHaveLength(1);
-		expect(new Date(rows[0]!.value).getTime()).toBe(new Date('2026-01-02T00:00:00.000Z').getTime());
+		expect(new Date(String(rows[0]!.value)).getTime()).toBe(
+			new Date('2026-01-02T00:00:00.000Z').getTime()
+		);
 	});
 
 	it('is due again once the interval has elapsed since the mark', async () => {

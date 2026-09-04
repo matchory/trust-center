@@ -86,6 +86,23 @@ export function serializeBatch(rows: readonly AuditRowText[]): {
 	return { body, digest: createHash('sha256').update(body).digest('hex') };
 }
 
+/**
+ * The seq span of a batch's rows. Both call sites need it and only one of them
+ * can ever be handed an empty list — `rebuildBatch`, after a purge removed
+ * every row in a batch's range — so the empty case lives here rather than
+ * being remembered at one of two sites.
+ */
+export function seqRange(rows: readonly { seq: string }[]): { min: bigint; max: bigint } {
+	if (rows.length === 0) return { min: 0n, max: 0n };
+
+	const seqs = rows.map((row) => BigInt(row.seq));
+
+	return {
+		min: seqs.reduce((a, b) => (b < a ? b : a)),
+		max: seqs.reduce((a, b) => (b > a ? b : a))
+	};
+}
+
 export interface BatchManifest {
 	version: number;
 	batch_id: string;
