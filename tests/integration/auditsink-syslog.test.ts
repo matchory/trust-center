@@ -55,6 +55,21 @@ function batch(rows: readonly AuditRowText[] = [row(), row()]): SinkBatch {
 	};
 }
 
+/**
+ * A batch too large to hand to the kernel in one go, so the receiver goes away
+ * while the write is still in flight. Both mid-batch tests need that: once the
+ * adapter has written everything and sent its FIN there is no signal left to
+ * observe — syslog acknowledges nothing — so a small batch tests the scheduler
+ * rather than the adapter, and does so flakily.
+ */
+function inFlight(): AuditRowText[] {
+	// 20 000 rows is ~5 MB. Measured on 2026-09-05: at 2 000 the batch still
+	// fits in the loopback socket buffers and the graceful case is delivered
+	// whole before the receiver's FIN is seen; the exact threshold is the
+	// kernel's, so the fixture sits well clear of it rather than on it.
+	return Array.from({ length: 20_000 }, () => row());
+}
+
 function adapterFor(port: number, overrides: Record<string, unknown> = {}) {
 	return createSyslogAdapter({
 		host: '127.0.0.1',
@@ -117,17 +132,24 @@ describe('the syslog adapter', () => {
 		await expect(adapterFor(running.port).ship(batch())).rejects.toMatchObject({ reason: 'tls' });
 	});
 
-	it('reports network when the receiver closes mid-batch', async () => {
+	it('reports network when the receiver resets mid-batch', async () => {
 		running = await startSyslogServer({ tls: server });
 		running.closeAfter(1);
 
-		// Enough rows that the write is still in flight when the receiver goes
-		// away. A four-row batch fits in the socket buffers, so the adapter has
-		// written and closed before the reset arrives and the test would be
-		// asserting the scheduler rather than the adapter.
-		const rows = Array.from({ length: 20_000 }, () => row());
+		await expect(adapterFor(running.port).ship(batch(inFlight()))).rejects.toMatchObject({
+			reason: 'network'
+		});
+	});
 
-		await expect(adapterFor(running.port).ship(batch(rows))).rejects.toMatchObject({
+	it('reports network when the receiver closes gracefully mid-batch', async () => {
+		// The shape a receiver that hits a parse error actually has: a FIN, no
+		// reset, and therefore no error event anywhere. Resolving on close alone
+		// records the batch as delivered when the receiver took none of it —
+		// a false entry in a record the whole sink exists to keep true.
+		running = await startSyslogServer({ tls: server });
+		running.endAfter(1);
+
+		await expect(adapterFor(running.port).ship(batch(inFlight()))).rejects.toMatchObject({
 			reason: 'network'
 		});
 	});

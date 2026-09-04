@@ -112,6 +112,7 @@ export function createSyslogAdapter(config: SyslogSinkConfig): AuditSinkAdapter 
 		await new Promise<void>((resolve, reject) => {
 			let connected = false;
 			let secure = !config.tls;
+			let ended = false;
 			const socket: Socket = config.tls
 				? connectTls({
 						host: config.host,
@@ -140,19 +141,29 @@ export function createSyslogAdapter(config: SyslogSinkConfig): AuditSinkAdapter 
 			// TCP connect and TLS handshake are tracked separately because the
 			// window between them is what `phaseReason` reads.
 			socket.on('connect', () => (connected = true));
-			// Resolved on the peer's close, not on our own `end()` callback,
-			// which only means the FIN was flushed locally. Syslog acknowledges
-			// nothing, so the far end closing after our FIN is the strongest
-			// evidence available that it took the batch — and it is what makes a
-			// rejected client certificate or a mid-batch reset a failure rather
-			// than a silent success: under TLS 1.3 both arrive only after the
-			// writes appear to have succeeded. A reject already settled the
-			// promise by the time destroy() lands us here.
-			socket.on('close', () => resolve());
+			// Success is the peer closing *after* we finished writing, not our own
+			// `end()` callback, which only means the FIN was flushed locally.
+			// Syslog acknowledges nothing, so this is the strongest evidence
+			// available that the receiver took the batch, and it is what makes a
+			// rejected client certificate a failure rather than a silent success:
+			// under TLS 1.3 the alert arrives only after the writes appear to
+			// have succeeded.
+			//
+			// `ended` is what makes it "after". A receiver that gives up on a
+			// parse error half-closes: a FIN, no reset, and so no error event
+			// anywhere. Its only trace is arriving while we are still writing,
+			// and without these two lines the batch is recorded as delivered —
+			// a false entry in the record this sink exists to keep true. The
+			// `close` arm is the backstop for a close that reaches us with
+			// neither an error nor an `end` first; a reject has already settled
+			// the promise by the time destroy() lands us back here.
+			socket.on('end', () => (ended ? undefined : fail({ code: 'ECONNRESET' })));
+			socket.on('close', () => (ended ? resolve() : fail({ code: 'ECONNRESET' })));
 			socket.on(config.tls ? 'secureConnect' : 'connect', () => {
 				secure = true;
 				socket.write(Buffer.concat(frames), (error) => {
 					if (error) return fail(error);
+					ended = true;
 					socket.end();
 				});
 			});

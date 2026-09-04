@@ -48,10 +48,15 @@ export interface SyslogServer {
 	 * and unlike `messages` it cannot be zero merely because a discarded write
 	 * never reached the wire. */
 	connections: () => number;
-	/** Closes the socket mid-stream once n complete frames have arrived, for the
-	 * write-failure test. Zero closes on the first byte, which for a TLS client
-	 * is its ClientHello — a receiver that refuses to negotiate. */
+	/** Destroys the socket mid-stream once n complete frames have arrived, for
+	 * the write-failure test. Zero closes on the first byte, which for a TLS
+	 * client is its ClientHello — a receiver that refuses to negotiate. */
 	closeAfter: (frames: number) => void;
+	/** Closes the socket *gracefully* once n complete frames have arrived: a FIN
+	 * and no reset, which is how a receiver that hits a parse error gives up.
+	 * The client sees no error at all, so this is the shape a sink can most
+	 * easily record as delivered when it was not. */
+	endAfter: (frames: number) => void;
 	close: () => Promise<void>;
 }
 
@@ -71,6 +76,7 @@ export async function startSyslogServer(
 	const open = new Set<{ destroy: () => void }>();
 	let accepted = 0;
 	let closeAtFrame = Infinity;
+	let endAtFrame = Infinity;
 
 	const onConnection = (socket: NodeJS.ReadWriteStream & { destroy: () => void }) => {
 		let buffer = Buffer.alloc(0);
@@ -78,6 +84,7 @@ export async function startSyslogServer(
 
 		socket.on('data', (chunk: Buffer) => {
 			if (messages.length >= closeAtFrame) return socket.destroy();
+			if (messages.length >= endAtFrame) return void socket.end();
 			buffer = Buffer.concat([buffer, chunk]);
 
 			for (;;) {
@@ -93,6 +100,10 @@ export async function startSyslogServer(
 
 				if (messages.length >= closeAtFrame) {
 					socket.destroy();
+					return;
+				}
+				if (messages.length >= endAtFrame) {
+					socket.end();
 					return;
 				}
 			}
@@ -127,6 +138,7 @@ export async function startSyslogServer(
 		messages,
 		connections: () => accepted,
 		closeAfter: (frames) => (closeAtFrame = frames),
+		endAfter: (frames) => (endAtFrame = frames),
 		// Sockets are destroyed rather than waited on: `close()` fires its
 		// callback only once every connection has ended, so a socket the adapter
 		// abandoned on a failed batch would hang the suite's afterEach.
