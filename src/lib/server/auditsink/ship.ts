@@ -75,6 +75,9 @@ export async function claimShipments(
 		SELECT b.id, s.sink
 		FROM audit_batch b
 		CROSS JOIN unnest(${sql.param(sinks as string[])}::text[]) AS s(sink)
+		-- Excludes the synthetic zero-row cursor re-seed batch (spec §12): without
+		-- this, a re-seed after a restore would create a shipment row with
+		-- nothing to ship, permanently pending in a table with no DELETE.
 		WHERE b.row_count > 0
 		  AND NOT EXISTS (
 		    SELECT 1 FROM audit_batch_shipment sh
@@ -198,7 +201,12 @@ export async function shipClaimed(
 							attempts: shipment.attempts + 1,
 							lastError: null,
 							lastStatusCode: null,
-							objectKey: batch.id
+							// object_key documents the S3 key written, and ship() returns
+							// void so it cannot report one here. Left null rather than
+							// filled with batch.id (which duplicates batch_id and would
+							// read as a plausible key that is actually wrong) — the S3
+							// adapter populates it once the port can report a real key.
+							objectKey: null
 						})
 						.where(
 							and(
