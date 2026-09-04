@@ -135,4 +135,11 @@ $$;--> statement-breakpoint
 CREATE TRIGGER "audit_batch_shipment_forbid_truncate"
 	BEFORE TRUNCATE ON "audit_batch_shipment"
 	FOR EACH STATEMENT
-	EXECUTE FUNCTION "audit_batch_shipment_forbid_truncate"();
+	EXECUTE FUNCTION "audit_batch_shipment_forbid_truncate"();--> statement-breakpoint
+
+-- Defence in depth, same reasoning as audit_event_actor_type_check
+-- (drizzle/0004): a stale or misspelled sink name from job wiring would
+-- otherwise create a pending shipment row no adapter ever claims, in a table
+-- that forbids DELETE and is excluded from retention (spec §12).
+ALTER TABLE "audit_batch_shipment" ADD CONSTRAINT "audit_batch_shipment_sink_check"
+	CHECK ("sink" IN ('s3', 'syslog'));

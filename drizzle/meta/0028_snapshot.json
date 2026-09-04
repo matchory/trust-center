@@ -4567,7 +4567,12 @@
       },
       "uniqueConstraints": {},
       "policies": {},
-      "checkConstraints": {},
+      "checkConstraints": {
+        "audit_batch_shipment_sink_check": {
+          "name": "audit_batch_shipment_sink_check",
+          "value": "\"audit_batch_shipment\".\"sink\" IN ('s3', 'syslog')"
+        }
+      },
       "isRLSEnabled": false
     }
   },

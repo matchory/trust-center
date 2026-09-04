@@ -1,6 +1,7 @@
 import { sql } from 'drizzle-orm';
 import {
 	bigint,
+	check,
 	index,
 	integer,
 	pgTable,
@@ -94,6 +95,12 @@ export const auditBatchShipment = pgTable(
 		// the index stays small as shipped rows accumulate forever (spec §12).
 		index('audit_batch_shipment_claim_idx')
 			.on(table.sink, table.nextAttemptAt)
-			.where(sql`${table.shippedAt} IS NULL`)
+			.where(sql`${table.shippedAt} IS NULL`),
+		// A literal kept in sync with SINK_NAMES by hand, the same discipline
+		// audit_event_actor_type_check uses (schema/audit.ts, drizzle/0004):
+		// without it, a stale or misspelled sink name from job wiring creates a
+		// pending shipment row no adapter ever claims — in a table that forbids
+		// DELETE and is excluded from retention (spec §12), a permanent backlog.
+		check('audit_batch_shipment_sink_check', sql`${table.sink} IN ('s3', 'syslog')`)
 	]
 );

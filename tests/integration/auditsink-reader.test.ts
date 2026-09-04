@@ -109,6 +109,22 @@ describe('audit_batch is append-only and monotonic', () => {
 			/audit_batch_shipment is append-only: the table cannot be truncated/
 		);
 	});
+
+	// Finding 4: without this constraint, a stale or misspelled sink name from
+	// job wiring would create a shipment row no adapter ever claims — pending
+	// forever, in a table that forbids DELETE and is excluded from retention.
+	it('rejects an unknown sink value', async () => {
+		const [row] = await db
+			.insert(auditBatch)
+			.values(batchRow({ prev: [0n, 0n], cursor: [10n, 5n] }))
+			.returning({ id: auditBatch.id });
+
+		expect(
+			await rejectionCause(
+				db.insert(auditBatchShipment).values({ batchId: row!.id, sink: 'bogus' })
+			)
+		).toMatch(/audit_batch_shipment_sink_check/);
+	});
 });
 
 async function seqOf(subjectId: string): Promise<string> {
