@@ -67,6 +67,9 @@ refusal is recorded in the audit log.
 | `ACCESS_GRANT_REMINDER_DAYS` | no | `7` | How long before expiry the requester is reminded. The grant lapses on its own either way. |
 | `NDA_ACCEPTANCE_DUE_DAYS` | no | `14` | Default days a requester has to accept an outstanding agreement before the approval lapses, when staff approve without naming one. Overridden at `/admin/settings/access`. |
 | `NDA_FONT_DIR` | no | `./assets/fonts` | Directory holding the four typefaces the acceptance record and the download watermark embed — `regular.ttf`, `bold.ttf`, `italic.ttf`, `bold-italic.ttf`. See §7c. |
+| `EVENT_EGRESS_ENABLED` | no | `false` | Whether configured endpoints actually deliver. Unset, nothing leaves the container however many endpoints exist. See §12. |
+| `EVENT_SIGNING_KEY` | for `generic` endpoints | — | Root key, minimum 32 characters, from which each endpoint's signing secret is derived. Never stored. Required before a `generic` endpoint can be saved; `teams` endpoints do not need one. Changing it re-keys every endpoint and halts delivery until the stored canary matches. See §12. |
+| `EVENT_EGRESS_ALLOW` | no | — | Comma-separated `host:port` entries permitting delivery to private address ranges, for a receiver inside your own network. Loopback and link-local are refused regardless. See §12. |
 | `PORT` | no | `3000` | Port the server listens on. |
 | `BODY_SIZE_LIMIT` | no | `32M` | Largest request body `adapter-node` accepts, uploads included. |
 | `ADDRESS_HEADER` | behind a proxy | — | Header to read the client address from. Set to `X-Forwarded-For`. See §8 — without it every audit event records your proxy's address. |
@@ -522,10 +525,22 @@ If a CDN sits in front of nginx, raise `XFF_DEPTH` to match.
   requester session, scoped to `/{locale}/access`. A visitor who never signs in
   is never given one.
 
+- **No outbound events unless you configure them.** `EVENT_EGRESS_ENABLED` is
+  unset by default, and with it unset nothing is delivered to anywhere, no
+  matter what endpoints exist in the database. If you turn it on and add an
+  endpoint, this deployment POSTs events to **your** URL and nowhere else —
+  never to us (§12). The three bullets above are unchanged by that: egress is
+  server-to-server, so the portal still makes no third-party request from a
+  visitor's browser, still loads no foreign origin, and still sets no cookie
+  for a public visitor.
+
 These are not promises to take on faith. `tests/e2e/security.spec.ts` asserts
 each of them on every run: it records every request the portal makes and fails
 on any foreign origin, checks the policy header, and checks the cookie jar is
-empty. Run `pnpm test:e2e` against your own build.
+empty. Run `pnpm test:e2e` against your own build. That spec covers the
+browser-side claims, which is the whole of what it ever claimed to cover —
+enabling egress does not weaken it, because what egress sends leaves the
+container, not the page.
 
 ## 10. Erasure requests
 
@@ -624,3 +639,257 @@ Only the four `OTEL_*` variables in §3 are read. Other standard OpenTelemetry
 environment variables are deliberately ignored, because every setting in this
 application is validated once at startup and a typo must refuse to boot rather
 than silently export nothing.
+
+## 12. Event egress (integrations)
+
+Off unless you turn it on. With `EVENT_EGRESS_ENABLED` unset, no endpoint you
+configure delivers anything and no request leaves the container — the switch
+lives in the environment precisely so that "does this deployment call out?" is
+answerable with `docker inspect`, without a database.
+
+An **endpoint** is a URL this deployment POSTs a JSON event to when something
+happens: an access request comes in, a grant is revoked, an NDA is accepted, a
+document is downloaded. It exists so a trust center fits into what you already
+run — an n8n workflow, a Teams channel, a CRM — rather than becoming another
+inbox somebody has to remember to check.
+
+Endpoints are rows, not configuration. You add and edit them under
+**Settings → Integrations**, which is admin-only: an endpoint URL is where a
+prospect's name and address get sent, so it is a more consequential thing to
+edit than a FAQ entry.
+
+### The three variables
+
+They are in §3 with the rest; repeated here because this is the section you
+are reading when you set them.
+
+| Variable | Default | What it does |
+| --- | --- | --- |
+| `EVENT_EGRESS_ENABLED` | `false` | The switch. Off, endpoints can be configured but nothing is delivered. |
+| `EVENT_SIGNING_KEY` | — | Root key, at least 32 characters. Required before a `generic` endpoint can be saved; `teams` endpoints do not need one. |
+| `EVENT_EGRESS_ALLOW` | — | Comma-separated `host:port` entries permitting delivery to private address ranges. Only needed for a receiver inside your own network. |
+
+Generate a key with `openssl rand -hex 32`. It is never stored: each endpoint's
+secret is derived from it, so a stolen database backup yields every endpoint
+row and still no ability to forge a signature. The flip side is that changing
+`EVENT_SIGNING_KEY` re-keys every endpoint at once — the application stores a
+canary on first use and halts delivery, loudly, if the key it boots with does
+not match the one the canary was written with. That is deliberate: restoring a
+backup into an environment with a different key would otherwise silently
+invalidate every signature you have configured downstream.
+
+### The two payload shapes
+
+**`generic`** — the model rendered directly, for n8n, a webhook receiver, or
+anything that reads JSON. Envelope keys are `snake_case`; keys inside `data`
+are `camelCase`, because `data` is domain state and the envelope is wire
+format. A real `access_request.pending` body:
+
+```json
+{
+  "event": "access_request.pending",
+  "at": "2026-09-03T09:14:22.108Z",
+  "event_id": "3f2b0c7e-8a41-4d55-9e0a-1c2d3e4f5a6b",
+  "seq": "48213",
+  "delivery_id": "b91d4c02-77e5-4a19-8f3c-2d6e0a1b4c8d",
+  "verified": true,
+  "subject": { "type": "access_request", "id": "9c1e5a3d-…" },
+  "actor": { "type": "requester", "id": "5d7f2b91-…" },
+  "summary": "Access request pending for Acme GmbH",
+  "link": "https://trust.example.com/de/admin/requests/9c1e5a3d-…",
+  "data": {
+    "name": "Alex Fischer",
+    "email": "alex.fischer@acme.example",
+    "company": "Acme GmbH",
+    "companyDomain": "acme.example",
+    "requestId": "9c1e5a3d-…",
+    "status": "pending",
+    "justification": "Vendor security review",
+    "termDays": 90
+  }
+}
+```
+
+`seq` is a **string**, not a number. It is a 64-bit integer and a consumer
+parsing it as a JSON number loses precision above 2^53 — which matters,
+because `seq` is what lets you detect that you missed something.
+
+**`teams`** — an Adaptive Card in the envelope the Teams **Workflows** (Power
+Automate) trigger expects. Office 365 Connectors are retired, so this is not a
+`MessageCard`. Card version 1.4, no images and no external references: nothing
+in your Teams channel fetches anything from us.
+
+```json
+{
+  "type": "message",
+  "attachments": [
+    {
+      "contentType": "application/vnd.microsoft.card.adaptive",
+      "content": {
+        "type": "AdaptiveCard",
+        "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+        "version": "1.4",
+        "body": [
+          { "type": "TextBlock", "text": "Access request pending for Acme GmbH", "wrap": true, "weight": "Bolder" },
+          { "type": "TextBlock", "text": "access\\_request.pending", "wrap": true, "isSubtle": true, "spacing": "None" },
+          { "type": "FactSet", "facts": [{ "title": "company", "value": "Acme GmbH" }] }
+        ],
+        "actions": [
+          { "type": "Action.OpenUrl", "title": "Open in trust center", "url": "https://trust.example.com/de/admin/requests/9c1e5a3d-…" }
+        ]
+      }
+    }
+  ]
+}
+```
+
+Card text is markdown-escaped (note `access\_request.pending`) because a
+company name is free text somebody else typed. The action URL is not escaped —
+it is our own absolute link, and an escaped URL is a broken button.
+
+### Verifying the signature
+
+Every `generic` delivery carries three headers:
+
+| Header | |
+| --- | --- |
+| `x-trust-center-event` | The action name, so you can route without parsing the body. |
+| `x-trust-center-delivery` | The delivery id. **This is your idempotency key** — see below. |
+| `x-trust-center-signature` | `t=<unix-seconds>,v1=<hex>` and, during a rotation, a second `v1=`. |
+
+The signed input is `` `${t}.${body}` `` — the timestamp, a literal dot, then
+the **raw** request body, before any JSON parsing or re-serialisation.
+
+Reveal the endpoint's secret under Settings → Integrations. It is shown as hex
+and you **must decode it to bytes** before using it as the HMAC key; using the
+hex string itself as the key is the one mistake that produces a signature
+mismatch with everything else correct.
+
+```js
+import { createHmac, timingSafeEqual } from 'node:crypto';
+
+export function verify(rawBody, header, secretHex, toleranceSeconds = 300) {
+	const parts = header.split(',').map((part) => part.split('='));
+	const t = parts.find(([key]) => key === 't')?.[1];
+	if (!t) return false;
+
+	// Reject a replayed body. Our own retries span at most fifteen minutes but
+	// never reuse a timestamp, so a tight tolerance costs you nothing.
+	if (Math.abs(Date.now() / 1000 - Number(t)) > toleranceSeconds) return false;
+
+	const key = Buffer.from(secretHex, 'hex'); // NOT the hex string itself
+	const expected = createHmac('sha256', key).update(`${t}.${rawBody}`).digest();
+
+	// Accept ANY v1: during a rotation both the new secret and the previous one
+	// are sent, and rejecting the second breaks the overlap that makes rotation
+	// possible without downtime.
+	return parts
+		.filter(([key_]) => key_ === 'v1')
+		.some(([, hex]) => {
+			const candidate = Buffer.from(hex, 'hex');
+			return candidate.length === expected.length && timingSafeEqual(candidate, expected);
+		});
+}
+```
+
+Rotating an endpoint's secret ("Rotate" on its page) bumps its version and
+sends both signatures for a grace period, so you can update your consumer
+without dropping deliveries. Rotating `EVENT_SIGNING_KEY` itself does not: it
+re-keys every endpoint at once, and the canary halts delivery until it matches.
+
+### Deduplicate on the delivery id, never on the body
+
+**A retry is not byte-identical to the attempt before it.** Deliveries render
+from live state at the moment they are attempted, so an event retried after an
+access request was approved carries the *approved* state, and each attempt is
+signed with a fresh timestamp. Hashing the body to detect a duplicate will
+therefore fail to detect one.
+
+`x-trust-center-delivery` is stable across every attempt of the same delivery.
+That is the key to store.
+
+### Ordering, gaps, and what `seq` is for
+
+Delivery order is roughly commit order, **not** `seq` order, and a consumer
+must not assume `seq` arrives monotonically. Events are picked up once the
+transaction that wrote them is guaranteed committed, and a slow transaction
+commits after a fast one that started later. `seq` still makes a *gap*
+detectable; it does not order the stream.
+
+Permanent gaps in `seq` are normal and are not lost events: a rolled-back
+transaction consumes a sequence value, and so does Postgres' sequence caching.
+
+### High-frequency actions
+
+**`document.downloaded`** is the noisy one: one grant holder working through
+forty documents produces forty notifications. It is not throttled, and the
+admin UI warns you when a pattern you have selected exceeds roughly 200 events
+a week — counted across every action the pattern matches, so `document.*` warns
+on the total you are actually signing up for.
+
+Which events belong in your channel is your decision, not this application's;
+you are told what you are choosing rather than quietly given less than you
+asked for.
+
+**Filters can name any action**, including ones the audit log writes but this
+subsystem has no enricher for. Those still deliver, carrying the audit event's
+own `meta` as `data` and `"verified": false` — the flag is on the wire so you
+can branch on it without knowing which of our action names implies a verified
+identity. `access_request.submitted` is deliberately in this group: its data is
+free text from a public form, so it is delivered unenriched rather than given
+the appearance of verified fact.
+
+### What a purge does to a delivery
+
+When you erase a requester (§10), any queued delivery about them is marked
+`skipped` and **nothing is sent** — not a payload with the name blanked out.
+Blanks are the one shape a consumer cannot branch on: "a person with no name"
+and "a person who was erased" would be indistinguishable, and a CRM upserting
+on email would happily write the blank over the real record.
+
+`skipped` is a status rather than a deleted row, so the gap stays visible
+afterwards.
+
+### The test send, and what its failures mean
+
+Each endpoint's page has **Send test event**, which delivers a synthetic
+`egress.test` event immediately. It bypasses exactly three things — the cursor,
+the filter and the queue — and nothing else: the destination checks, the port
+and scheme restrictions and the redirect refusal all apply, because an
+admin-triggered request that skipped them would be a hand-built SSRF probe with
+a UI. `egress.test` is deliberately not an audit action, so no filter can match
+it and it never appears in the audit log.
+
+The failure it reports is one of a fixed set:
+
+| Reason | What it means |
+| --- | --- |
+| `url` | The URL was refused before any connection was attempted: a scheme other than `http`/`https`, credentials embedded in the URL, an IPv6 literal, a host that is not a canonical name or dotted-quad IPv4, or a port other than 80 or 443 that you have not named in `EVENT_EGRESS_ALLOW`. |
+| `destination_denied` | The name resolved to an address delivery is not allowed to reach — loopback, link-local (including the cloud metadata endpoint), or a private range you have not listed in `EVENT_EGRESS_ALLOW`. |
+| `redirect_refused` | The receiver answered with a redirect. Redirects are never followed; point the endpoint at the final URL. |
+| `timeout` | No response within ten seconds. |
+| `network` | The connection failed outright — DNS, TLS, or a refused socket. |
+| `http_status` | The receiver answered with a status that is not a success. The code is shown next to it. |
+| `signing_key_missing` | A `generic` endpoint with no `EVENT_SIGNING_KEY` configured. |
+
+A response body is never stored, only the status code and one of these fixed
+phrases. A receiver that echoes its input — n8n's "respond with incoming items"
+is the common one — would otherwise write a prospect's name back into this
+database in a column the erasure path does not know about.
+
+### When an endpoint goes quiet
+
+An endpoint that has not succeeded in 24 hours is disabled automatically, and
+the reason is recorded and shown on its page. Re-enabling offers two choices,
+and it offers **"enable, skipping the backlog" first**: a channel flooded with
+a day of stale notices is worse than a gap, and the audit log remains the
+record of record either way — nothing is lost, only un-notified.
+
+### The boundary this stops at
+
+An event that leaves this application has left the reach of its erasure
+mechanism. `purgeRequester` clears personal data from this database and from
+mail queued but not yet sent; it cannot reach an n8n execution history, a Teams
+channel, or a CRM record that an earlier delivery caused to be written. Those
+are your systems, on your subprocessor list, and your Art. 17 obligation
+reaches them exactly as it reaches the HubSpot record your automation wrote.

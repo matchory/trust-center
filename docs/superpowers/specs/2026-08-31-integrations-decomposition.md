@@ -117,6 +117,20 @@ and no state.
 
 ## 5. The spine A and B share
 
+> **Corrected 2026-09-03, after implementing A.** The claim below that "a consumer is a cursor
+> holding one bigint — no deduplication, no ordering problem" is **false**, and B would inherit the
+> defect. `seq` is assigned by `nextval()` when `recordEvent` runs, but a row becomes visible at
+> COMMIT, and `recordEvent` is called last in a transaction — so a slow transaction commits a *lower*
+> `seq` after a fast one that started later. A `seq` high-watermark therefore silently drops events,
+> and cannot be repaired by advancing to "lowest excluded seq − 1": the mirror case, where the
+> blocking row is invisible and no visible row is excluded, is indistinguishable from the permanent
+> gaps that rollbacks and sequence caching leave behind. The cursor is a composite keyset over
+> `(xmin, seq)`. See `2026-09-03-event-egress-design.md` §5.2 **and** that plan's correction C1 — the
+> spec's own first fix was also insufficient, so C1 is the authority, not §5.2 alone.
+>
+> Deduplication does not disappear either: at-least-once delivery plus render-at-delivery means a
+> consumer must deduplicate on the delivery id, because retries are not byte-identical.
+
 `audit_event` is already a durable log: append-only enforced by triggers (`drizzle/0003`,
 `drizzle/0004`), with a monotonic `seq`. A consumer is therefore *a cursor holding one bigint*. No
 deduplication, no ordering problem, no compaction.
@@ -220,6 +234,10 @@ URL-valued setting B accepts.
 ## 9. Per-subsystem notes, and what each spec must still settle
 
 ### A — Event egress
+
+> **Governed by `2026-09-03-event-egress-design.md`, which supersedes this note for A.** Everything
+> under "must settle" below is settled there; where the two differ, that document and its plan's
+> corrections C1–C5 are authoritative.
 
 Serves Matchory's own requirement: access requests to Teams, and to n8n, which updates HubSpot.
 

@@ -73,6 +73,12 @@ must inherit, and the part note §5 got wrong. Everything else here — per-endp
 enrichment, formatters, retry, auto-disable — is A-only. **B must not be built by widening this
 document**; it should take §5.2 and nothing else.
 
+What B inherits is the **composite `(xmin, seq)` keyset**, not the horizon scan this document first
+described — see §5.2's correction and plan C1. B's "ordered batch" row above is the line to re-read
+in that light: the keyset orders by `(xmin, seq)`, which is commit-ish order, not `seq` order. A
+batch is internally ordered and consistent, and B may still assert that no event is lost, but a
+reader of B's output must not take `seq` to arrive monotonically.
+
 ---
 
 ## 2. Data model
@@ -91,15 +97,24 @@ and two unrelated concepts sharing a name in one schema is how a later reader jo
 | `format` | text not null | Check-constrained to the formatter registry (§3.3) |
 | `secret_version` | integer not null default 1 | Bumping it re-keys this endpoint alone (§7) |
 | `enabled` | boolean not null default true | |
-| `cursor_seq` | bigint not null | Initialised to `max(audit_event.seq)` at creation. Advanced per §5.2 |
-| `last_success_at` | timestamptz | Drives auto-disable (§5.3) |
+| `cursor_xmin` | bigint not null | With `cursor_seq`, **one** keyset cursor over `(xmin, seq)` — not two facts. Initialised to the current xmin horizon at creation. Advanced per §5.2 |
+| `cursor_seq` | bigint not null | The second half of that keyset. Initialised to `0` |
+| `last_success_at` | timestamptz | Drives auto-disable (§5.4), through `coalesce(last_success_at, created_at)` |
 | `disabled_at` | timestamptz | |
 | `disabled_reason` | text | |
 | `created_at` | timestamptz not null default now() | |
 
-**`cursor_seq` starts at the current maximum, not at zero.** A new endpoint must not replay eighteen
+**The cursor starts at the current horizon, not at zero.** A new endpoint must not replay eighteen
 months of history into a Teams channel on its first tick. This is a one-line default with a
 disproportionate failure mode, so it is stated here rather than left to the insert site.
+
+Under §5.2's keyset that has an exact meaning: creation sets `cursor_xmin` to the horizon observed at
+that moment and `cursor_seq` to `0`, so *everything already below the horizon is treated as
+consumed*. The precise consequence — a transaction in flight at creation commits below the new cursor
+and is never delivered — is the same hazard the cursor exists to protect against, and it is harmless
+here because "do not replay history" is exactly what was asked for. §5.5's skip-the-backlog jump does
+the identical thing for the identical reason. Both are recorded in §16 rather than left to be
+rediscovered.
 
 `disabled_at` is paired against `enabled` by a check constraint — `(enabled = false) = (disabled_at
 IS NOT NULL)` — in the shape `subscription`'s five confirmation columns use: a state that lives in
@@ -295,10 +310,25 @@ template-literal sites (`verify.ts` and `admin/requests/[id]/+page.server.ts`, b
 | `access_grant.revoked` | admin | requester identity, grant id, what it covered |
 | `nda_acceptance.recorded` | acceptance | requester identity, template and version |
 | `nda_record.downloaded` | delivery | requester identity, template and version |
-| `document.downloaded` | delivery | requester identity, document title and tier |
+| `document.downloaded` | delivery | requester identity where there is one, document title and tier — see below |
 
 `access_request.pending` is the one an operator wants in Teams: it is written when a verified request
 needs a human. `access_request.submitted` is deliberately **absent** — see §4.3.
+
+**`document.downloaded` has three cases, not two (plan C5).** Its subject is a `document_file`, not a
+document and not a requester: `subject_type` is `document_file` and `subject_id` is a
+`document_file.id`, so the enricher resolves file → document → translation for the title. And
+`delivery/serve.ts` writes `actor: { type: 'requester', id: requester?.id ?? null }`, while
+`/api/documents/{fileId}` is the **cookie-free public path** — so this event is routinely written
+with a null actor and no requester row at all. The enricher therefore distinguishes:
+
+- **enriched** — a requester id resolving to a live row;
+- **anonymous** — no requester id, as every public-tier download produces. Delivered, with `data`
+  describing the document, `actor.id: null` and `verified: false`;
+- **skipped** — a requester id that resolves to a purged row, or a subject row that is gone (§4.5).
+
+Reading §4.5 as two cases would mark every public download `skipped`, silently dropping exactly the
+notifications an operator subscribed to.
 
 Anything else falls back to the audit row: `action`, `at`, `subject`, `actor`, and `meta` verbatim,
 with a `summary` derived from the action name. §6.6 already guarantees `meta` holds no requester
@@ -367,6 +397,19 @@ is the same thing `purgeRequester` already does to queued mail — it fails pend
 rows rather than sending them blank, on the reasoning that "a purge that leaves one queued would mail
 a person who asked to be forgotten." Egress now has that step too, and it is the same step.
 
+Two clarifications the implementation forced, both narrowing where this rule lives:
+
+- **The check lives in the enricher and nowhere else.** "It is the same step" reads as an instruction
+  to modify `purge.ts`; it is not. `purgeRequester` is unchanged. Two implementations of one rule is
+  precisely the second erasure path §2.3's reference-not-payload shape exists to avoid.
+- **The signal is `requester.purged_at IS NOT NULL`, not blank columns.** `purgeRequester` writes
+  `email = 'purged-<id>@invalid'` rather than emptying it, so a test for an empty email gets the one
+  field a CRM upserts on wrong — the exact failure this section is about.
+
+And "the subject row is gone" is not the same as "there is no subject": see §4.2 on
+`document.downloaded`, where an anonymous public download has no requester by design and is
+delivered, not skipped.
+
 The erasure property this preserves is stated precisely in §8, where it is also qualified honestly.
 
 ---
@@ -426,31 +469,66 @@ cursor to 101. **Event 100 becomes visible a millisecond later and is never scan
 silently dropped approval notification, indistinguishable from Teams having eaten it.
 
 The fan-out predicate therefore consumes only events whose inserting transaction has already
-completed, using the snapshot's xmin horizon:
+completed, using the snapshot's xmin horizon — **and the cursor is a composite keyset over
+`(xmin, seq)`, not a `seq` high-watermark**:
 
 ```sql
 SELECT id, seq, action, at, actor_type, actor_id, subject_type, subject_id, meta
 FROM audit_event
-WHERE seq > $cursor
-  AND xmin::text::xid8 < pg_snapshot_xmin(pg_current_snapshot())
-ORDER BY seq
+WHERE xmin::text::bigint < $horizon
+  AND (xmin::text::bigint, seq) > ($cursor_xmin, $cursor_seq)
+ORDER BY xmin::text::bigint, seq
 LIMIT 500
 ```
 
-A row below the horizon was inserted by a transaction that can no longer commit anything beneath it,
-so no lower `seq` can still appear. The cursor advances to the highest `seq` **scanned under that
-predicate** — not the highest matched, since advancing only past matches would re-scan every
-unmatched event forever.
+The cursor advances to the **last row returned**, not to the highest `seq` scanned.
+
+> **Corrected 2026-09-03, after implementation review (plan C1).** The first draft of this section
+> filtered on `seq > $cursor` and advanced to the highest `seq` scanned, justified by the invariant
+> *"a row below the horizon was inserted by a transaction that can no longer commit anything beneath
+> it, so no lower `seq` can still appear."* **That invariant is false**, and the fix is not a
+> refinement of it — a `seq` high-watermark cannot be made exactly correct. Both counterexamples,
+> because the second is the one that kills the obvious repair:
+>
+> 1. **A committed row is skipped.** `T_early` begins and takes xid 499. `T_slow` begins and takes
+>    xid 500, and is still running. `T_fast` autocommits, taking xid 501 and **seq 50**. `T_early`
+>    then calls `recordEvent`, taking **seq 51**, and commits. At the next tick the horizon is 500:
+>    seq 51 is scanned (xmin 499 < 500) but seq 50 is excluded (xmin 501 ≥ 500), and the cursor
+>    advances to 51. Seq 50 is committed, visible, and permanently below the cursor. `xmin < horizon`
+>    excludes rows from transactions that started *later* and committed *already*, which is not what
+>    the invariant assumed.
+> 2. **The obvious repair does not work.** Advancing to "lowest excluded `seq` − 1" fixes case 1 but
+>    not the mirror case, where the blocking row is still *invisible* and no visible row is excluded
+>    — there is nothing to notice. And that gap is indistinguishable from the permanent gaps that
+>    rollbacks and sequence caching leave in a `bigserial`.
+>
+> **The invariant that actually holds** is the keyset one: the cursor is only ever set to a row whose
+> `xmin` was strictly below the horizon observed in that tick, so every unconsumed row — invisible
+> (in flight, `xmin ≥ horizon`) or visible-but-excluded (`xmin ≥ horizon`) — has a key strictly
+> greater than the cursor. Each row is consumed exactly once, in the tick where the horizon crosses
+> its `xmin`.
+>
+> Two consequences, written down rather than discovered: delivery order becomes commit-ish order
+> rather than `seq` order (§15 already promises no ordering guarantee, and `seq` in the payload still
+> makes gaps detectable, but **a consumer must not assume monotonicity**); and `purgeRequester`'s
+> `UPDATE audit_event` bumps `xmin`, so a pseudonymised row is re-scanned — harmless, because the
+> fan-out insert is `ON CONFLICT DO NOTHING` against the unique `(endpoint_id, audit_seq)`.
+>
+> **The obvious alternative, recorded because it is obvious:** a trigger on `audit_event` INSERT
+> writing `event_delivery` rows in the same transaction deletes the watermark problem entirely —
+> visibility is inherited from the commit. Rejected because it puts egress on the critical path of
+> every audited action: a fan-out bug or a missing egress table would then roll back an access
+> approval. The audit write must not be able to fail because egress is misconfigured.
 
 The failure mode this trades into is **delay, not loss**: a long-running transaction holds the horizon
 back and events wait for it. That is the right direction, and it is bounded by the longest
 transaction in the system rather than unbounded.
 
-Implementation note, because the exact spelling is fiddly and version-dependent: use the 64-bit
-`xid8` forms (`pg_current_snapshot`, `pg_snapshot_xmin`) rather than comparing 32-bit `xid` values,
-which wrap around. The plan must verify the predicate against the project's Postgres version and
-assert it with the test named in §13 — a fan-out that runs while a slow transaction holds a lower
-`seq` open, which fails against a naive `seq > cursor` scan.
+Implementation note. The horizon comes from `pg_snapshot_xmin(pg_current_snapshot())`, whose 64-bit
+`xid8` form does not wrap the way a 32-bit `xid` comparison would; it is compared against
+`xmin::text::bigint`. `xmin` is a system column and not an immutable expression, so it cannot be
+indexed and the window scan is sequential — fine at a trust center's volume, and §16 records the row
+count at which to bound it. The test named in §13 asserts both counterexamples above.
 
 **Backpressure.** Fan-out is skipped for an endpoint whose pending depth already exceeds 1000.
 Without this the two limits fight: 500 fanned out per tick against 25 delivered per tick means a
@@ -480,7 +558,14 @@ the row goes `failed`.
 ### 5.4 Auto-disable is time-based, not a failure count
 
 An endpoint is disabled when **no delivery has succeeded for 24 hours and at least one has been
-attempted in that window** — `last_success_at` against `now()`, evaluated per tick.
+attempted in that window** — `coalesce(last_success_at, created_at)` against `now()`, evaluated per
+tick.
+
+The `coalesce` is not incidental. `last_success_at` is NULL until the first success, and NULL
+compared against `now()` is NULL, so an endpoint that has **never** succeeded would never disable —
+the dead-endpoint case this section exists for, and the state every misconfigured endpoint is in from
+the moment it is created. Falling back to `created_at` gives a never-successful endpoint the same 24
+hours as one that has gone quiet.
 
 A consecutive-failure counter was specified first and is wrong in both directions. A low-volume
 deployment sending three events a day takes four days to reach ten failures, so a permanently dead
@@ -618,15 +703,26 @@ into an environment with a different or absent key silently re-keys every endpoi
 detects it — which is the one property a stored secret gets for free and derivation otherwise loses.
 One row, and it converts a silent failure into a loud one.
 
-**`EVENT_SIGNING_KEY` is required when any endpoint uses `format = 'generic'`**, validated at save
-time and at boot. It stays optional for `teams`, because Teams verifies nothing and a Teams-only
-operator should not manage a key they cannot use.
+**`EVENT_SIGNING_KEY` is required when any endpoint uses `format = 'generic'`.** It stays optional for
+`teams`, because Teams verifies nothing and a Teams-only operator should not manage a key they cannot
+use.
 
 An earlier draft made it globally optional "in the same sense `SMTP_URL` is". That analogy is wrong in
 the way that matters: `SMTP_URL` absent means *nothing happens*, while a missing signing key means
 *the thing happens without its security property* — a payload carrying a prospect's name and address,
-POSTed to an HTTP endpoint with no authentication. The correct in-repo analogue is
-`OIDC_CLIENT_SECRET`, which is required and refuses to boot.
+POSTed to an HTTP endpoint with no authentication.
+
+**Enforced at save time, and at boot as a delivery halt rather than an exit (plan C4).** The draft
+said "validated at save time and at boot", by analogy with `OIDC_CLIENT_SECRET`, which refuses to
+boot. That analogy breaks on a detail: `parseConfig` has no database, and this precondition is a
+*database row*. Enforcing it in `hooks.server.ts`'s init means one `format = 'generic'` row plus an
+unset key exits the process on start — and the only way to fix either the row or the key is the admin
+UI that the container serves. That is a bootstrap deadlock: a database row must not be able to brick
+the container that serves the only surface for repairing it.
+
+So: a hard refusal in the admin action at save time, and at boot the same treatment as a canary
+mismatch — delivery halts, the reason is logged and surfaced in the admin UI, and the container stays
+healthy.
 
 ### 7.2 Headers, and the rotation overlap
 
@@ -786,11 +882,16 @@ Its `action` is `egress.test`, which is deliberately **not** an audit action: no
 `audit_event`, no filter can match it, and it is therefore outside the permanent-name convention §9
 records. It exists only on the wire, so a consumer can branch on it and discard it.
 
-**These two routes gate on `role === 'admin'`.** This is a deviation worth naming: the admin layout
-gates on `locals.staff` only and no page below it checks `role` today. An endpoint URL is a
-consequential thing for an `approver` to be able to edit — it is where a prospect's name and address
-get sent, and §6's threat model is explicitly the compromised admin — so it is a different kind of
-object from a FAQ entry. The deviation is confined to these two routes; nothing else changes.
+**These two routes gate on `role === 'admin'`, and it is not a deviation (plan C2).** An earlier draft
+justified this at length as one, believing no page below the admin layout checked `role`.
+`/admin/audit` already does exactly this, and `ADMIN_SECTIONS` already carries an optional `role`
+documented as *"the nav hides what the route would refuse, so an approver is never offered a link
+that 403s."* This is an established two-part pattern and both halves are required here: the route
+refuses, and the nav entry carries `role: 'admin'` so the link is never offered.
+
+The reason it applies is one sentence: an endpoint URL is where a prospect's name and address get
+sent, and §6's threat model is explicitly the compromised admin, so it is a different kind of object
+from a FAQ entry.
 
 ---
 
@@ -810,8 +911,17 @@ Three variables and no more. The timeout, the batch sizes, the attempt count, th
 the 24-hour disable window are constants: none of them is a thing an operator has information to tune,
 and every knob is a support conversation.
 
-Parsed through `config/parse.ts` like everything else, which means `pnpm build` under `env -i`
-continues to work — this subsystem adds no import-time requirement and no eager connection.
+Parsed through `config/parse.ts`, which means `pnpm build` under `env -i` continues to work — this
+subsystem adds no import-time requirement and no eager connection.
+
+**"Like everything else" was not accurate, and the precedent matters here.** `RUN_JOBS` and
+`RUN_MIGRATIONS` are read straight from `process.env` in `hooks.server.ts`, not through the schema, so
+the two existing run-flags are exactly the wrong model to copy. `EVENT_EGRESS_ENABLED` goes in
+`parse.ts` regardless — it is consulted on every delivery rather than only at boot, so it wants to be
+validated once and read from a typed config rather than re-parsed from a string per tick — and in
+doing so it becomes the schema's **first boolean**. The two run-flags stay outside it because they are
+read before config exists; that is worth a comment at the boolean helper rather than a silent
+inconsistency.
 
 ---
 
@@ -877,7 +987,18 @@ does not touch.
   is unchanged and still enforced by `tests/e2e/security.spec.ts` — otherwise a reader takes the
   amendment for a retreat from the whole section rather than an addition to it.
 - **The decomposition note's §5 and §9 A** get a line pointing at this document as governing, and §5
-  specifically is marked corrected by §5.2 here, since B would otherwise inherit the defect.
+  specifically is marked corrected by §5.2 here, since B would otherwise inherit the defect. §5 must
+  cite the **plan's C1** as well as §5.2, because this document's own first fix was also insufficient.
+
+Written 2026-09-04. Two additions the list above did not anticipate, both because writing the
+operator-facing text is what surfaced them:
+
+- **The three variables also go in `docs/self-hosting.md` §3**, whose title is "Every environment
+  variable". A subsystem section further down does not make that title true, and §3 is where an
+  operator configuring a deployment actually looks.
+- **The derived secret is revealed as hex and must be decoded to bytes** before use as an HMAC key.
+  The recipe says so explicitly: it is the one mistake that produces a signature mismatch with
+  everything else correct.
 
 ---
 
@@ -908,6 +1029,31 @@ Recorded so the absences are decisions rather than oversights.
   at-least-once delivery, and on the operator's side of the boundary.
 - **`EVENT_EGRESS_ALLOW` is trusted once set.** An operator who allowlists a broad CIDR gets what they
   asked for; the design narrows the default, it does not second-guess an explicit choice.
+- **A row frozen by vacuum before it is consumed sorts below any cursor** (§5.2). `xmin` becomes `2`,
+  which is below every live cursor, so the row is never delivered. Only reachable for rows older than
+  `vacuum_freeze_min_age` — 50 million transactions — which are long consumed on any deployment that
+  has ever run the job. Recorded rather than defended against, because the defence would cost a
+  column on `audit_event`.
+- **Endpoint creation and skip-the-backlog both jump the cursor over events in flight** (§2.1, §5.5).
+  A transaction that has not yet committed when the cursor is set to the current horizon commits
+  below it and is never delivered. This is the same hazard the keyset exists to prevent, and it is
+  harmless in both places because "do not replay history" is precisely what was asked for — but it is
+  a jump, not a consume, and the two are worth distinguishing when reading §5.2.
+- **The fan-out window scan is sequential, once per enabled endpoint per tick.** `xmin` is a system
+  column and not an immutable expression, so it cannot be indexed. At a trust center's volume —
+  thousands of audit events a month, a handful of endpoints — that is sub-millisecond every fifteen
+  seconds. Past roughly **a million `audit_event` rows**, add a `seq > cursor_seq - N` bound and
+  record the bounded gap it introduces. Do not add it speculatively.
+- **A 30-day-swept delivery row can be re-enqueued by an `xmin` bump** (§5.6, §5.2). The replay guard
+  is `ON CONFLICT DO NOTHING` against `(endpoint_id, audit_seq)`, which needs the row to still exist;
+  once retention has swept it, `purgeRequester`'s `UPDATE audit_event` bumps that event's `xmin` and
+  fan-out sees it as new. Inert in practice: a purge is exactly what makes the enricher return
+  `skipped`, so the re-enqueued row is terminated without an HTTP request. Both halves are
+  spec-mandated, so this is a residual rather than a defect.
+- **`body_too_large` is declared in the error-reason set and never produced.** A response exceeding
+  the 8 KiB cap is destroyed and the status code alone decides the outcome (§6.4), so no code path
+  writes this reason. Harmless — an unreachable member of a closed set — but a reader should not go
+  looking for the branch that sets it.
 
 ---
 
@@ -943,6 +1089,41 @@ Two review findings were **not** adopted:
   maintenance is real. But Teams is a named day-one requirement, a formatter holds no credential and
   calls no vendor API, and §3.3's registry makes it a contained cost. Revisit if the envelope changes
   a second time.
+
+---
+
+## 18. Revision history — 2026-09-03, after implementation
+
+§17 records what an adversarial review of this document changed before anything was built. This
+section records what **building it** changed. The distinction matters to a reader: everything below
+was found by the code refusing to work as specified, not by argument, and five of these reverse
+positions §17 had already settled once.
+
+The corrected behaviour is what shipped. Where an older reading of a section survives anywhere, this
+table governs.
+
+| Changed | Was | Now |
+| --- | --- | --- |
+| §5.2, §2.1, §1.2 (**C1**) | `seq` high-watermark below the xmin horizon, advancing to the highest `seq` scanned | Composite `(xmin, seq)` keyset, advancing to the last row returned. The stated invariant was **false** — `xmin < horizon` also excludes rows from transactions that started later and committed already, which can hold a lower `seq`. Advancing to "lowest excluded seq − 1" repairs the visible case and not the invisible mirror of it, so a `seq` watermark cannot be made exactly correct. B inherits the keyset, not the scan. |
+| §11 (**C2**) | The `role === 'admin'` gate is a deviation, justified at length | Not a deviation. `/admin/audit` already gates this way and `ADMIN_SECTIONS` already carries `role`; it is an established two-part pattern, and the nav half is required too. The justification shrinks to a sentence. |
+| §5.1 (**C3**) | The two-phase tick expressed as a `JOBS` entry | Not expressible as one. `runJob` wraps the body in the lock's transaction and `startJobRunner` passes the pool, so nesting is worse — postgres-js turns the inner transaction into a savepoint and holds the advisory lock until the outer one ends. `Job` grows an optional `afterLock` phase. |
+| §7.1 (**C4**) | `EVENT_SIGNING_KEY` required "at save time and at boot", like `OIDC_CLIENT_SECRET` | Save-time refusal, and at boot a **delivery halt**, not an exit. `parseConfig` has no database and the precondition is a database row, so a boot exit lets one row brick the container that serves the only UI for fixing it. |
+| §4.2, §4.5 (**C5**) | `document.downloaded` carries "requester identity"; a subject that does not resolve is `skipped` | Three cases, not two. The public path is cookie-free and writes a null actor, so an anonymous download is **delivered** with `verified: false`; only a purged requester or a missing subject row is `skipped`. Its subject is a `document_file`, which the enricher resolves to a document for the title. |
+| §5.4 | `last_success_at` against `now()` | `coalesce(last_success_at, created_at)`. NULL compared against `now()` is NULL, so an endpoint that had never succeeded would never disable — the dead-endpoint case the section exists for. |
+| §4.5 | "Egress now has that step too, and it is the same step" | The check lives in the **enricher only**; `purgeRequester` is unmodified. The signal is `purged_at IS NOT NULL`, not blank columns — a purge writes `purged-<id>@invalid`, so testing for an empty email gets the field a CRM upserts on wrong. |
+| §12 | `EVENT_EGRESS_ENABLED` parsed "like everything else" | `RUN_JOBS` and `RUN_MIGRATIONS` are read straight from `process.env`, so the run-flags are the wrong precedent. It goes in `parse.ts` and becomes the schema's first boolean. |
+| §2.1, §5.5 | Cursor initialisation stated as "start at the maximum" | Stated exactly: creation and skip-the-backlog both **jump** the cursor to the current horizon, so a transaction in flight commits below it and is never delivered. Harmless and intended; now in §16 rather than rediscovered. |
+| §16 | Three residuals | Eight. Added: the frozen-`xmin` row; the two cursor jumps; the sequential window scan with the row count at which to bound it; the swept-row re-enqueue; and `body_too_large`, a declared error reason nothing produces. |
+
+Two things this implementation did **not** change, recorded so they are not relitigated:
+
+- **`sql.raw` array interpolation in the delivery and admin queries.** Flagged during review as
+  unparameterised SQL. It is the established idiom at all four sites, including one predating this
+  subsystem, and every interpolated value is a uuid the database itself returned. If it is ever worth
+  parameterising, all four go together.
+- **`outbound_email.last_error` stores raw SMTP messages** and survives both a purge and the
+  retention window. Real, pre-existing, and unrelated to egress. Deliberately not fixed on this
+  branch.
 
 ---
 
