@@ -1,4 +1,4 @@
-import { and, eq } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 import {
 	accessGrant,
 	accessRequest,
@@ -11,7 +11,7 @@ import {
 	requester
 } from '../db/schema';
 import type { AuditEventRow } from '../audit';
-import { localizePath } from '../../i18n/locale';
+import { localizePath, pickTranslation } from '../../i18n/locale';
 import type { Db } from '../db';
 import type { EventModel } from './model';
 
@@ -246,33 +246,56 @@ const enrichNdaAcceptance =
 const enrichDocumentDownloaded: Enricher = async (db, row, context) => {
 	if (row.subjectId === null) return { skip: 'missing' };
 
-	const [file] = await db
-		.select({
-			id: documentFile.id,
-			locale: documentFile.locale,
-			version: documentFile.version,
-			documentId: document.id,
-			slug: document.slug,
-			tier: document.tier,
-			title: documentTranslation.title
-		})
-		.from(documentFile)
-		.innerJoin(document, eq(document.id, documentFile.documentId))
-		.leftJoin(
-			documentTranslation,
-			and(
-				eq(documentTranslation.documentId, document.id),
-				eq(documentTranslation.locale, documentFile.locale)
-			)
-		)
-		.where(eq(documentFile.id, row.subjectId))
-		.limit(1);
+	// Both reads key off columns already on the audit row, so neither waits on
+	// the other. `loadRequester` returns undefined for a null id without
+	// querying, which is the public-tier case handled below.
+	//
+	// The translation join carries no locale predicate: pinning it to the
+	// *file's* locale titled the payload in whatever language the download
+	// happened to be in, which is the §3.2 failure verbatim — a German card in
+	// an English-speaking team's channel because of which rendition a requester
+	// clicked. So the join returns every translation and `pickTranslation`
+	// chooses the operator's own. A document with no title in that locale still
+	// falls back to the raw slug, whatever other locales it carries: the payload
+	// is for the operator's staff, and a slug is how the content gap reaches
+	// them as one.
+	const [rows, requesterRow] = await Promise.all([
+		db
+			.select({
+				id: documentFile.id,
+				locale: documentFile.locale,
+				version: documentFile.version,
+				documentId: document.id,
+				slug: document.slug,
+				tier: document.tier,
+				translationLocale: documentTranslation.locale,
+				title: documentTranslation.title
+			})
+			.from(documentFile)
+			.innerJoin(document, eq(document.id, documentFile.documentId))
+			.leftJoin(documentTranslation, eq(documentTranslation.documentId, document.id))
+			.where(eq(documentFile.id, row.subjectId)),
+		loadRequester(db, row.actorId)
+	]);
+	const file = rows[0];
 	if (!file) return { skip: 'missing' };
+
+	// `context.locale` is the deployment's default locale (the job passes
+	// nothing else), so it is both the requested and the fallback locale here —
+	// named twice rather than through a second context field nothing would set
+	// differently.
+	const picked = pickTranslation(
+		rows
+			.filter((candidate) => candidate.translationLocale !== null)
+			.map((candidate) => ({ locale: candidate.translationLocale!, value: candidate.title })),
+		context.locale,
+		context.locale
+	);
 
 	const document_ = {
 		documentId: file.documentId,
 		slug: file.slug,
-		title: file.title ?? file.slug,
+		title: picked?.value ?? file.slug,
 		tier: file.tier,
 		locale: file.locale,
 		version: file.version
@@ -290,7 +313,7 @@ const enrichDocumentDownloaded: Enricher = async (db, row, context) => {
 		};
 	}
 
-	const person = identity(await loadRequester(db, row.actorId));
+	const person = identity(requesterRow);
 	if ('skip' in person) return person;
 
 	return {

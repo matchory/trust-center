@@ -293,6 +293,146 @@ describe('enrichEvent', () => {
 		expect(outcome.model.data).not.toHaveProperty('email');
 	});
 
+	/**
+	 * The title is resolved through `pickTranslation` against the *context*
+	 * locale — `config.defaultLocale`, the operator's own — not against the
+	 * locale of the file that happened to be downloaded (spec §3.2). Pinning the
+	 * join to `documentFile.locale` instead put a German title in an
+	 * English-speaking team's channel because of which file a requester clicked,
+	 * and degraded to a raw slug whenever that locale had no translation row.
+	 */
+	it("titles a download in the context locale, not the downloaded file's locale", async () => {
+		const categoryId = await insertCategory();
+		const slug = `policy-${crypto.randomUUID()}`;
+		const [doc] = await db
+			.insert(document)
+			.values({ slug, categoryId, tier: 'public' })
+			.returning({ id: document.id });
+		await db.insert(documentTranslation).values([
+			{ documentId: doc!.id, locale: 'en', title: 'Information Security Policy' },
+			{ documentId: doc!.id, locale: 'de', title: 'Informationssicherheitsrichtlinie' }
+		]);
+		// The German file, so the old locale-pinned join would title this card
+		// in German even though the payload's audience reads English.
+		const [file] = await db
+			.insert(documentFile)
+			.values({
+				documentId: doc!.id,
+				locale: 'de',
+				version: 1,
+				storageKey: `k-${crypto.randomUUID()}`,
+				filename: 'informationssicherheitsrichtlinie.pdf',
+				contentType: 'application/pdf',
+				sizeBytes: 1024,
+				sha256: 'a'.repeat(64)
+			})
+			.returning({ id: documentFile.id });
+
+		await recordEvent(db, {
+			action: 'document.downloaded',
+			actor: { type: 'requester', id: null },
+			subjectType: 'document_file',
+			subjectId: file!.id,
+			meta: { documentId: doc!.id, locale: 'de', version: 1, tier: 'public', watermarked: false }
+		});
+
+		const outcome = await enrichEvent(db, await newestEvent('document.downloaded'), CONTEXT);
+
+		expect(outcome.kind).toBe('model');
+		if (outcome.kind !== 'model') return;
+		expect(outcome.model.data).toMatchObject({
+			title: 'Information Security Policy',
+			// The file's own locale still travels, so a consumer can tell which
+			// rendition was fetched — it just does not decide the title.
+			locale: 'de'
+		});
+	});
+
+	/**
+	 * The slug is the fallback whenever the *context* locale has no title —
+	 * there is no second-choice locale. `pickTranslation` is called with the
+	 * context locale as both the requested and the default one, so a document
+	 * translated in some other language is a content gap from the operator's
+	 * point of view, and a raw slug in a Teams card is how it reaches them as
+	 * one. The case below carries a German title and an English context, which
+	 * is the boundary a "no translation at all" fixture would leave untested.
+	 */
+	it('falls back to the slug when the context locale has no title', async () => {
+		const categoryId = await insertCategory();
+		const slug = `de-only-${crypto.randomUUID()}`;
+		const [doc] = await db
+			.insert(document)
+			.values({ slug, categoryId, tier: 'public' })
+			.returning({ id: document.id });
+		await db
+			.insert(documentTranslation)
+			.values([{ documentId: doc!.id, locale: 'de', title: 'Informationssicherheit' }]);
+		const [file] = await db
+			.insert(documentFile)
+			.values({
+				documentId: doc!.id,
+				locale: 'de',
+				version: 1,
+				storageKey: `k-${crypto.randomUUID()}`,
+				filename: 'x.pdf',
+				contentType: 'application/pdf',
+				sizeBytes: 1024,
+				sha256: 'a'.repeat(64)
+			})
+			.returning({ id: documentFile.id });
+
+		await recordEvent(db, {
+			action: 'document.downloaded',
+			actor: { type: 'requester', id: null },
+			subjectType: 'document_file',
+			subjectId: file!.id,
+			meta: { documentId: doc!.id, locale: 'de', version: 1, tier: 'public', watermarked: false }
+		});
+
+		const outcome = await enrichEvent(db, await newestEvent('document.downloaded'), CONTEXT);
+
+		expect(outcome.kind).toBe('model');
+		if (outcome.kind !== 'model') return;
+		// Not 'Informationssicherheit': the German title is not a second choice.
+		expect(outcome.model.data).toMatchObject({ title: slug });
+	});
+
+	it('falls back to the slug when no translation exists at all', async () => {
+		const categoryId = await insertCategory();
+		const slug = `untranslated-${crypto.randomUUID()}`;
+		const [doc] = await db
+			.insert(document)
+			.values({ slug, categoryId, tier: 'public' })
+			.returning({ id: document.id });
+		const [file] = await db
+			.insert(documentFile)
+			.values({
+				documentId: doc!.id,
+				locale: 'de',
+				version: 1,
+				storageKey: `k-${crypto.randomUUID()}`,
+				filename: 'x.pdf',
+				contentType: 'application/pdf',
+				sizeBytes: 1024,
+				sha256: 'a'.repeat(64)
+			})
+			.returning({ id: documentFile.id });
+
+		await recordEvent(db, {
+			action: 'document.downloaded',
+			actor: { type: 'requester', id: null },
+			subjectType: 'document_file',
+			subjectId: file!.id,
+			meta: { documentId: doc!.id, locale: 'de', version: 1, tier: 'public', watermarked: false }
+		});
+
+		const outcome = await enrichEvent(db, await newestEvent('document.downloaded'), CONTEXT);
+
+		expect(outcome.kind).toBe('model');
+		if (outcome.kind !== 'model') return;
+		expect(outcome.model.data).toMatchObject({ title: slug });
+	});
+
 	it('enriches a gated document.downloaded with the requester', async () => {
 		const requesterId = await insertRequester({ name: 'Ines Roth', company: 'Beta AG' });
 		const categoryId = await insertCategory();
