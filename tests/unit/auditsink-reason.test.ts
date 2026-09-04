@@ -1,5 +1,25 @@
 import { describe, expect, it } from 'vitest';
-import { SinkError, classifyError } from '../../src/lib/server/auditsink/ship';
+import { SinkError, backoffMs, classifyError } from '../../src/lib/server/auditsink/ship';
+
+// Finding 10: the only prior coverage of backoff was "attempts reaches 3"
+// after three retries — it never asserted the delay itself, so a wrong base,
+// growth rate or cap would pass silently.
+describe('backoffMs', () => {
+	it('starts at the one-minute base on the first attempt', () => {
+		expect(backoffMs(1)).toBe(60_000);
+	});
+
+	it('grows exponentially with each attempt', () => {
+		expect(backoffMs(2)).toBe(120_000);
+		expect(backoffMs(3)).toBe(240_000);
+		expect(backoffMs(4)).toBe(480_000);
+	});
+
+	it('caps at one hour, forever — spec §2.2, §5.4 (B may not give up)', () => {
+		expect(backoffMs(7)).toBe(60 * 60_000);
+		expect(backoffMs(20)).toBe(60 * 60_000);
+	});
+});
 
 describe('classifyError', () => {
 	it('passes a SinkError through unchanged', () => {
