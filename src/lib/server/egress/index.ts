@@ -2,7 +2,6 @@ import { getConfig } from '../config';
 import { recordEgressFanout, withSpan } from '../telemetry';
 import { checkSigningKeyCanary } from './canary';
 import { claimDeliveries, deliverClaimed, disableStaleEndpoints } from './deliver';
-import { parseAllowList } from './destination';
 import { fanOut } from './fanout';
 import type { ClaimedDelivery } from './deliver';
 import type { Db } from '../db';
@@ -81,7 +80,7 @@ export async function runEgressDeliveries(db: Db): Promise<void> {
 			// because of who happened to submit the form (spec §3.2).
 			locale: config.defaultLocale,
 			signingKey: config.egress.signingKey,
-			allow: parseAllowList(config.egress.allow)
+			allow: config.egress.allow
 		});
 	}
 

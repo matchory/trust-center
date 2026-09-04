@@ -12,7 +12,6 @@ import {
 import { postEvent } from './client';
 import {
 	EgressDestinationRejected,
-	parseAllowList,
 	validateEndpointUrl,
 	type AllowEntry,
 	type LookupAll
@@ -95,7 +94,7 @@ function resolved(options: EndpointOptions | undefined): {
 } {
 	if (options) return { signingKey: options.signingKey, allow: options.allow ?? [] };
 	const config = getConfig();
-	return { signingKey: config.egress.signingKey, allow: parseAllowList(config.egress.allow) };
+	return { signingKey: config.egress.signingKey, allow: config.egress.allow };
 }
 
 /**

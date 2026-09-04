@@ -18,7 +18,7 @@ vi.mock('../../src/lib/server/config', () => ({
 	getConfig: () => ({
 		baseUrl: 'https://trust.example.com',
 		defaultLocale: 'de',
-		egress: { enabled: egressEnabled(), signingKey: 'k'.repeat(32), allow: undefined }
+		egress: { enabled: egressEnabled(), signingKey: 'k'.repeat(32), allow: [] }
 	})
 }));
 

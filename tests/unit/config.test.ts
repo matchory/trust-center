@@ -206,7 +206,7 @@ describe('telemetry configuration', () => {
 describe('egress configuration', () => {
 	it('is off by default', () => {
 		const config = parseConfig(valid, COMPILED);
-		expect(config.egress).toEqual({ enabled: false, signingKey: undefined, allow: undefined });
+		expect(config.egress).toEqual({ enabled: false, signingKey: undefined, allow: [] });
 	});
 
 	it('reads the three variables', () => {
@@ -222,7 +222,19 @@ describe('egress configuration', () => {
 
 		expect(config.egress.enabled).toBe(true);
 		expect(config.egress.signingKey).toBe('k'.repeat(32));
-		expect(config.egress.allow).toBe('n8n:5678,10.1.0.0/16');
+		expect(config.egress.allow).toEqual([
+			{ kind: 'host', host: 'n8n', port: 5678 },
+			{ kind: 'cidr', cidr: '10.1.0.0/16' }
+		]);
+	});
+
+	// The reason the list is parsed here rather than per caller: a malformed
+	// entry used to boot clean, then throw inside every delivery tick and 500 the
+	// admin page an operator would go to in order to fix it.
+	it('refuses to boot on a malformed allowlist entry', () => {
+		expect(() => parseConfig({ ...valid, EVENT_EGRESS_ALLOW: '10.1.0.0/40' }, COMPILED)).toThrow(
+			/EVENT_EGRESS_ALLOW/
+		);
 	});
 
 	// A blank value is how a .env spells "unset" (blankAsUndefined's reason).
