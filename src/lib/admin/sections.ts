@@ -27,5 +27,8 @@ export const ADMIN_SECTIONS: AdminSection[] = [
 	{ path: '/admin/updates', label: () => m.nav_updates() },
 	{ path: '/admin/settings/branding', label: () => m.admin_branding() },
 	{ path: '/admin/settings/access', label: () => m.admin_access_settings() },
+	// Admin only, for the reason the route's own `load` gives: an endpoint URL
+	// is where a prospect's name and address get sent (spec §11).
+	{ path: '/admin/settings/integrations', label: () => m.admin_integrations(), role: 'admin' },
 	{ path: '/admin/audit', label: () => m.nav_audit(), role: 'admin' }
 ];

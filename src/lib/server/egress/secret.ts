@@ -47,7 +47,9 @@ export function signatureHeader(
 }
 
 /**
- * Stored on first use and compared on every boot. Without it, restoring a
+ * Stored on first use and compared at the head of every delivery tick — NOT
+ * at boot; `checkSigningKeyCanary`'s own docstring records why a database row
+ * must not be able to stop the container. Without it, restoring a
  * backup into an environment with a different or absent EVENT_SIGNING_KEY
  * silently re-keys every endpoint and nothing detects it — the one property a
  * stored secret gets for free and derivation otherwise loses. One row, and it

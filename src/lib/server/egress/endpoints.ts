@@ -1,0 +1,621 @@
+import { and, eq, inArray, sql } from 'drizzle-orm';
+import { recordEvent } from '../audit';
+import { localizePath } from '../../i18n/locale';
+import { getConfig } from '../config';
+import {
+	EGRESS_FORMATS,
+	eventDelivery,
+	eventEndpoint,
+	eventEndpointFilter,
+	type EgressFormat
+} from '../db/schema';
+import { postEvent } from './client';
+import {
+	EgressDestinationRejected,
+	parseAllowList,
+	validateEndpointUrl,
+	type AllowEntry,
+	type LookupAll
+} from './destination';
+import { currentHorizon } from './fanout';
+import { isValidPattern, matchesPattern } from './filter';
+import { formatEvent } from './format';
+import { endpointSecret, signatureHeader } from './secret';
+import type { Db } from '../db';
+import type { EventModel } from './model';
+
+/** What the list page may show. Deliberately no `url` — see `EndpointDetail`. */
+export interface EndpointSummary {
+	id: string;
+	name: string;
+	format: EgressFormat;
+	/**
+	 * The destination host and nothing else (spec §11). A Teams Workflows URL
+	 * carries its shared secret in the query string, so the full URL belongs on
+	 * the one page that edits it and nowhere else.
+	 */
+	host: string;
+	enabled: boolean;
+	disabledReason: string | null;
+	lastSuccessAt: Date | null;
+	lastOutcome: { status: string; statusCode: number | null } | null;
+	pendingDepth: number;
+	patterns: string[];
+}
+
+/** The summary plus the two fields only the edit form needs. */
+export interface EndpointDetail extends EndpointSummary {
+	url: string;
+	secretVersion: number;
+}
+
+export interface EndpointInput {
+	name: string;
+	url: string;
+	format: EgressFormat;
+	patterns: string[];
+}
+
+/**
+ * The whole object defaults from `getConfig()` when omitted, so
+ * `options === undefined` means "read the environment" and
+ * `{ signingKey: undefined }` means "explicitly no key is configured". One
+ * nullish convention: `AppConfig.egress.signingKey` and `DeliverOptions` both
+ * use `undefined`, and `signingKey` is required here so a caller has to say
+ * which it means.
+ */
+export interface EndpointOptions {
+	signingKey: string | undefined;
+	allow?: readonly AllowEntry[];
+}
+
+export interface EndpointActor {
+	staffUserId: string;
+	ip: string | null;
+}
+
+/**
+ * Carries the form field the message belongs to, so a route can
+ * `fail(400, { field })` the way `/admin/settings/access` does rather than
+ * turning an operator typo into a 500.
+ */
+export class EndpointInvalid extends Error {
+	constructor(
+		message: string,
+		readonly field: 'name' | 'url' | 'format' | 'patterns' | 'id'
+	) {
+		super(message);
+		this.name = 'EndpointInvalid';
+	}
+}
+
+function resolved(options: EndpointOptions | undefined): {
+	signingKey: string | undefined;
+	allow: readonly AllowEntry[];
+} {
+	if (options) return { signingKey: options.signingKey, allow: options.allow ?? [] };
+	const config = getConfig();
+	return { signingKey: config.egress.signingKey, allow: parseAllowList(config.egress.allow) };
+}
+
+/**
+ * Everything a write has to be true of, in one place and before any of it.
+ * `validateEndpointUrl` is the same function the delivery path re-runs on
+ * every attempt, so a URL that saves is a URL that can be attempted.
+ */
+function validate(
+	input: EndpointInput,
+	allow: readonly AllowEntry[],
+	signingKey: string | undefined
+): { name: string; patterns: string[] } {
+	const name = input.name.trim();
+	if (name === '') throw new EndpointInvalid('a name is required', 'name');
+
+	if (!(EGRESS_FORMATS as readonly string[]).includes(input.format)) {
+		throw new EndpointInvalid(`${input.format} is not a supported format`, 'format');
+	}
+
+	try {
+		validateEndpointUrl(input.url, allow);
+	} catch (cause) {
+		if (cause instanceof EgressDestinationRejected) {
+			throw new EndpointInvalid(cause.message, 'url');
+		}
+		throw cause;
+	}
+
+	// An endpoint with no filters receives nothing, and silence that looks like
+	// a save is the failure this refuses.
+	const patterns = [...new Set(input.patterns.map((pattern) => pattern.trim()).filter(Boolean))];
+	if (patterns.length === 0) {
+		throw new EndpointInvalid('at least one pattern is required', 'patterns');
+	}
+	for (const pattern of patterns) {
+		if (!isValidPattern(pattern)) {
+			throw new EndpointInvalid(`${pattern} is not a valid pattern`, 'patterns');
+		}
+	}
+
+	// A `generic` payload is what a consumer authenticates, so saving one with
+	// no key configured would be the thing happening without its security
+	// property. Teams verifies nothing, so a Teams-only operator needs no key
+	// (spec §7.1).
+	if (input.format === 'generic' && signingKey === undefined) {
+		throw new EndpointInvalid(
+			'EVENT_SIGNING_KEY must be configured before a generic endpoint can be saved',
+			'format'
+		);
+	}
+
+	return { name, patterns };
+}
+
+/** The host, or the raw string when a stored row somehow no longer parses. */
+function hostOf(url: string): string {
+	try {
+		return new URL(url).hostname;
+	} catch {
+		return url;
+	}
+}
+
+interface EndpointRow {
+	id: string;
+	name: string;
+	url: string;
+	format: EgressFormat;
+	secretVersion: number;
+	enabled: boolean;
+	disabledReason: string | null;
+	lastSuccessAt: Date | null;
+}
+
+/**
+ * Turns endpoint rows into details, with the filters, the pending depth and
+ * the newest delivery answered for the whole set at once rather than once per
+ * row — three round trips regardless of how many endpoints exist.
+ */
+async function detail(db: Db, rows: EndpointRow[]): Promise<EndpointDetail[]> {
+	if (rows.length === 0) return [];
+	const ids = rows.map((row) => row.id);
+
+	const filters = await db
+		.select({ endpointId: eventEndpointFilter.endpointId, pattern: eventEndpointFilter.pattern })
+		.from(eventEndpointFilter)
+		.where(inArray(eventEndpointFilter.endpointId, ids))
+		.orderBy(eventEndpointFilter.pattern);
+	const patternsByEndpoint = new Map<string, string[]>();
+	for (const filter of filters) {
+		const existing = patternsByEndpoint.get(filter.endpointId);
+		if (existing) existing.push(filter.pattern);
+		else patternsByEndpoint.set(filter.endpointId, [filter.pattern]);
+	}
+
+	// The same partial index the backpressure check reads
+	// (`event_delivery_endpoint_idx`), so this stays a small index scan as
+	// delivered rows accumulate.
+	const depths = await db
+		.select({ endpointId: eventDelivery.endpointId, depth: sql<number>`count(*)::int` })
+		.from(eventDelivery)
+		.where(and(inArray(eventDelivery.endpointId, ids), eq(eventDelivery.status, 'pending')))
+		.groupBy(eventDelivery.endpointId);
+	const depthByEndpoint = new Map(depths.map((row) => [row.endpointId, row.depth]));
+
+	const outcomes = (await db.execute(sql`
+		SELECT DISTINCT ON (endpoint_id) endpoint_id, status, last_status_code
+		FROM event_delivery
+		WHERE endpoint_id = ANY(${sql.raw(`ARRAY['${ids.join("','")}']::uuid[]`)})
+		ORDER BY endpoint_id, created_at DESC, id DESC
+	`)) as unknown as { endpoint_id: string; status: string; last_status_code: number | null }[];
+	const outcomeByEndpoint = new Map(
+		outcomes.map((row) => [
+			row.endpoint_id,
+			{ status: row.status, statusCode: row.last_status_code }
+		])
+	);
+
+	return rows.map((row) => ({
+		id: row.id,
+		name: row.name,
+		url: row.url,
+		format: row.format,
+		host: hostOf(row.url),
+		secretVersion: row.secretVersion,
+		enabled: row.enabled,
+		disabledReason: row.disabledReason,
+		lastSuccessAt: row.lastSuccessAt,
+		lastOutcome: outcomeByEndpoint.get(row.id) ?? null,
+		pendingDepth: depthByEndpoint.get(row.id) ?? 0,
+		patterns: patternsByEndpoint.get(row.id) ?? []
+	}));
+}
+
+const COLUMNS = {
+	id: eventEndpoint.id,
+	name: eventEndpoint.name,
+	url: eventEndpoint.url,
+	format: sql<EgressFormat>`${eventEndpoint.format}`,
+	secretVersion: eventEndpoint.secretVersion,
+	enabled: eventEndpoint.enabled,
+	disabledReason: eventEndpoint.disabledReason,
+	lastSuccessAt: eventEndpoint.lastSuccessAt
+};
+
+/**
+ * An allow-list rather than a rest-spread that drops `url`: a field added to
+ * `EndpointDetail` later — another secret, say — then has to be named here
+ * before it can reach the list page, instead of appearing there by default.
+ */
+function summarise(endpoint: EndpointDetail): EndpointSummary {
+	return {
+		id: endpoint.id,
+		name: endpoint.name,
+		format: endpoint.format,
+		host: endpoint.host,
+		enabled: endpoint.enabled,
+		disabledReason: endpoint.disabledReason,
+		lastSuccessAt: endpoint.lastSuccessAt,
+		lastOutcome: endpoint.lastOutcome,
+		pendingDepth: endpoint.pendingDepth,
+		patterns: endpoint.patterns
+	};
+}
+
+export async function listEndpoints(db: Db): Promise<EndpointSummary[]> {
+	const rows = await db.select(COLUMNS).from(eventEndpoint).orderBy(eventEndpoint.name);
+	return (await detail(db, rows)).map(summarise);
+}
+
+export async function getEndpoint(db: Db, id: string): Promise<EndpointDetail | undefined> {
+	const rows = await db.select(COLUMNS).from(eventEndpoint).where(eq(eventEndpoint.id, id));
+	return (await detail(db, rows))[0];
+}
+
+export async function createEndpoint(
+	db: Db,
+	input: EndpointInput,
+	actor: EndpointActor,
+	options?: EndpointOptions
+): Promise<string> {
+	const { signingKey, allow } = resolved(options);
+	const { name, patterns } = validate(input, allow, signingKey);
+
+	// One transaction, so a half-created endpoint — a row with no filters, or
+	// filters an operator cannot see — cannot exist.
+	return db.transaction(async (tx) => {
+		const [row] = await tx
+			.insert(eventEndpoint)
+			.values({
+				name,
+				url: input.url,
+				format: input.format,
+				// Not zero: a new endpoint must not replay eighteen months of
+				// history into a Teams channel on its first tick (spec §2.1).
+				cursorXmin: await currentHorizon(tx),
+				cursorSeq: 0n
+			})
+			.returning({ id: eventEndpoint.id });
+		const id = row!.id;
+
+		await tx
+			.insert(eventEndpointFilter)
+			.values(patterns.map((pattern) => ({ endpointId: id, pattern })));
+
+		// `meta` carries the name and format but NOT the URL: a Teams Workflows
+		// URL carries its shared secret in the query string, and this table
+		// cannot be deleted from (spec §9).
+		await recordEvent(tx, {
+			action: 'event_endpoint.created',
+			actor: { type: 'staff', id: actor.staffUserId },
+			subjectType: 'event_endpoint',
+			subjectId: id,
+			ip: actor.ip ?? undefined,
+			meta: { name, format: input.format, patterns }
+		});
+
+		return id;
+	});
+}
+
+export async function updateEndpoint(
+	db: Db,
+	id: string,
+	input: EndpointInput,
+	actor: EndpointActor,
+	options?: EndpointOptions
+): Promise<void> {
+	const { signingKey, allow } = resolved(options);
+	const { name, patterns } = validate(input, allow, signingKey);
+
+	await db.transaction(async (tx) => {
+		// The cursor is deliberately untouched: an operator narrowing a filter is
+		// not asking to re-send anything.
+		const updated = await tx
+			.update(eventEndpoint)
+			.set({ name, url: input.url, format: input.format })
+			.where(eq(eventEndpoint.id, id))
+			.returning({ id: eventEndpoint.id });
+		if (updated.length === 0) throw new EndpointInvalid('no such endpoint', 'id');
+
+		// Replaced wholesale rather than diffed: the filter set is small, and a
+		// diff is where "the pattern I removed is still selected" comes from.
+		await tx.delete(eventEndpointFilter).where(eq(eventEndpointFilter.endpointId, id));
+		await tx
+			.insert(eventEndpointFilter)
+			.values(patterns.map((pattern) => ({ endpointId: id, pattern })));
+
+		await recordEvent(tx, {
+			action: 'event_endpoint.updated',
+			actor: { type: 'staff', id: actor.staffUserId },
+			subjectType: 'event_endpoint',
+			subjectId: id,
+			ip: actor.ip ?? undefined,
+			meta: { name, format: input.format, patterns }
+		});
+	});
+}
+
+export async function deleteEndpoint(db: Db, id: string, actor: EndpointActor): Promise<void> {
+	await db.transaction(async (tx) => {
+		// Delete first, then record. `audit_event` has no foreign key to
+		// `event_endpoint` — deliberately, so the event outlives the row it
+		// names — which means either order works; this one is chosen because it
+		// writes an event only for a delete that actually claimed a row.
+		const [deleted] = await tx
+			.delete(eventEndpoint)
+			.where(eq(eventEndpoint.id, id))
+			.returning({ name: eventEndpoint.name, format: eventEndpoint.format });
+		if (!deleted) throw new EndpointInvalid('no such endpoint', 'id');
+
+		await recordEvent(tx, {
+			action: 'event_endpoint.deleted',
+			actor: { type: 'staff', id: actor.staffUserId },
+			subjectType: 'event_endpoint',
+			subjectId: id,
+			ip: actor.ip ?? undefined,
+			meta: { name: deleted.name, format: deleted.format }
+		});
+	});
+}
+
+export async function setEndpointEnabled(
+	db: Db,
+	id: string,
+	input: { enabled: boolean; skipBacklog?: boolean; reason?: string },
+	actor: EndpointActor
+): Promise<void> {
+	await db.transaction(async (tx) => {
+		// `enabled` and `disabled_at` move together or `event_endpoint_disabled_check`
+		// rejects the row: "disabled" is one state, not two columns that usually
+		// agree, and it always carries a reason.
+		const reason = input.enabled ? null : input.reason?.trim() || 'disabled by an operator';
+		const values: Record<string, unknown> = {
+			enabled: input.enabled,
+			disabledAt: input.enabled ? null : new Date(),
+			disabledReason: reason
+		};
+
+		if (input.enabled && input.skipBacklog) {
+			// A channel flooded with a day of stale notices is worse than a gap,
+			// and `audit_event` remains the record of record either way — nothing
+			// is lost, only un-notified (spec §5.5).
+			values.cursorXmin = await currentHorizon(tx);
+			values.cursorSeq = 0n;
+		}
+
+		const updated = await tx
+			.update(eventEndpoint)
+			.set(values)
+			.where(eq(eventEndpoint.id, id))
+			.returning({ id: eventEndpoint.id });
+		if (updated.length === 0) throw new EndpointInvalid('no such endpoint', 'id');
+
+		if (input.enabled && input.skipBacklog) {
+			// `skipped` rather than a delete, so the gap is visible afterwards.
+			await tx
+				.update(eventDelivery)
+				.set({ status: 'skipped', lastStatusCode: null, lastError: null })
+				.where(and(eq(eventDelivery.endpointId, id), eq(eventDelivery.status, 'pending')));
+		}
+
+		// `updated`, not a fifth action name: §9 fixes the four an endpoint may
+		// ever carry, and they are permanent once written.
+		await recordEvent(tx, {
+			action: 'event_endpoint.updated',
+			actor: { type: 'staff', id: actor.staffUserId },
+			subjectType: 'event_endpoint',
+			subjectId: id,
+			ip: actor.ip ?? undefined,
+			meta: { enabled: input.enabled, reason, skippedBacklog: input.skipBacklog === true }
+		});
+	});
+}
+
+export async function bumpSecretVersion(db: Db, id: string, actor: EndpointActor): Promise<number> {
+	return db.transaction(async (tx) => {
+		// Incremented in SQL rather than read-then-write: two admins rotating at
+		// once must not land on the same version.
+		const [row] = await tx
+			.update(eventEndpoint)
+			.set({ secretVersion: sql`${eventEndpoint.secretVersion} + 1` })
+			.where(eq(eventEndpoint.id, id))
+			.returning({ secretVersion: eventEndpoint.secretVersion });
+		if (!row) throw new EndpointInvalid('no such endpoint', 'id');
+
+		await recordEvent(tx, {
+			action: 'event_endpoint.updated',
+			actor: { type: 'staff', id: actor.staffUserId },
+			subjectType: 'event_endpoint',
+			subjectId: id,
+			ip: actor.ip ?? undefined,
+			meta: { secretVersion: row.secretVersion }
+		});
+
+		return row.secretVersion;
+	});
+}
+
+/**
+ * Roughly thirty events a day — the point at which a channel is being written
+ * to more than it is read. A judgement call, so it is a constant with its
+ * reasoning rather than a literal in a template: `document.downloaded` is
+ * registered and deliberately not throttled, because throttling here would be
+ * this subsystem deciding what an operator's channel should contain. The
+ * operator chooses, and is told what they are choosing (spec §9.1).
+ */
+export const HIGH_FREQUENCY_WEEKLY_EVENTS = 200;
+
+/**
+ * The patterns an operator has selected that are above the threshold, with the
+ * weekly count each one actually carries.
+ *
+ * A pure function rather than six lines inside the page `load`, because that
+ * is the only shape in which §9.1's behaviour can be asserted at all — the
+ * arithmetic that decides whether an operator is warned should not be
+ * reachable exclusively through a route.
+ *
+ * Summed across every action a pattern matches, not per action: an operator
+ * who selects `document.*` is choosing the total of what that expands to, and
+ * warning on the largest single action would understate what they signed up
+ * for.
+ */
+export function highFrequencyPatterns(
+	patterns: readonly string[],
+	rates: Record<string, number>,
+	threshold: number = HIGH_FREQUENCY_WEEKLY_EVENTS
+): { pattern: string; weekly: number }[] {
+	return patterns
+		.map((pattern) => ({
+			pattern,
+			weekly: Object.entries(rates)
+				.filter(([action]) => matchesPattern(pattern, action))
+				.reduce((total, [, count]) => total + count, 0)
+		}))
+		.filter((entry) => entry.weekly > threshold);
+}
+
+/** How often each action was written over the last seven days. */
+export async function actionRates(db: Db): Promise<Record<string, number>> {
+	const rows = (await db.execute(sql`
+		SELECT action, count(*)::int AS n
+		FROM audit_event
+		WHERE at > now() - interval '7 days'
+		GROUP BY action
+	`)) as unknown as { action: string; n: number }[];
+
+	return Object.fromEntries(rows.map((row) => [row.action, row.n]));
+}
+
+export interface TestEventOptions {
+	signingKey: string | undefined;
+	allow?: readonly AllowEntry[];
+	baseUrl?: string;
+	/**
+	 * Defaults to `config.defaultLocale`, for the reason the delivery path gives
+	 * for reading the same value: the audience of an egress payload is the
+	 * operator's own staff, not the requester (spec §3.2).
+	 */
+	locale?: string;
+	/** Test seam, as on `DeliverOptions`. Never set by a route. */
+	lookup?: LookupAll;
+}
+
+/**
+ * Renders a synthetic model and delivers it inline. The only way an operator
+ * learns their URL is wrong before a real access request does.
+ *
+ * It bypasses **exactly three** things — the cursor, the filter and the queue.
+ * The destination check, the scheme and port restrictions, the redirect
+ * refusal and the discard-the-body rule all apply unchanged, because an
+ * inline admin-triggered request that skipped them would be a hand-built SSRF
+ * probe with a UI (spec §11). That is why this goes through `postEvent` and
+ * `validateEndpointUrl` rather than issuing its own request.
+ *
+ * `egress.test` is deliberately not an audit action: nothing writes it to
+ * `audit_event`, so no filter can match it and no loop can start (spec §9).
+ * No `event_delivery` row is written either — nothing retries a test send.
+ */
+export async function sendTestEvent(
+	db: Db,
+	id: string,
+	options?: TestEventOptions
+): Promise<{ statusCode: number | null; reason: string | null }> {
+	const [endpoint] = await db
+		.select({
+			url: eventEndpoint.url,
+			format: eventEndpoint.format,
+			secretVersion: eventEndpoint.secretVersion
+		})
+		.from(eventEndpoint)
+		.where(eq(eventEndpoint.id, id));
+	if (!endpoint) throw new EndpointInvalid('no such endpoint', 'id');
+
+	const { signingKey, allow } = resolved(options);
+	const baseUrl = options?.baseUrl ?? getConfig().baseUrl;
+	const locale = options?.locale ?? getConfig().defaultLocale;
+
+	if (endpoint.format === 'generic' && signingKey === undefined) {
+		return { statusCode: null, reason: 'signing_key_missing' };
+	}
+
+	const model: EventModel = {
+		action: 'egress.test',
+		at: new Date(),
+		eventId: crypto.randomUUID(),
+		// No audit row exists for a test send, and `0` is the one seq a real
+		// event never has — a consumer ordering on it sorts this first rather
+		// than into the middle of its history.
+		seq: '0',
+		// A fresh id because that is what the field means on the wire: the
+		// consumer's idempotency key. Nothing is stored and nothing retries, so
+		// it costs a UUID.
+		deliveryId: crypto.randomUUID(),
+		subject: null,
+		actor: { type: 'staff', id: null },
+		verified: false,
+		data: {},
+		summary: 'Test event from the trust center. Nothing happened.',
+		// Through `localizePath` like every link `enrich.ts` builds: every page
+		// URL in this application is locale-prefixed, and an unprefixed one
+		// reaches the operator as a 302 rather than a page.
+		link: `${baseUrl}${localizePath(`/admin/settings/integrations/${id}`, locale)}`
+	};
+
+	const { body, contentType } = formatEvent(endpoint.format as EgressFormat, model);
+
+	let url: URL;
+	try {
+		url = validateEndpointUrl(endpoint.url, allow);
+	} catch (cause) {
+		if (cause instanceof EgressDestinationRejected) {
+			return { statusCode: null, reason: cause.reason };
+		}
+		throw cause;
+	}
+
+	const headers: Record<string, string> = {
+		'x-trust-center-event': model.action,
+		'x-trust-center-delivery': model.deliveryId
+	};
+	if (signingKey !== undefined) {
+		const timestamp = Math.floor(Date.now() / 1000);
+		headers['x-trust-center-signature'] = signatureHeader(
+			[endpointSecret(signingKey, id, endpoint.secretVersion)],
+			timestamp,
+			body
+		);
+	}
+
+	const outcome = await postEvent({
+		url,
+		allow,
+		body,
+		contentType,
+		headers,
+		lookup: options?.lookup
+	});
+
+	return outcome.kind === 'delivered'
+		? { statusCode: outcome.statusCode, reason: null }
+		: { statusCode: outcome.statusCode, reason: outcome.reason };
+}
