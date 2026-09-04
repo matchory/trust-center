@@ -99,51 +99,55 @@ function unmap(address: string): string {
 	return mapped ? mapped[1]! : address;
 }
 
+const DENIED_RANGES = [
+	'127.0.0.0/8',
+	// The cloud metadata endpoint 169.254.169.254 lives here; no legitimate
+	// webhook does, and no configuration makes reaching it the operator's intent.
+	'169.254.0.0/16',
+	'0.0.0.0/8',
+	'224.0.0.0/4',
+	'255.255.255.255/32',
+	'::/128',
+	'::1/128',
+	'fe80::/10',
+	'ff00::/8'
+];
+
+const PRIVATE_RANGES = [
+	'10.0.0.0/8',
+	'172.16.0.0/12',
+	'192.168.0.0/16',
+	// CGNAT is in scope because Alibaba Cloud's metadata service is at
+	// 100.100.100.200, which the unconditional denials do not name.
+	'100.64.0.0/10',
+	'fc00::/7'
+];
+
 /**
  * `denied` is denied unconditionally — the allowlist cannot reach it.
- * `169.254.169.254` is the cloud metadata endpoint; no legitimate webhook
- * lives there and no configuration makes reaching it the operator's intent.
  * `private` needs an allowlist entry. Everything else is `public`.
  */
 export function classifyAddress(address: string): 'denied' | 'private' | 'public' {
 	const normalised = unmap(address).toLowerCase();
 
-	if (isIPv4(normalised)) {
-		const value = ipv4ToInt(normalised);
-		const inRange = (cidr: string) => {
-			const [base, bits] = cidr.split('/');
-			const mask = (1n << 32n) - (1n << (32n - BigInt(bits!)));
-			return (value & mask) === (ipv4ToInt(base!) & mask);
-		};
-
-		if (inRange('127.0.0.0/8')) return 'denied';
-		if (inRange('169.254.0.0/16')) return 'denied';
-		if (inRange('0.0.0.0/8')) return 'denied';
-		if (inRange('224.0.0.0/4')) return 'denied';
-		if (inRange('255.255.255.255/32')) return 'denied';
-		// CGNAT is in scope because Alibaba Cloud's metadata service is at
-		// 100.100.100.200, which the unconditional denials do not name.
-		if (inRange('10.0.0.0/8') || inRange('172.16.0.0/12') || inRange('192.168.0.0/16')) {
-			return 'private';
-		}
-		if (inRange('100.64.0.0/10')) return 'private';
-
-		return 'public';
-	}
-
-	const value = ipv6ToInt(normalised);
-	const inRange6 = (base: string, bits: number) => {
-		const mask = (1n << 128n) - (1n << BigInt(128 - bits));
-		return (value & mask) === (ipv6ToInt(base) & mask);
-	};
-
-	if (value === 0n) return 'denied'; // ::
-	if (value === 1n) return 'denied'; // ::1
-	if (inRange6('fe80::', 10)) return 'denied';
-	if (inRange6('ff00::', 8)) return 'denied';
-	if (inRange6('fc00::', 7)) return 'private';
+	// One list per verdict rather than a branch per family: `inCidr` already
+	// dispatches on family and returns false across it, so an IPv4 address
+	// simply never matches an IPv6 entry. Keeping the mask arithmetic in one
+	// place matters more here than anywhere else in this file — `validateCidr`
+	// documents how a single wrong shift silently matches every address.
+	if (DENIED_RANGES.some((cidr) => inCidr(normalised, cidr))) return 'denied';
+	if (PRIVATE_RANGES.some((cidr) => inCidr(normalised, cidr))) return 'private';
 
 	return 'public';
+}
+
+/**
+ * The port a URL actually connects on. One definition because the two callers
+ * must agree: one decides whether the port is allowlisted, the other is the
+ * port handed to the socket.
+ */
+function portOf(url: URL): number {
+	return url.port === '' ? (url.protocol === 'https:' ? 443 : 80) : Number(url.port);
 }
 
 /** Letters, digits, hyphens and dots, with a non-numeric last label. */
@@ -205,7 +209,7 @@ export function validateEndpointUrl(raw: string, allow: readonly AllowEntry[] = 
 	}
 	url.hostname = hostname;
 
-	const port = url.port === '' ? (url.protocol === 'https:' ? 443 : 80) : Number(url.port);
+	const port = portOf(url);
 	const allowedPort =
 		port === 80 ||
 		port === 443 ||
@@ -231,7 +235,7 @@ export async function resolveDestination(
 	allow: readonly AllowEntry[],
 	lookup: LookupAll = (host) => dnsLookup(host, { all: true })
 ): Promise<PinnedAddress> {
-	const port = url.port === '' ? (url.protocol === 'https:' ? 443 : 80) : Number(url.port);
+	const port = portOf(url);
 
 	let resolved: { address: string; family: number }[];
 	try {

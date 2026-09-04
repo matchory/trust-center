@@ -1,5 +1,5 @@
 import { SpanKind } from '@opentelemetry/api';
-import { and, eq, sql } from 'drizzle-orm';
+import { and, eq, inArray, sql } from 'drizzle-orm';
 import { recordEvent } from '../audit';
 import {
 	auditEvent,
@@ -11,7 +11,7 @@ import {
 import { recordEgressDelivery, withSpan } from '../telemetry';
 import { backoffMinutes, MAX_ATTEMPTS, postEvent } from './client';
 import { validateEndpointUrl, type AllowEntry, type LookupAll } from './destination';
-import { enrichEvent } from './enrich';
+import { enrichEvent, type EnrichOutcome } from './enrich';
 import { formatEvent } from './format';
 import { endpointSecret, signatureHeader } from './secret';
 import type { Db } from '../db';
@@ -65,13 +65,7 @@ export interface DeliverOptions {
  * rows and push their next attempt forward, exactly as `drainOutbox` does. The
  * pushed-forward claim is what makes phase two safe with no lock held.
  */
-export async function claimDeliveries(
-	tx: Db,
-	options: { limit?: number; perEndpoint?: number } = {}
-): Promise<ClaimedDelivery[]> {
-	const limit = options.limit ?? CLAIM_LIMIT;
-	const perEndpoint = options.perEndpoint ?? PER_ENDPOINT_LIMIT;
-
+export async function claimDeliveries(tx: Db): Promise<ClaimedDelivery[]> {
 	// Postgres refuses `FOR UPDATE` in the same SELECT as a window function
 	// (CheckSelectLocking: "FOR UPDATE is not allowed with window functions"),
 	// so ranking and locking are two queries rather than one CTE. The first
@@ -87,9 +81,9 @@ export async function claimDeliveries(
 			JOIN event_endpoint e ON e.id = d.endpoint_id
 			WHERE d.status = 'pending' AND d.next_attempt_at <= now() AND e.enabled = true
 		) ranked
-		WHERE rank <= ${perEndpoint}
+		WHERE rank <= ${PER_ENDPOINT_LIMIT}
 		ORDER BY next_attempt_at
-		LIMIT ${limit}
+		LIMIT ${CLAIM_LIMIT}
 	`)) as unknown as { id: string }[];
 
 	if (candidates.length === 0) return [];
@@ -159,6 +153,30 @@ export async function deliverClaimed(
 	let failed = 0;
 	let skipped = 0;
 
+	// One read for the whole batch rather than one per row. The round-robin
+	// claim makes "one event owed to N endpoints" the normal shape, not the
+	// exception, so the per-row form re-fetched the same audit row once per
+	// endpoint.
+	//
+	// The Drizzle query builder, not raw SQL: a hand-written SELECT returns
+	// snake_case keys, and enrichEvent reads camelCase (`actorType`,
+	// `subjectType`, ...) — every field would silently be undefined rather
+	// than throw, delivering an event with a null subject and empty data.
+	const auditRows =
+		claimed.length === 0
+			? []
+			: await db
+					.select()
+					.from(auditEvent)
+					.where(inArray(auditEvent.seq, [...new Set(claimed.map((row) => row.auditSeq))]));
+	const audits = new Map(auditRows.map((audit) => [audit.seq, audit]));
+
+	// Enrichment is two to three further queries against rows that do not vary
+	// by endpoint, so it is done once per event and reused across the endpoints
+	// that event fans out to. The cache lives exactly one batch, which keeps
+	// "a retry re-renders from live state" true.
+	const enrichments = new Map<bigint, EnrichOutcome>();
+
 	for (const row of claimed) {
 		// Started before the render rather than around the POST alone: the
 		// histogram is what an operator budgets a tick against, and enrichment is
@@ -173,41 +191,39 @@ export async function deliverClaimed(
 				seconds: (performance.now() - started) / 1000
 			});
 
-		// The Drizzle query builder, not raw SQL: a hand-written SELECT returns
-		// snake_case keys, and enrichEvent reads camelCase (`actorType`,
-		// `subjectType`, ...) — every field would silently be undefined rather
-		// than throw, delivering an event with a null subject and empty data.
-		const [audit] = await db
-			.select()
-			.from(auditEvent)
-			.where(eq(auditEvent.seq, row.auditSeq))
-			.limit(1);
+		const audit = audits.get(row.auditSeq);
 
 		// The audit log is append-only, so the row cannot have been deleted — but
 		// a delivery whose audit row is somehow absent has nothing to render.
 		if (!audit) {
-			await terminate(db, row, 'skipped', null, null);
+			await markSkipped(db, row.id);
 			record('skipped');
 			skipped++;
 			continue;
 		}
 
-		const enriched = await enrichEvent(db, audit, {
-			deliveryId: row.id,
-			baseUrl: options.baseUrl,
-			locale: options.locale
-		});
+		let enriched = enrichments.get(row.auditSeq);
+		if (!enriched) {
+			enriched = await enrichEvent(db, audit, {
+				baseUrl: options.baseUrl,
+				locale: options.locale
+			});
+			enrichments.set(row.auditSeq, enriched);
+		}
 
 		if (enriched.kind === 'skip') {
 			// Nothing is sent. Blanks are the one shape a consumer cannot branch
 			// on (spec §4.5).
-			await terminate(db, row, 'skipped', null, null);
+			await markSkipped(db, row.id);
 			record('skipped');
 			skipped++;
 			continue;
 		}
 
-		const { body, contentType } = formatEvent(row.endpoint.format, enriched.model);
+		// The delivery id is the one field of the payload that varies by
+		// endpoint, so it is applied here rather than carried through enrichment.
+		const model = { ...enriched.model, deliveryId: row.id };
+		const { body, contentType } = formatEvent(row.endpoint.format, model);
 
 		// Required for `generic` because that payload is what a consumer
 		// authenticates. Teams verifies nothing, so a Teams-only operator should
@@ -220,7 +236,7 @@ export async function deliverClaimed(
 		}
 
 		const headers: Record<string, string> = {
-			'x-trust-center-event': enriched.model.action,
+			'x-trust-center-event': model.action,
 			'x-trust-center-delivery': row.id
 		};
 
@@ -244,7 +260,7 @@ export async function deliverClaimed(
 			'event deliver',
 			{
 				'egress.endpoint_id': row.endpointId,
-				'egress.action': enriched.model.action,
+				'egress.action': model.action,
 				'egress.format': row.endpoint.format,
 				'egress.attempt': row.attempts + 1
 			},
@@ -416,17 +432,12 @@ export async function disableStaleEndpoints(db: Db): Promise<{ disabled: string[
 	return { disabled };
 }
 
-async function terminate(
-	db: Db,
-	row: ClaimedDelivery,
-	status: 'skipped',
-	statusCode: number | null,
-	reason: string | null
-): Promise<void> {
+/** Terminal and silent: nothing was sent, so there is no status or error. */
+async function markSkipped(db: Db, id: string): Promise<void> {
 	await db
 		.update(eventDelivery)
-		.set({ status, lastStatusCode: statusCode, lastError: reason })
-		.where(eq(eventDelivery.id, row.id));
+		.set({ status: 'skipped', lastStatusCode: null, lastError: null })
+		.where(eq(eventDelivery.id, id));
 }
 
 async function recordFailure(

@@ -1,4 +1,4 @@
-import { eq, sql } from 'drizzle-orm';
+import { eq, inArray, sql } from 'drizzle-orm';
 import { eventDelivery, eventEndpoint, eventEndpointFilter } from '../db/schema';
 import { matchesPattern } from './filter';
 import type { Db } from '../db';
@@ -72,11 +72,13 @@ export async function currentHorizon(db: Db): Promise<bigint> {
  * gap detectable; a consumer must not assume monotonicity.
  *
  * The window scan is sequential: `xmin::text::bigint` is not indexable (a
- * system column, and not an immutable expression). At this system's scale —
- * a trust center writes thousands of audit events a month — that is a
- * sub-millisecond scan every fifteen seconds. If `audit_event` ever passes
- * roughly a million rows, add a `seq > cursor_seq - N` bound and record the
- * resulting bounded gap; do not add it speculatively.
+ * system column, and not an immutable expression), and it runs once per
+ * enabled endpoint because each has its own cursor. At this system's scale —
+ * a trust center writes thousands of audit events a month, to a handful of
+ * endpoints — that is a sub-millisecond scan every fifteen seconds. If
+ * `audit_event` ever passes roughly a million rows, add a
+ * `seq > cursor_seq - N` bound and record the resulting bounded gap; do not
+ * add it speculatively.
  */
 export async function fanOut(tx: Db): Promise<{ enqueued: number; paused: string[] }> {
 	const horizon = await currentHorizon(tx);
@@ -97,13 +99,32 @@ export async function fanOut(tx: Db): Promise<{ enqueued: number; paused: string
 	let enqueued = 0;
 	const paused: string[] = [];
 
-	for (const endpoint of endpoints) {
-		const depth = (await tx.execute(
-			sql`SELECT count(*)::int AS depth FROM event_delivery
-			    WHERE endpoint_id = ${endpoint.id}::uuid AND status = 'pending'`
-		)) as unknown as { depth: number }[];
+	if (endpoints.length === 0) return { enqueued, paused };
 
-		if ((depth[0]?.depth ?? 0) > BACKPRESSURE_THRESHOLD) {
+	const endpointIds = endpoints.map((endpoint) => endpoint.id);
+
+	// Both of these are answered for every endpoint at once rather than once
+	// per endpoint inside the loop: two round trips per tick instead of two per
+	// endpoint per tick, on a job that runs every fifteen seconds.
+	const depths = (await tx.execute(
+		sql`SELECT endpoint_id, count(*)::int AS depth FROM event_delivery
+		    WHERE status = 'pending' GROUP BY endpoint_id`
+	)) as unknown as { endpoint_id: string; depth: number }[];
+	const depthByEndpoint = new Map(depths.map((row) => [row.endpoint_id, row.depth]));
+
+	const filters = await tx
+		.select({ endpointId: eventEndpointFilter.endpointId, pattern: eventEndpointFilter.pattern })
+		.from(eventEndpointFilter)
+		.where(inArray(eventEndpointFilter.endpointId, endpointIds));
+	const patternsByEndpoint = new Map<string, string[]>();
+	for (const filter of filters) {
+		const existing = patternsByEndpoint.get(filter.endpointId);
+		if (existing) existing.push(filter.pattern);
+		else patternsByEndpoint.set(filter.endpointId, [filter.pattern]);
+	}
+
+	for (const endpoint of endpoints) {
+		if ((depthByEndpoint.get(endpoint.id) ?? 0) > BACKPRESSURE_THRESHOLD) {
 			// Pausing must leave the cursor where it is — the cursor is the
 			// backlog's durable record, so a paused endpoint resumes exactly where
 			// it stopped once the queue drains.
@@ -111,12 +132,7 @@ export async function fanOut(tx: Db): Promise<{ enqueued: number; paused: string
 			continue;
 		}
 
-		const patterns = (
-			await tx
-				.select({ pattern: eventEndpointFilter.pattern })
-				.from(eventEndpointFilter)
-				.where(eq(eventEndpointFilter.endpointId, endpoint.id))
-		).map((row) => row.pattern);
+		const patterns = patternsByEndpoint.get(endpoint.id) ?? [];
 
 		// The window is read WITHOUT the filter applied, so the cursor advances
 		// past events that were scanned but did not match — advancing only past

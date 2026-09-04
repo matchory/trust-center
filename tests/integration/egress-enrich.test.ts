@@ -21,7 +21,6 @@ let db: Db;
 let close: () => Promise<void>;
 
 const CONTEXT = {
-	deliveryId: 'd1e5f2a0-0000-4000-8000-00000000000a',
 	baseUrl: 'https://trust.example.com',
 	locale: 'en'
 };

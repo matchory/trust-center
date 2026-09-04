@@ -2,26 +2,21 @@ import { count, eq, sql } from 'drizzle-orm';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { recordEvent } from '../../src/lib/server/audit';
 import { createDb, type Db } from '../../src/lib/server/db';
-import {
-	auditEvent,
-	eventEndpoint,
-	eventEndpointFilter,
-	setting
-} from '../../src/lib/server/db/schema';
+import { auditEvent, eventEndpoint, setting } from '../../src/lib/server/db/schema';
 import { checkSigningKeyCanary } from '../../src/lib/server/egress/canary';
 import {
 	claimDeliveries,
 	deliverClaimed,
 	disableStaleEndpoints
 } from '../../src/lib/server/egress/deliver';
-import { parseAllowList } from '../../src/lib/server/egress/destination';
 import { CANARY_SETTING_KEY } from '../../src/lib/server/egress/secret';
-import { currentHorizon, fanOut } from '../../src/lib/server/egress/fanout';
-import { startWebhookServer } from '../helpers/webhook-server';
+import { fanOut } from '../../src/lib/server/egress/fanout';
+import { createEndpoint, deliverOptions, webhookFixture } from '../helpers/egress';
 
 let db: Db;
 let close: () => Promise<void>;
-let stop: (() => Promise<void>) | undefined;
+
+const webhooks = webhookFixture();
 
 beforeAll(() => {
 	const url = process.env.TEST_DATABASE_URL;
@@ -39,50 +34,8 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
-	await stop?.();
-	stop = undefined;
+	await webhooks.closeAll();
 });
-
-async function serve(handler: Parameters<typeof startWebhookServer>[0]) {
-	const server = await startWebhookServer(handler);
-	stop = server.close;
-	return server;
-}
-
-/**
- * The same seam egress-deliver.test.ts documents at length: the fixture
- * listens on loopback, which `classifyAddress` denies unconditionally, so
- * `lookup` is stubbed to a private address while the socket still reaches the
- * literal `127.0.0.1`.
- */
-function deliverOptions(port: number) {
-	return {
-		baseUrl: 'https://trust.example.com',
-		locale: 'en',
-		signingKey: 'k'.repeat(32),
-		allow: parseAllowList(`127.0.0.1:${port}`),
-		lookup: async () => [{ address: '10.1.2.3', family: 4 }]
-	};
-}
-
-async function createEndpoint(patterns: string[] = [], overrides = {}) {
-	const horizon = await currentHorizon(db);
-	const [row] = await db
-		.insert(eventEndpoint)
-		.values({
-			name: 'n8n',
-			url: 'https://hooks.example.test/a',
-			format: 'generic',
-			cursorXmin: horizon,
-			cursorSeq: 0n,
-			...overrides
-		})
-		.returning({ id: eventEndpoint.id });
-	for (const pattern of patterns) {
-		await db.insert(eventEndpointFilter).values({ endpointId: row!.id, pattern });
-	}
-	return row!.id;
-}
 
 // Sequential rather than random: (endpoint_id, audit_seq) is unique, and a
 // random seq makes a collision a rare flake rather than never.
@@ -119,7 +72,7 @@ async function subjectCount(endpointId: string): Promise<number> {
 
 describe('disableStaleEndpoints', () => {
 	it('disables an endpoint with no success in 24 hours and an attempt in that window', async () => {
-		const endpointId = await createEndpoint([], {
+		const endpointId = await createEndpoint(db, [], {
 			lastSuccessAt: sql`now() - interval '30 hours'`
 		});
 		await addFailedAttempt(endpointId, 2);
@@ -144,14 +97,16 @@ describe('disableStaleEndpoints', () => {
 	// The permanently-dead endpoint that never succeeded once, which a NULL
 	// last_success_at would exempt forever (plan §Smaller corrections).
 	it('disables an endpoint that has never succeeded, measured from created_at', async () => {
-		const endpointId = await createEndpoint([], { createdAt: sql`now() - interval '30 hours'` });
+		const endpointId = await createEndpoint(db, [], {
+			createdAt: sql`now() - interval '30 hours'`
+		});
 		await addFailedAttempt(endpointId, 1);
 
 		expect((await disableStaleEndpoints(db)).disabled).toEqual([endpointId]);
 	});
 
 	it('leaves an endpoint alone while it is still succeeding', async () => {
-		const endpointId = await createEndpoint([], {
+		const endpointId = await createEndpoint(db, [], {
 			lastSuccessAt: sql`now() - interval '1 hour'`
 		});
 		await addFailedAttempt(endpointId, 0);
@@ -167,7 +122,7 @@ describe('disableStaleEndpoints', () => {
 	 * for a day would find it disabled.
 	 */
 	it('leaves a quiet endpoint alone when nothing was attempted', async () => {
-		await createEndpoint([], {
+		await createEndpoint(db, [], {
 			createdAt: sql`now() - interval '40 hours'`,
 			lastSuccessAt: sql`now() - interval '30 hours'`
 		});
@@ -176,7 +131,7 @@ describe('disableStaleEndpoints', () => {
 	});
 
 	it('is idempotent — a disabled endpoint is not disabled twice', async () => {
-		const endpointId = await createEndpoint([], {
+		const endpointId = await createEndpoint(db, [], {
 			lastSuccessAt: sql`now() - interval '30 hours'`
 		});
 		await addFailedAttempt(endpointId, 2);
@@ -189,7 +144,7 @@ describe('disableStaleEndpoints', () => {
 	});
 
 	it('names the endpoint as the subject and keeps the URL out of meta', async () => {
-		const endpointId = await createEndpoint([], {
+		const endpointId = await createEndpoint(db, [], {
 			url: 'https://hooks.example.test/a?secret=abc123',
 			lastSuccessAt: sql`now() - interval '30 hours'`
 		});
@@ -230,13 +185,13 @@ describe('the loop-prevention rule', () => {
 	 */
 	it('writes no audit event for a delivery, and exactly one for the disable', async () => {
 		let calls = 0;
-		const server = await serve((_request, response) => {
+		const server = await webhooks.serve((_request, response) => {
 			calls++;
 			// The first attempt succeeds so the success branch — the one that
 			// stamps last_success_at — actually executes; the rest fail.
 			response.writeHead(calls === 1 ? 200 : 500).end();
 		});
-		const endpointId = await createEndpoint(['certification.*'], { url: server.url });
+		const endpointId = await createEndpoint(db, ['certification.*'], { url: server.url });
 
 		for (let i = 0; i < 5; i++) {
 			await recordEvent(db, {

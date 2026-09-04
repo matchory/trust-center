@@ -21,9 +21,6 @@ import {
 export const EGRESS_FORMATS = ['generic', 'teams'] as const;
 export type EgressFormat = (typeof EGRESS_FORMATS)[number];
 
-export const EVENT_DELIVERY_STATUSES = ['pending', 'delivered', 'failed', 'skipped'] as const;
-export type EventDeliveryStatus = (typeof EVENT_DELIVERY_STATUSES)[number];
-
 /**
  * The closed set `last_error` may hold. A fixed phrase and never a response
  * body: a receiver that echoes its input — n8n's "respond with incoming
@@ -173,6 +170,3 @@ export const eventDelivery = pgTable(
 		)
 	]
 );
-
-export type EventEndpointRow = typeof eventEndpoint.$inferSelect;
-export type EventDeliveryRow = typeof eventDelivery.$inferSelect;

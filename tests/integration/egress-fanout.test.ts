@@ -2,13 +2,9 @@ import { eq, sql } from 'drizzle-orm';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { createDb, type Db } from '../../src/lib/server/db';
 import { recordEvent } from '../../src/lib/server/audit';
-import {
-	auditEvent,
-	eventDelivery,
-	eventEndpoint,
-	eventEndpointFilter
-} from '../../src/lib/server/db/schema';
-import { currentHorizon, fanOut } from '../../src/lib/server/egress/fanout';
+import { auditEvent, eventDelivery, eventEndpoint } from '../../src/lib/server/db/schema';
+import { fanOut } from '../../src/lib/server/egress/fanout';
+import { createEndpoint } from '../helpers/egress';
 
 let db: Db;
 let close: () => Promise<void>;
@@ -29,27 +25,6 @@ beforeEach(async () => {
 	// harmless here — every endpoint starts at the current horizon anyway.
 	await db.delete(eventEndpoint);
 });
-
-/** An endpoint whose cursor starts where a real one does: the live horizon. */
-async function createEndpoint(patterns: string[], overrides: Record<string, unknown> = {}) {
-	const horizon = await currentHorizon(db);
-	const [row] = await db
-		.insert(eventEndpoint)
-		.values({
-			name: 'n8n',
-			url: 'https://hooks.example.test/a',
-			format: 'generic',
-			cursorXmin: horizon,
-			cursorSeq: 0n,
-			...overrides
-		})
-		.returning({ id: eventEndpoint.id });
-
-	for (const pattern of patterns) {
-		await db.insert(eventEndpointFilter).values({ endpointId: row!.id, pattern });
-	}
-	return row!.id;
-}
 
 async function deliveredSeqs(endpointId: string): Promise<string[]> {
 	const rows = await db
@@ -88,7 +63,7 @@ describe('the visibility watermark', () => {
 	 * on the second assertion.
 	 */
 	it('does not consume an event whose transaction is still open, and delivers it after the commit', async () => {
-		const endpointId = await createEndpoint(['access_request.*']);
+		const endpointId = await createEndpoint(db, ['access_request.*']);
 		const slowSubject = crypto.randomUUID();
 		const fastSubject = crypto.randomUUID();
 
@@ -153,7 +128,7 @@ describe('the visibility watermark', () => {
 	 * fail on the final assertion, with `fastSeq` missing.
 	 */
 	it('delivers a committed event whose xid is above the horizon but whose seq is below a scanned row', async () => {
-		const endpointId = await createEndpoint(['access_request.*']);
+		const endpointId = await createEndpoint(db, ['access_request.*']);
 		const earlySubject = crypto.randomUUID();
 		const fastSubject = crypto.randomUUID();
 
@@ -224,7 +199,7 @@ describe('the visibility watermark', () => {
 
 describe('fanOut', () => {
 	it('inserts one delivery per matching event and respects the filter', async () => {
-		const endpointId = await createEndpoint(['access_request.approved']);
+		const endpointId = await createEndpoint(db, ['access_request.approved']);
 		const wanted = crypto.randomUUID();
 
 		await recordEvent(db, {
@@ -248,7 +223,7 @@ describe('fanOut', () => {
 	});
 
 	it('advances the cursor past events it scanned but did not match', async () => {
-		const endpointId = await createEndpoint(['access_request.approved']);
+		const endpointId = await createEndpoint(db, ['access_request.approved']);
 
 		await recordEvent(db, {
 			action: 'document.downloaded',
@@ -268,7 +243,7 @@ describe('fanOut', () => {
 	});
 
 	it('receives nothing when the endpoint has no filter rows', async () => {
-		const endpointId = await createEndpoint([]);
+		const endpointId = await createEndpoint(db, []);
 		await recordEvent(db, {
 			action: 'access_request.approved',
 			actor: { type: 'system', id: null },
@@ -293,14 +268,14 @@ describe('fanOut', () => {
 		// which is what makes this a test of the cursor rather than of timing.
 		await db.execute(sql`SELECT txid_current()`);
 
-		const endpointId = await createEndpoint(['access_request.*']);
+		const endpointId = await createEndpoint(db, ['access_request.*']);
 		await db.transaction((tx) => fanOut(tx));
 
 		expect(await deliveredSeqs(endpointId)).toEqual([]);
 	});
 
 	it('neither fans out nor advances the cursor for a disabled endpoint', async () => {
-		const endpointId = await createEndpoint(['access_request.*'], {
+		const endpointId = await createEndpoint(db, ['access_request.*'], {
 			enabled: false,
 			disabledAt: new Date(),
 			disabledReason: 'no success in 24 h'
@@ -330,7 +305,7 @@ describe('fanOut', () => {
 	});
 
 	it('is a no-op when replayed, so a crash between fan-out and the cursor update is safe', async () => {
-		const endpointId = await createEndpoint(['access_request.*']);
+		const endpointId = await createEndpoint(db, ['access_request.*']);
 		await recordEvent(db, {
 			action: 'access_request.approved',
 			actor: { type: 'system', id: null },
@@ -358,7 +333,7 @@ describe('fanOut', () => {
 	});
 
 	it('pauses fan-out for an endpoint whose pending depth is above the threshold', async () => {
-		const endpointId = await createEndpoint(['access_request.*']);
+		const endpointId = await createEndpoint(db, ['access_request.*']);
 
 		// 1001 pending rows, inserted directly: what is under test is the pause,
 		// not how the backlog got there.
@@ -392,7 +367,7 @@ describe('fanOut', () => {
  */
 describe('what enqueued counts', () => {
 	it('reports zero for a replayed window whose rows are already enqueued', async () => {
-		const endpointId = await createEndpoint(['access_request.*']);
+		const endpointId = await createEndpoint(db, ['access_request.*']);
 		const subjectId = crypto.randomUUID();
 		await recordEvent(db, {
 			action: 'access_request.approved',

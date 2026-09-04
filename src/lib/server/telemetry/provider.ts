@@ -1,10 +1,6 @@
 import { diag, DiagLogLevel, metrics, trace } from '@opentelemetry/api';
 import type { AppConfig } from '../config';
-import {
-	registerEgressQueueDepthGauge,
-	registerQueueDepthGauge,
-	resetInstruments
-} from './metrics';
+import { registerQueueDepthGauge, resetInstruments } from './metrics';
 
 /**
  * Held so shutdown can flush. Empty is the normal state: a deployment with no
@@ -135,14 +131,26 @@ export async function startTelemetry(config: AppConfig['telemetry']): Promise<bo
 	// provider on next use.
 	resetInstruments();
 
-	registerQueueDepthGauge(readQueueDepth);
-	// Registered unconditionally rather than behind `config.egress.enabled`: the
-	// gauge reads a table, not the flag, and a deployment that turned egress off
-	// with rows still pending must not have the depth go silent — a gauge that
-	// stops reporting is indistinguishable from a collector that stopped
-	// scraping. It reports the true pending count either way; it does not zero
-	// itself when egress is off.
-	registerEgressQueueDepthGauge(readEgressQueueDepth);
+	// Nothing in this application sends mail inline: a deployment whose SMTP is
+	// misconfigured looks entirely healthy from the outside while the queue
+	// grows, and one with no SMTP_URL at all is a supported configuration whose
+	// queue grows by design. This gauge is what tells those two apart.
+	registerQueueDepthGauge(
+		'trustcenter.mail.queue.depth',
+		'Outbound emails queued and not yet sent',
+		readQueueDepth
+	);
+	// The egress counterpart, registered unconditionally rather than behind
+	// `config.egress.enabled`: the gauge reads a table, not the flag, and a
+	// deployment that turned egress off with rows still pending must not have
+	// the depth go silent — a gauge that stops reporting is indistinguishable
+	// from a collector that stopped scraping. It reports the true pending count
+	// either way; it does not zero itself when egress is off.
+	registerQueueDepthGauge(
+		'trustcenter.egress.queue.depth',
+		'Event deliveries queued and not yet delivered',
+		readEgressQueueDepth
+	);
 
 	started = [tracerProvider, meterProvider];
 	return true;

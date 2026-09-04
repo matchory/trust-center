@@ -145,38 +145,18 @@ export function resetInstruments(): void {
 
 /**
  * Registered by `startTelemetry` only when telemetry is on, so a deployment
- * with no collector never runs the query. Nothing in this application sends
- * mail inline: a deployment whose SMTP is misconfigured looks entirely healthy
- * from the outside while the queue grows, and one with no SMTP_URL at all is a
- * supported configuration whose queue grows by design. This gauge is what
- * tells those two apart.
+ * with no collector never runs the query. Every queue in this application is
+ * drained by a background job rather than written through inline, so a queue
+ * that stops draining looks entirely healthy from the outside while it grows.
+ * These gauges are what tell a stuck queue apart from a quiet one; the caller
+ * names the queue, because the reason each one matters differs.
  */
-export function registerQueueDepthGauge(read: () => Promise<number>): void {
-	const gauge = metrics.getMeter(METER_NAME).createObservableGauge('trustcenter.mail.queue.depth', {
-		description: 'Outbound emails queued and not yet sent'
-	});
-
-	gauge.addCallback(async (result) => {
-		result.observe(await read());
-	});
-}
-
-/**
- * Mirrors `registerQueueDepthGauge`, and tells the same two cases apart: a
- * deployment whose endpoints all black-hole looks healthy from the outside
- * while `event_delivery` grows, and one that is simply quiet looks identical
- * without this number.
- *
- * Registered by `startTelemetry` only when telemetry is on, so a deployment
- * with no collector never runs the query — including the very common one where
- * egress is disabled entirely.
- */
-export function registerEgressQueueDepthGauge(read: () => Promise<number>): void {
-	const gauge = metrics
-		.getMeter(METER_NAME)
-		.createObservableGauge('trustcenter.egress.queue.depth', {
-			description: 'Event deliveries queued and not yet delivered'
-		});
+export function registerQueueDepthGauge(
+	name: string,
+	description: string,
+	read: () => Promise<number>
+): void {
+	const gauge = metrics.getMeter(METER_NAME).createObservableGauge(name, { description });
 
 	gauge.addCallback(async (result) => {
 		result.observe(await read());

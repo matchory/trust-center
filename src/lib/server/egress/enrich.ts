@@ -11,15 +11,22 @@ import {
 	requester
 } from '../db/schema';
 import type { AuditEventRow } from '../audit';
+import { localizePath } from '../../i18n/locale';
 import type { Db } from '../db';
 import type { EventModel } from './model';
 
+/**
+ * Everything an `EventModel` carries except `deliveryId`, which identifies the
+ * delivery rather than the event. Keeping it out is what makes one enrichment
+ * reusable across every endpoint the same audit row fans out to.
+ */
+export type EnrichedEvent = Omit<EventModel, 'deliveryId'>;
+
 export type EnrichOutcome =
-	| { kind: 'model'; model: EventModel }
+	| { kind: 'model'; model: EnrichedEvent }
 	| { kind: 'skip'; reason: 'subject_purged' | 'subject_missing' };
 
 export interface EnrichContext {
-	deliveryId: string;
 	baseUrl: string;
 	/**
 	 * `config.defaultLocale`, passed in by the job. Used only to build the
@@ -105,19 +112,24 @@ const enrichAccessRequest: Enricher = async (db, row, context) => {
 		.limit(1);
 	if (!request) return { skip: 'missing' };
 
-	const person = identity(await loadRequester(db, request.requesterId));
-	if ('skip' in person) return person;
+	// Independent reads — both key off `request` alone — so they go together
+	// rather than costing two sequential round trips per event.
+	const [requester, [grant]] = await Promise.all([
+		loadRequester(db, request.requesterId),
+		db
+			.select({
+				id: accessGrant.id,
+				termDays: accessGrant.termDays,
+				expiresAt: accessGrant.expiresAt,
+				acceptanceDueAt: accessGrant.acceptanceDueAt
+			})
+			.from(accessGrant)
+			.where(eq(accessGrant.requestId, request.id))
+			.limit(1)
+	]);
 
-	const [grant] = await db
-		.select({
-			id: accessGrant.id,
-			termDays: accessGrant.termDays,
-			expiresAt: accessGrant.expiresAt,
-			acceptanceDueAt: accessGrant.acceptanceDueAt
-		})
-		.from(accessGrant)
-		.where(eq(accessGrant.requestId, request.id))
-		.limit(1);
+	const person = identity(requester);
+	if ('skip' in person) return person;
 
 	return {
 		data: {
@@ -137,11 +149,10 @@ const enrichAccessRequest: Enricher = async (db, row, context) => {
 			...(request.reason !== null ? { reason: request.reason } : {})
 		},
 		summary: summaryFor(row.action, person.person.company),
-		// Every page URL in this application is locale-prefixed, and the link is
-		// built by string interpolation rather than by `localizePath()` because
-		// this is a server-side absolute URL for an external consumer, not a
-		// navigation target.
-		link: `${context.baseUrl}/${context.locale}/admin/requests/${request.id}`
+		// `localizePath` for the same reason the subscription digest uses it to
+		// build its outbound absolute URLs: every page URL in this application is
+		// locale-prefixed, and the prefix rule belongs in one place.
+		link: `${context.baseUrl}${localizePath(`/admin/requests/${request.id}`, context.locale)}`
 	};
 };
 
@@ -167,7 +178,7 @@ const enrichGrantRevoked: Enricher = async (db, row, context) => {
 			revokedAt: grant.revokedAt?.toISOString() ?? null
 		},
 		summary: `Access for ${person.person.company} was revoked`,
-		link: `${context.baseUrl}/${context.locale}/admin/grants`
+		link: `${context.baseUrl}${localizePath('/admin/grants', context.locale)}`
 	};
 };
 
@@ -222,7 +233,7 @@ const enrichNdaAcceptance =
 				verb === 'accepted'
 					? `${person.person.company} accepted ${acceptance.slug} v${acceptance.version}`
 					: `${person.person.company} downloaded their ${acceptance.slug} record`,
-			link: `${context.baseUrl}/${context.locale}/admin/requesters/${acceptance.requesterId}`
+			link: `${context.baseUrl}${localizePath(`/admin/requesters/${acceptance.requesterId}`, context.locale)}`
 		};
 	};
 
@@ -273,7 +284,7 @@ const enrichDocumentDownloaded: Enricher = async (db, row, context) => {
 		return {
 			data: document_,
 			summary: `${document_.title} was downloaded`,
-			link: `${context.baseUrl}/${context.locale}/admin/documents/${file.documentId}`,
+			link: `${context.baseUrl}${localizePath(`/admin/documents/${file.documentId}`, context.locale)}`,
 			// Nobody was identified, so nothing here is verified.
 			verified: false
 		};
@@ -285,7 +296,7 @@ const enrichDocumentDownloaded: Enricher = async (db, row, context) => {
 	return {
 		data: { ...person.person, ...document_ },
 		summary: `${person.person.company} downloaded ${document_.title}`,
-		link: `${context.baseUrl}/${context.locale}/admin/documents/${file.documentId}`
+		link: `${context.baseUrl}${localizePath(`/admin/documents/${file.documentId}`, context.locale)}`
 	};
 };
 
@@ -307,8 +318,6 @@ const ENRICHERS: Record<string, Enricher> = {
 	'document.downloaded': enrichDocumentDownloaded
 };
 
-export const ENRICHED_ACTIONS: readonly string[] = Object.keys(ENRICHERS);
-
 /** `access_request.pending` → "Access request pending". */
 function summaryFor(action: string, company?: string): string {
 	const words = action.replace(/[._]/g, ' ');
@@ -328,7 +337,6 @@ export async function enrichEvent(
 		// A bigint does not survive JSON.stringify, and `seq` is what makes a
 		// gap detectable by a consumer (spec §4.4).
 		seq: String(row.seq),
-		deliveryId: context.deliveryId,
 		subject:
 			row.subjectType !== null && row.subjectId !== null
 				? { type: row.subjectType, id: row.subjectId }

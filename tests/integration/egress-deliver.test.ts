@@ -6,18 +6,19 @@ import {
 	accessGrant,
 	eventDelivery,
 	eventEndpoint,
-	eventEndpointFilter,
 	requester
 } from '../../src/lib/server/db/schema';
 import { claimDeliveries, deliverClaimed } from '../../src/lib/server/egress/deliver';
 import { parseAllowList } from '../../src/lib/server/egress/destination';
-import { currentHorizon, fanOut } from '../../src/lib/server/egress/fanout';
+import { fanOut } from '../../src/lib/server/egress/fanout';
 import { expectNoSensitiveAttributes, recordingSpans } from '../helpers/telemetry';
+import { createEndpoint, deliverOptions, webhookFixture } from '../helpers/egress';
 import { startWebhookServer } from '../helpers/webhook-server';
 
 let db: Db;
 let close: () => Promise<void>;
-let stop: (() => Promise<void>) | undefined;
+
+const webhooks = webhookFixture();
 
 const spans = recordingSpans();
 
@@ -27,26 +28,6 @@ const OPTIONS = {
 	signingKey: 'k'.repeat(32),
 	allow: parseAllowList('127.0.0.1/32')
 };
-
-/**
- * `classifyAddress` denies 127.0.0.0/8 unconditionally — the allowlist cannot
- * reach it — and the webhook fixture listens there, so a real delivery is
- * exercised through the one seam that exists for it: `lookup` is stubbed to a
- * private address that a `127.0.0.1:<port>` allow entry admits by host, and
- * Node's own connection logic bypasses a custom `lookup` entirely once the
- * hostname is already a literal IP (as it is here), so the socket still
- * reaches the fixture rather than the stub address. `validateEndpointUrl`
- * separately requires the fixture's OS-assigned port to be named explicitly,
- * which a bare CIDR entry never satisfies — hence one allow entry per active
- * fixture port, built fresh per test rather than module-level like `OPTIONS`.
- */
-function deliverOptions(...ports: number[]) {
-	return {
-		...OPTIONS,
-		allow: parseAllowList(ports.map((port) => `127.0.0.1:${port}`).join(',')),
-		lookup: async () => [{ address: '10.1.2.3', family: 4 }]
-	};
-}
 
 beforeAll(() => {
 	const url = process.env.TEST_DATABASE_URL;
@@ -63,34 +44,8 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
-	await stop?.();
-	stop = undefined;
+	await webhooks.closeAll();
 });
-
-async function serve(handler: Parameters<typeof startWebhookServer>[0]) {
-	const server = await startWebhookServer(handler);
-	stop = server.close;
-	return server;
-}
-
-async function createEndpoint(url: string, patterns: string[], overrides = {}) {
-	const horizon = await currentHorizon(db);
-	const [row] = await db
-		.insert(eventEndpoint)
-		.values({
-			name: 'n8n',
-			url,
-			format: 'generic',
-			cursorXmin: horizon,
-			cursorSeq: 0n,
-			...overrides
-		})
-		.returning({ id: eventEndpoint.id });
-	for (const pattern of patterns) {
-		await db.insert(eventEndpointFilter).values({ endpointId: row!.id, pattern });
-	}
-	return row!.id;
-}
 
 /** One `certification.created` event, which takes the fallback path. */
 async function emitFallbackEvent() {
@@ -122,8 +77,8 @@ async function deliveryRow(endpointId: string) {
 
 describe('deliverClaimed', () => {
 	it('POSTs the formatted body with the signature and delivery headers', async () => {
-		const server = await serve((_request, response) => response.writeHead(204).end());
-		const endpointId = await createEndpoint(server.url, ['certification.*']);
+		const server = await webhooks.serve((_request, response) => response.writeHead(204).end());
+		const endpointId = await createEndpoint(db, ['certification.*'], { url: server.url });
 		await emitFallbackEvent();
 
 		const result = await tick(server.port);
@@ -149,8 +104,8 @@ describe('deliverClaimed', () => {
 	});
 
 	it('stamps last_success_at on the endpoint', async () => {
-		const server = await serve((_request, response) => response.writeHead(200).end());
-		const endpointId = await createEndpoint(server.url, ['certification.*']);
+		const server = await webhooks.serve((_request, response) => response.writeHead(200).end());
+		const endpointId = await createEndpoint(db, ['certification.*'], { url: server.url });
 		await emitFallbackEvent();
 		await tick(server.port);
 
@@ -162,8 +117,8 @@ describe('deliverClaimed', () => {
 	});
 
 	it('retries a 503 on the 1/2/4/8 schedule and fails after five attempts', async () => {
-		const server = await serve((_request, response) => response.writeHead(503).end());
-		const endpointId = await createEndpoint(server.url, ['certification.*']);
+		const server = await webhooks.serve((_request, response) => response.writeHead(503).end());
+		const endpointId = await createEndpoint(db, ['certification.*'], { url: server.url });
 		await emitFallbackEvent();
 
 		for (let attempt = 1; attempt <= 5; attempt++) {
@@ -189,8 +144,8 @@ describe('deliverClaimed', () => {
 	 * (spec §5.3).
 	 */
 	it('fails a 404 on the first attempt', async () => {
-		const server = await serve((_request, response) => response.writeHead(404).end());
-		const endpointId = await createEndpoint(server.url, ['certification.*']);
+		const server = await webhooks.serve((_request, response) => response.writeHead(404).end());
+		const endpointId = await createEndpoint(db, ['certification.*'], { url: server.url });
 		await emitFallbackEvent();
 
 		await tick(server.port);
@@ -202,11 +157,11 @@ describe('deliverClaimed', () => {
 	});
 
 	it('never stores a response body', async () => {
-		const server = await serve((_request, response) =>
+		const server = await webhooks.serve((_request, response) =>
 			// The shape that matters: a receiver echoing its input.
 			response.writeHead(500).end('requester dana@acme.example could not be created')
 		);
-		const endpointId = await createEndpoint(server.url, ['certification.*']);
+		const endpointId = await createEndpoint(db, ['certification.*'], { url: server.url });
 		await emitFallbackEvent();
 		await tick(server.port);
 
@@ -238,8 +193,8 @@ describe('deliverClaimed', () => {
 	 * `{ kind: 'skip' }`.
 	 */
 	it('skips a delivery whose subject was purged, without making a request', async () => {
-		const server = await serve((_request, response) => response.writeHead(200).end());
-		const endpointId = await createEndpoint(server.url, ['access_grant.*']);
+		const server = await webhooks.serve((_request, response) => response.writeHead(200).end());
+		const endpointId = await createEndpoint(db, ['access_grant.*'], { url: server.url });
 
 		const [person] = await db
 			.insert(requester)
@@ -286,14 +241,14 @@ describe('deliverClaimed', () => {
 	 * a 15 s interval is that a late notice is a defect.
 	 */
 	it('delivers to a healthy endpoint in the same tick as a black-holing one', async () => {
-		const blackhole = await serve(() => {
+		const blackhole = await webhooks.serve(() => {
 			/* never responds */
 		});
 		const healthy = await startWebhookServer((_request, response) => response.writeHead(200).end());
 
 		try {
-			await createEndpoint(blackhole.url, ['certification.*']);
-			const healthyId = await createEndpoint(healthy.url, ['certification.*']);
+			await createEndpoint(db, ['certification.*'], { url: blackhole.url });
+			const healthyId = await createEndpoint(db, ['certification.*'], { url: healthy.url });
 			await emitFallbackEvent();
 
 			const claimed = await db.transaction(async (tx) => {
@@ -315,8 +270,8 @@ describe('deliverClaimed', () => {
 	}, 30_000);
 
 	it('claims at most five rows per endpoint and twenty-five overall', async () => {
-		const server = await serve((_request, response) => response.writeHead(200).end());
-		const endpointId = await createEndpoint(server.url, ['certification.*']);
+		const server = await webhooks.serve((_request, response) => response.writeHead(200).end());
+		const endpointId = await createEndpoint(db, ['certification.*'], { url: server.url });
 		for (let index = 0; index < 8; index++) await emitFallbackEvent();
 
 		const claimed = await db.transaction(async (tx) => {
@@ -329,8 +284,8 @@ describe('deliverClaimed', () => {
 	});
 
 	it('does not claim a row a concurrent tick already claimed', async () => {
-		const server = await serve((_request, response) => response.writeHead(200).end());
-		await createEndpoint(server.url, ['certification.*']);
+		const server = await webhooks.serve((_request, response) => response.writeHead(200).end());
+		await createEndpoint(db, ['certification.*'], { url: server.url });
 		await emitFallbackEvent();
 
 		const first = await db.transaction(async (tx) => {
@@ -365,8 +320,8 @@ describe('deliverClaimed', () => {
 	 * would still be caught here.
 	 */
 	it('does not claim a pending delivery on an already-disabled endpoint', async () => {
-		const server = await serve((_request, response) => response.writeHead(200).end());
-		const endpointId = await createEndpoint(server.url, ['certification.*']);
+		const server = await webhooks.serve((_request, response) => response.writeHead(200).end());
+		const endpointId = await createEndpoint(db, ['certification.*'], { url: server.url });
 		await emitFallbackEvent();
 
 		// Fan out without claiming, so the row is pending and due before the
@@ -383,8 +338,8 @@ describe('deliverClaimed', () => {
 	});
 
 	it('records signing_key_missing without making a request when a generic endpoint has no key', async () => {
-		const server = await serve((_request, response) => response.writeHead(200).end());
-		const endpointId = await createEndpoint(server.url, ['certification.*']);
+		const server = await webhooks.serve((_request, response) => response.writeHead(200).end());
+		const endpointId = await createEndpoint(db, ['certification.*'], { url: server.url });
 		await emitFallbackEvent();
 
 		const claimed = await db.transaction(async (tx) => {
@@ -402,7 +357,9 @@ describe('deliverClaimed', () => {
 	it('refuses a destination that resolves into denied space at delivery time', async () => {
 		// Saved when the allowlist permitted it, delivered after it did not —
 		// the check runs at delivery, not only on save (spec §6.3).
-		const endpointId = await createEndpoint('https://metadata.example.test/a', ['certification.*']);
+		const endpointId = await createEndpoint(db, ['certification.*'], {
+			url: 'https://metadata.example.test/a'
+		});
 		await emitFallbackEvent();
 
 		const claimed = await db.transaction(async (tx) => {
@@ -431,12 +388,13 @@ describe('deliverClaimed', () => {
  */
 describe('delivery telemetry', () => {
 	it('carries no address, token, IP or endpoint name on the event deliver span', async () => {
-		const server = await serve((_request, response) => response.writeHead(204).end());
+		const server = await webhooks.serve((_request, response) => response.writeHead(204).end());
 		// Every shape §8 bans, in the two operator-controlled strings this path
 		// has to hand: `name` is unvalidated free text and the URL's query string
 		// is where a Teams Workflows secret lives (spec §10).
 		const name = 'alerts@acme.example via 10.1.2.3';
-		const endpointId = await createEndpoint(`${server.url}?token=SECRET`, ['certification.*'], {
+		const endpointId = await createEndpoint(db, ['certification.*'], {
+			url: `${server.url}?token=SECRET`,
 			name
 		});
 		await emitFallbackEvent();
