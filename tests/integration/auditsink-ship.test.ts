@@ -1,6 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import { eq, sql } from 'drizzle-orm';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { recordEvent } from '../../src/lib/server/audit';
+import { attestationDue, buildAttestation } from '../../src/lib/server/auditsink/attest';
 import { buildBatch } from '../../src/lib/server/auditsink/reader';
 import { claimShipments, rebuildBatch, shipClaimed } from '../../src/lib/server/auditsink/ship';
 import { buildManifest } from '../../src/lib/server/auditsink/serialize';
@@ -256,5 +258,26 @@ describe('rebuildBatch', () => {
 		const rebuilt = await rebuildBatch(db, batch!.id);
 		expect(rebuilt.manifest.row_count).toBe(0);
 		expect(rebuilt.digest).not.toBe(batch!.digest);
+	});
+});
+
+describe('attestation', () => {
+	it('reports the log height and the cursor together', async () => {
+		await seedCursorAtHorizon(db);
+		await recordEvent(db, { actor: { type: 'system', id: null }, action: 'test.attest' });
+
+		const attestation = await buildAttestation(db);
+
+		const [row] = (await db.execute(
+			sql`SELECT count(*)::text AS c, coalesce(max(seq), 0)::text AS m FROM audit_event`
+		)) as unknown as { c: string; m: string }[];
+
+		expect(attestation.event_count).toBe(row!.c);
+		expect(attestation.max_seq).toBe(row!.m);
+		expect(attestation.cursor.seq).toBeDefined();
+	});
+
+	it('is due when none has been written within the interval', async () => {
+		expect(await attestationDue(db, 24 * 60 * 60_000)).toBe(true);
 	});
 });
