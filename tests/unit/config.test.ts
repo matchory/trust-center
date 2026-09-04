@@ -261,3 +261,43 @@ describe('egress configuration', () => {
 		);
 	});
 });
+
+describe('audit sink configuration', () => {
+	it('defaults the audit sink to off', () => {
+		expect(parseConfig(valid, COMPILED).auditSink.enabled).toBe(false);
+	});
+
+	it('refuses to boot when the sink is enabled with no destination', () => {
+		// Spec §11: it would otherwise accumulate batches nothing ships, and mean
+		// the operator believes something is running that is not.
+		expect(() => parseConfig({ ...valid, AUDIT_SINK_ENABLED: 'true' }, COMPILED)).toThrow(
+			/no sink is configured/i
+		);
+	});
+
+	it('refuses partial S3 configuration', () => {
+		// b67569e's lesson from A: a malformed setting must fail at boot, not inside
+		// every tick.
+		expect(() =>
+			parseConfig({ ...valid, AUDIT_SINK_ENABLED: 'true', AUDIT_SINK_S3_BUCKET: 'audit' }, COMPILED)
+		).toThrow(/AUDIT_SINK_S3/);
+	});
+
+	it('accepts a complete S3 configuration', () => {
+		const config = parseConfig(
+			{
+				...valid,
+				AUDIT_SINK_ENABLED: 'true',
+				AUDIT_SINK_S3_BUCKET: 'audit',
+				AUDIT_SINK_S3_REGION: 'eu-central-1',
+				AUDIT_SINK_S3_ACCESS_KEY_ID: 'k',
+				AUDIT_SINK_S3_SECRET_ACCESS_KEY: 's'
+			},
+			COMPILED
+		);
+
+		expect(config.auditSink.s3?.bucket).toBe('audit');
+		expect(config.auditSink.batchRows).toBe(1000);
+		expect(config.auditSink.maxAgeMs).toBe(15 * 60_000);
+	});
+});

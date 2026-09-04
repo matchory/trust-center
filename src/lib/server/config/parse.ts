@@ -126,6 +126,24 @@ export interface AppConfig {
 		/** `EVENT_EGRESS_ALLOW`, parsed. Empty means no allowance was configured. */
 		allow: readonly AllowEntry[];
 	};
+	/** Subsystem B: ships the audit log off-box in batches. Off by default (spec §11). */
+	auditSink: {
+		enabled: boolean;
+		batchRows: number;
+		maxAgeMs: number;
+		maxBytes: number;
+		attestIntervalMs: number;
+		s3:
+			| {
+					bucket: string;
+					region: string;
+					endpoint: string | undefined;
+					accessKeyId: string;
+					secretAccessKey: string;
+					prefix: string | undefined;
+			  }
+			| undefined;
+	};
 }
 
 /**
@@ -223,7 +241,28 @@ function buildSchema(compiledLocales: readonly string[]) {
 			// `egress/destination.ts` imports nothing but `node:dns` and
 			// `node:net`, so this stays acyclic and this module stays testable
 			// under plain Vitest.
-			EVENT_EGRESS_ALLOW: blankAsUndefined(z.string().min(1).transform(parseAllowListOrIssue))
+			EVENT_EGRESS_ALLOW: blankAsUndefined(z.string().min(1).transform(parseAllowListOrIssue)),
+			// Subsystem B's own kill switch (spec §11), independent of A's: a
+			// deployment can ship events without ever shipping the audit log, or
+			// the reverse.
+			AUDIT_SINK_ENABLED: booleanFlag,
+			AUDIT_SINK_BATCH_ROWS: z.coerce.number().int().positive().default(1000),
+			// Minutes, not milliseconds: an operator reads and edits this value,
+			// and the mapping below is the one place it becomes ms.
+			AUDIT_SINK_BATCH_MAX_AGE: z.coerce.number().int().positive().default(15),
+			AUDIT_SINK_BATCH_MAX_BYTES: z.coerce
+				.number()
+				.int()
+				.positive()
+				.default(8 * 1024 * 1024),
+			// Hours, for the same reason AUDIT_SINK_BATCH_MAX_AGE is minutes.
+			AUDIT_SINK_ATTEST_INTERVAL: z.coerce.number().int().positive().default(24),
+			AUDIT_SINK_S3_BUCKET: blankAsUndefined(z.string().min(1)),
+			AUDIT_SINK_S3_REGION: blankAsUndefined(z.string().min(1)),
+			AUDIT_SINK_S3_ENDPOINT: blankAsUndefined(z.string().url()),
+			AUDIT_SINK_S3_ACCESS_KEY_ID: blankAsUndefined(z.string().min(1)),
+			AUDIT_SINK_S3_SECRET_ACCESS_KEY: blankAsUndefined(z.string().min(1)),
+			AUDIT_SINK_S3_PREFIX: blankAsUndefined(z.string().min(1))
 		})
 		.superRefine((value, ctx) => {
 			const unsupported = value.LOCALES.filter((locale) => !compiledLocales.includes(locale));
@@ -245,6 +284,35 @@ function buildSchema(compiledLocales: readonly string[]) {
 					code: 'custom',
 					path: ['DEFAULT_LOCALE'],
 					message: `"${value.DEFAULT_LOCALE}" is not one of LOCALES (${value.LOCALES.join(', ')})`
+				});
+			}
+
+			// b67569e's lesson from EVENT_EGRESS_ALLOW: a malformed setting that
+			// boots clean throws inside every tick instead, and 500s the admin
+			// page an operator would use to fix it. Both failures below refuse to
+			// boot instead.
+			const s3Fields = [
+				value.AUDIT_SINK_S3_BUCKET,
+				value.AUDIT_SINK_S3_REGION,
+				value.AUDIT_SINK_S3_ACCESS_KEY_ID,
+				value.AUDIT_SINK_S3_SECRET_ACCESS_KEY
+			];
+			const s3FieldsSet = s3Fields.filter((field) => field !== undefined).length;
+
+			if (value.AUDIT_SINK_ENABLED && s3FieldsSet === 0) {
+				ctx.addIssue({
+					code: 'custom',
+					path: ['AUDIT_SINK_ENABLED'],
+					message:
+						'AUDIT_SINK_ENABLED is true but no sink is configured — set the AUDIT_SINK_S3_* variables'
+				});
+			} else if (s3FieldsSet > 0 && s3FieldsSet < s3Fields.length) {
+				ctx.addIssue({
+					code: 'custom',
+					path: ['AUDIT_SINK_S3_BUCKET'],
+					message:
+						'AUDIT_SINK_S3_BUCKET, AUDIT_SINK_S3_REGION, AUDIT_SINK_S3_ACCESS_KEY_ID and ' +
+						'AUDIT_SINK_S3_SECRET_ACCESS_KEY must all be set together, or none at all'
 				});
 			}
 		});
@@ -308,6 +376,23 @@ export function parseConfig(
 			enabled: parsed.EVENT_EGRESS_ENABLED,
 			signingKey: parsed.EVENT_SIGNING_KEY,
 			allow: parsed.EVENT_EGRESS_ALLOW ?? []
+		},
+		auditSink: {
+			enabled: parsed.AUDIT_SINK_ENABLED,
+			batchRows: parsed.AUDIT_SINK_BATCH_ROWS,
+			maxAgeMs: parsed.AUDIT_SINK_BATCH_MAX_AGE * 60_000,
+			maxBytes: parsed.AUDIT_SINK_BATCH_MAX_BYTES,
+			attestIntervalMs: parsed.AUDIT_SINK_ATTEST_INTERVAL * 60 * 60_000,
+			s3: parsed.AUDIT_SINK_S3_BUCKET
+				? {
+						bucket: parsed.AUDIT_SINK_S3_BUCKET,
+						region: parsed.AUDIT_SINK_S3_REGION!,
+						endpoint: parsed.AUDIT_SINK_S3_ENDPOINT,
+						accessKeyId: parsed.AUDIT_SINK_S3_ACCESS_KEY_ID!,
+						secretAccessKey: parsed.AUDIT_SINK_S3_SECRET_ACCESS_KEY!,
+						prefix: parsed.AUDIT_SINK_S3_PREFIX
+					}
+				: undefined
 		}
 	};
 }
