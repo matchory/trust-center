@@ -77,7 +77,7 @@ export async function drainOutbox(
 			await tx.execute(sql`
 				UPDATE outbound_email
 				SET next_attempt_at = now() + interval '5 minutes'
-				WHERE id = ANY(${sql.raw(`ARRAY['${rows.map((r) => r.id).join("','")}']::uuid[]`)})
+				WHERE id = ANY(${sql.param(rows.map((r) => r.id))}::uuid[])
 			`);
 		}
 

@@ -1121,19 +1121,23 @@ table governs.
 | §6.3 | Each caller validates the stored URL before handing it to `postEvent` | `postEvent` validates it. `deliverClaimed` called `validateEndpointUrl` inside its per-row loop but outside any `try`, so one stored URL the allowlist no longer admitted threw out of the whole batch, abandoning every row claimed after it and repeating every tick. A refusal is now that one delivery's terminal failure, reason `url`. |
 | §4.2, §3.2 | `document.downloaded`'s title read from the translation matching the **file's** locale | Resolved through `pickTranslation` against the context locale. The old join put a German title in an English-speaking team's channel because of which rendition a requester clicked — §3.2's stated failure, arrived at through the subject rather than the actor. A document with no title in the operator's locale still falls back to the slug, whatever other locales it carries. |
 
-Two things this implementation did **not** change, recorded so they are not relitigated:
+One thing this implementation reversed, and one it did **not** change, recorded so neither is
+relitigated:
 
-- **`sql.raw` array interpolation in the delivery and admin queries.** Flagged during review as
-  unparameterised SQL. Recorded here as unchanged, and then changed: the post-implementation
-  simplification passes moved three of the four sites — `claimDeliveries` and its retry-stamp update
+- **`sql.raw` array interpolation, reversed in full.** Flagged during review as unparameterised SQL,
+  argued here as the established idiom at all four sites, and then changed at all four. Three moved
+  during the post-implementation simplification passes — `claimDeliveries` and its retry-stamp update
   in `deliver.ts`, and the endpoint-id list in `endpoints.ts` — onto `sql.param` and `inArray` while
-  they were being rewritten for other reasons. Every interpolated value was a uuid the database
-  itself returned, so this closed no hole; it is recorded because the note above promised all four
-  would go together and they did not. The fourth, `mail/queue.ts`, predates this subsystem and is
-  deliberately untouched on an egress branch — it is the one site where the idiom still stands.
+  being rewritten for other reasons. The fourth, `mail/queue.ts`'s claim stamp, followed
+  deliberately, so the "all four go together" condition this note set is met rather than left half
+  done: an idiom kept for consistency stops being one the moment it survives at a single site, and a
+  reader who finds it there would reasonably copy it. No interpolated value was ever attacker-shaped
+  — each is a uuid the database itself returned — so this closed no hole; it is recorded because the
+  argument for keeping them was made in this document and did not survive.
 - **`outbound_email.last_error` stores raw SMTP messages** and survives both a purge and the
   retention window. Real, pre-existing, and unrelated to egress. Deliberately not fixed on this
-  branch.
+  branch — unlike the line above it, this one is a behaviour change to the mail subsystem rather
+  than a mechanical substitution, and it wants its own branch and its own erasure test.
 
 ---
 
