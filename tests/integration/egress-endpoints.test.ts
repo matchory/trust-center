@@ -8,6 +8,7 @@ import {
 	eventEndpointFilter,
 	staffUser
 } from '../../src/lib/server/db/schema';
+import { currentHorizon } from '../../src/lib/server/audit';
 import { parseAllowList } from '../../src/lib/server/egress/destination';
 import {
 	bumpSecretVersion,
@@ -19,7 +20,6 @@ import {
 	setEndpointEnabled,
 	updateEndpoint
 } from '../../src/lib/server/egress/endpoints';
-import { currentHorizon } from '../../src/lib/server/egress/fanout';
 import { createEndpoint as seedEndpointRow, webhookFixture } from '../helpers/egress';
 
 let db: Db;

@@ -1,4 +1,5 @@
 import { fail } from '@sveltejs/kit';
+import { auditSinkStatus } from '$lib/server/auditsink/status';
 import { getConfig } from '$lib/server/config';
 import { getDb } from '$lib/server/db/instance';
 import { EGRESS_FORMATS } from '$lib/server/db/schema';
@@ -11,8 +12,16 @@ import type { Actions, PageServerLoad } from './$types';
 export const load: PageServerLoad = async ({ locals }) => {
 	requireAdmin(locals);
 
+	const [endpoints, auditSink] = await Promise.all([
+		listEndpoints(getDb()),
+		// Read-only, and on the same page rather than its own route: a status
+		// panel with no write path does not warrant one (spec §10).
+		auditSinkStatus(getDb())
+	]);
+
 	return {
-		endpoints: await listEndpoints(getDb()),
+		endpoints,
+		auditSink,
 		// The same list the edit page renders, so the create form's options come
 		// from the enum rather than being spelled out in markup — a format added
 		// to the enum but not to the dropdown is one nothing can select.

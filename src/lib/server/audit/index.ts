@@ -1,4 +1,4 @@
-import { and, desc, eq, gte, lt, lte } from 'drizzle-orm';
+import { and, desc, eq, gte, lt, lte, sql } from 'drizzle-orm';
 import { auditEvent } from '../db/schema';
 import type { Db } from '../db';
 import { activeTraceId } from '../telemetry';
@@ -35,6 +35,33 @@ export interface AuditEventInput {
 }
 
 export type AuditEventRow = typeof auditEvent.$inferSelect;
+
+// Lives here rather than in egress/ because subsystems A and B both consume
+// the audit log and both need the same answer to "which rows are final".
+// A second copy would be two implementations of one invariant (audit sink
+// spec §1.1).
+/**
+ * The oldest transaction id still running. Everything inserted by a
+ * transaction below it has completed.
+ *
+ * `pg_snapshot_xmin` is epoch-extended `xid8`, but the row side of the
+ * comparison in fanOut is a bare 32-bit `xid` widened by `::text::bigint`:
+ * Postgres exposes no way to recover a tuple's epoch. The comparison is
+ * therefore valid within one xid epoch and not across a rollover, and past one
+ * it does not degrade, it breaks two ways — `xmin < horizon` becomes
+ * universally true, so the visibility predicate stops excluding anything; and
+ * an endpoint seeded with a horizon above 2^32 holds a cursor no raw `xmin`
+ * can ever exceed, so it delivers nothing at all rather than a stranded row.
+ * Centuries away at this system's write rate, and recorded as a residual
+ * rather than engineered around (spec §16).
+ */
+export async function currentHorizon(db: Db): Promise<bigint> {
+	const rows = (await db.execute(
+		sql`SELECT pg_snapshot_xmin(pg_current_snapshot())::text::bigint AS horizon`
+	)) as unknown as { horizon: string }[];
+
+	return BigInt(rows[0]!.horizon);
+}
 
 /**
  * Appends an event to the audit log. There is deliberately no update or

@@ -65,3 +65,31 @@ test('an approver is refused and never offered the link', async ({ page }) => {
 	expect(response?.status()).toBe(403);
 	await expect(page.getByText(/restricted to administrators/i)).toBeVisible();
 });
+
+test('the audit sink panel reports a deployment with no sink honestly', async ({ page }) => {
+	await signInAsAdmin(page);
+	await gotoAdmin(page, '/de/admin/settings/integrations');
+
+	const panel = page.getByTestId('auditsink-panel');
+	await expect(panel).toBeVisible();
+
+	// The e2e deployment sets no AUDIT_SINK_* variables, so both facts must be
+	// on the page: the sink is off, and nothing is configured to ship to. A
+	// panel that rendered empty here would look like a healthy sink.
+	await expect(page.getByTestId('auditsink-off')).toBeVisible();
+	await expect(panel.getByTestId('auditsink-row-s3')).toBeVisible();
+	await expect(panel.getByTestId('auditsink-row-syslog')).toBeVisible();
+	await expect(panel.getByTestId('auditsink-unconfigured').first()).toBeVisible();
+
+	// Coverage is a comparison of the log's own height against what the batches
+	// recorded, and this deployment has cut none (spec §10).
+	await expect(panel.getByTestId('auditsink-coverage')).toContainText('Es wurde noch kein Stapel');
+	await expect(panel.getByTestId('auditsink-attested')).toContainText('Nie attestiert');
+
+	// No backlog badge: nothing is pending because nothing is configured.
+	await expect(page.getByTestId('admin-nav-auditsink-backlog')).toHaveCount(0);
+
+	// Read-only (spec §10): the panel adds no form and no button.
+	await expect(panel.locator('form')).toHaveCount(0);
+	await expect(panel.locator('button')).toHaveCount(0);
+});
