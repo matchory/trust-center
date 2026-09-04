@@ -248,6 +248,24 @@ describe('shipClaimed', () => {
 });
 
 describe('rebuildBatch', () => {
+	// Finding 2: §4.3's two-digest design rests on same-tick digests being
+	// identical by construction, so a recorded mismatch means a genuine
+	// erasure. If the range predicate were systematically wrong, every
+	// later-tick retry (with nothing purged) would record a false mismatch,
+	// and only this assertion — not the purge test below — would catch it.
+	it('reproduces the same digest and row_count with no purge in between', async () => {
+		await seedCursorAtHorizon(db);
+		for (let i = 0; i < 3; i++) {
+			await recordEvent(db, { actor: { type: 'system', id: null }, action: `test.rebuild.${i}` });
+		}
+		const batch = await buildBatch(db, { batchRows: 1000, maxAgeMs: 0, maxBytes: 8e6 });
+
+		const rebuilt = await rebuildBatch(db, batch!.id);
+
+		expect(rebuilt.digest).toBe(batch!.digest);
+		expect(rebuilt.manifest.row_count).toBe(batch!.manifest.row_count);
+	});
+
 	it('drops a purged row from the range, so the manifest disagrees on row_count', async () => {
 		// Spec §4.3: purgeRequester's UPDATE bumps the row's xmin above every
 		// batch cursor, so it leaves the half-open range entirely. This is the
