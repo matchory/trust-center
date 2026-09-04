@@ -81,6 +81,12 @@ refusal is recorded in the audit log.
 | `AUDIT_SINK_S3_SECRET_ACCESS_KEY` | with a sink | — | Secret key. |
 | `AUDIT_SINK_S3_ENDPOINT` | no | — | For an S3-compatible store. Omit for Amazon S3. Addressed path-style. |
 | `AUDIT_SINK_S3_PREFIX` | no | — | Key prefix, if one bucket holds more than one deployment. |
+| `AUDIT_SINK_SYSLOG_URL` | with a sink | — | `tls://host:6514` or `tcp://host:514`, the receiver batches are streamed to. The port may be omitted. There is no UDP scheme. See §13. |
+| `AUDIT_SINK_SYSLOG_CA` | no | — | PEM of the CA that signed the receiver's certificate, for the private CA an internal SIEM almost always uses. Accepts `\n` escapes. See §13. |
+| `AUDIT_SINK_SYSLOG_CLIENT_CERT` | no | — | PEM client certificate, for a receiver requiring mutual TLS. Set with `_CLIENT_KEY` or neither; one alone refuses to boot. See §13. |
+| `AUDIT_SINK_SYSLOG_CLIENT_KEY` | no | — | PEM private key for that client certificate. See §13. |
+| `AUDIT_SINK_SYSLOG_FACILITY` | no | `local0` | Syslog facility the messages claim. One of `user`, `daemon`, `auth`, `syslog`, `authpriv`, `ftp`, `local0`–`local7`. See §13. |
+| `AUDIT_SINK_SYSLOG_MAX_MESSAGE_BYTES` | no | `8192` | Largest single framed message, matching rsyslog's default. A row above it fails the batch rather than being truncated. See §13. |
 | `PORT` | no | `3000` | Port the server listens on. |
 | `BODY_SIZE_LIMIT` | no | `32M` | Largest request body `adapter-node` accepts, uploads included. |
 | `ADDRESS_HEADER` | behind a proxy | — | Header to read the client address from. Set to `X-Forwarded-For`. See §8 — without it every audit event records your proxy's address. |
@@ -951,11 +957,21 @@ reading when you set them.
 | `AUDIT_SINK_S3_BUCKET`, `_REGION`, `_ACCESS_KEY_ID`, `_SECRET_ACCESS_KEY` | — | All four together, or none. |
 | `AUDIT_SINK_S3_ENDPOINT` | — | For an S3-compatible store. Omit for Amazon S3. |
 | `AUDIT_SINK_S3_PREFIX` | — | A key prefix, if one bucket holds more than one deployment. |
+| `AUDIT_SINK_SYSLOG_URL` | — | `tls://host:6514` or `tcp://host:514`. Configures the syslog sink on its own. |
+| `AUDIT_SINK_SYSLOG_CA` | — | PEM of the CA that signed the receiver's certificate. |
+| `AUDIT_SINK_SYSLOG_CLIENT_CERT`, `_CLIENT_KEY` | — | PEM client certificate and key, for mutual TLS. Both together, or neither. |
+| `AUDIT_SINK_SYSLOG_FACILITY` | `local0` | The facility the messages claim. |
+| `AUDIT_SINK_SYSLOG_MAX_MESSAGE_BYTES` | `8192` | Largest single framed message. A row above it fails the batch. |
 
 `AUDIT_SINK_ENABLED=true` with no sink configured is a **boot failure**, not a
 silently disabled sink. So is setting some of the four required S3 variables and
-not the others. A deployment that accepted either would accumulate batches
-nothing ships while you believed something was running.
+not the others, and so is setting one half of the mutual-TLS pair. A deployment
+that accepted any of these would accumulate batches nothing ships while you
+believed something was running.
+
+Either sink alone is a configured sink, and both together are two: each batch is
+shipped to each of them, with its own shipment record, its own backoff and its
+own row in the panel.
 
 ### Setting up the bucket
 
@@ -1172,6 +1188,145 @@ purge reaches. Look it up here:
 | `not_found` | The bucket does not exist, or the endpoint points somewhere else. |
 | `http_status` | The store answered with something else. The code is shown next to it. |
 
+The last four — `auth`, `permission`, `not_found` and `http_status` — are read
+off an HTTP status code, so only the S3 sink can report them. A syslog shipment
+reports one of `config`, `tls`, `timeout` or `network`, and `config` there means
+a row exceeded `AUDIT_SINK_SYSLOG_MAX_MESSAGE_BYTES`.
+
+### The syslog transport
+
+Set `AUDIT_SINK_SYSLOG_URL` and every batch is also streamed to a syslog
+receiver — a SIEM, an rsyslog relay, whatever collects logs where you are — as
+RFC 5424 messages framed per RFC 6587. This is the sink to reach for when the
+audit log needs to land where your alerting already lives. It does not replace
+the bucket, and the subsection **What shipping to a SIEM cannot promise** below
+is the part to read before you make it your only sink.
+
+The scheme decides both the transport and the default port: `tls://` connects on
+6514, `tcp://` on 514, and a port written into the URL overrides either.
+
+**`tcp://` is accepted, and discouraged.** It puts the whole audit record —
+requester email addresses, IP addresses, document titles — on the network in
+cleartext, and it authenticates neither end, so anything that can reach the port
+can also write forged audit rows into your SIEM. Use it only where the receiver
+sits on a link you already treat as private, such as a sidecar on the same host,
+and prefer `tls://` even there.
+
+**There is no UDP, and no variable turns it on.** UDP syslog discards messages
+silently under load and has no way to tell you it did, which is exactly the
+property a compliance record cannot have. A `udp://` URL is refused at boot
+rather than quietly accepted.
+
+### TLS trust for the syslog sink
+
+Syslog to a SIEM is nearly always against a private CA and frequently mutual
+TLS, so the trust this sink uses is something you configure rather than
+something it assumes.
+
+- `AUDIT_SINK_SYSLOG_CA` is the PEM of the CA that signed the receiver's
+  certificate. Set it whenever that CA is not in the container's public trust
+  store, which for an internal receiver is always.
+- `AUDIT_SINK_SYSLOG_CLIENT_CERT` and `AUDIT_SINK_SYSLOG_CLIENT_KEY` are the
+  client certificate a receiver demanding mutual TLS will ask for. Set both or
+  neither: one alone refuses to boot, because half a pair is not a weaker
+  configuration, it is a handshake that fails on every tick.
+
+**Certificate verification is never disabled, and there is no variable that
+disables it.** This is the channel carrying your entire audit record. A switch
+for turning verification off would be the first thing reached for on a handshake
+error, and that error is almost always a missing `AUDIT_SINK_SYSLOG_CA` rather
+than something worth ignoring.
+
+A PEM block is multi-line and a `docker run -e` argument is not, so all three
+PEM variables accept `\n` escape sequences and turn them into real newlines:
+
+```sh
+AUDIT_SINK_SYSLOG_CA="-----BEGIN CERTIFICATE-----\nMIIDdzCCAl+gAwIB…\n-----END CERTIFICATE-----\n"
+```
+
+A value that already contains real newlines — from a Compose file, a quoted
+multi-line `.env` entry, or a secrets mount read into the environment — passes
+through untouched, so you do not have to choose one form.
+
+### What arrives at the receiver
+
+One connection per batch: a message per audit event, a trailing message carrying
+the manifest, then the connection is closed. An attestation is its own
+connection carrying a single message. Nothing is pooled — with no
+acknowledgement to resynchronise on, a half-written batch on a reused socket
+would have no defined meaning for the batch after it.
+
+Each message is RFC 5424, framed by RFC 6587 octet counting (`MSG-LEN SP MSG`),
+which is the only framing that stays unambiguous over a stream:
+
+```
+<133>1 2026-09-04T09:15:22.031Z trust.example.com trustcenter 0193f2c8-… audit - {"id":"…","seq":"41827",…}
+```
+
+- **PRI** is the facility times eight plus severity 5, `notice`; with the
+  `local0` default, `<133>`. `notice` rather than `info` because a compliance
+  record swallowed by a routine `*.info` filter is precisely the failure this
+  subsystem exists to prevent.
+- **HOSTNAME** is the host of your `BASE_URL`, not the container's hostname. A
+  scheduler-assigned container id means nothing to whoever reads the message and
+  changes on every deploy.
+- **APP-NAME** is always `trustcenter`.
+- **PROCID** carries the **batch id**. That is how a receiver correlates the
+  rows to the manifest message that follows them. An attestation carries the
+  literal `attestation`, since it belongs to no batch.
+- **MSGID** is `audit` for a row, `manifest` for the trailing message and
+  `attest` for an attestation. Route on it.
+- **STRUCTURED-DATA** is nil, `-`. A private structured-data id requires a
+  registered enterprise number this project does not have, and PROCID already
+  carries the correlation it would have held.
+- **MSG** is the same canonical JSON line the S3 sink writes into the `.ndjson`
+  object, prefixed with a UTF-8 BOM — RFC 5424 §6.4 makes the BOM how a receiver
+  knows the payload is UTF-8. Strip it before parsing the JSON if your receiver
+  does not.
+
+`AUDIT_SINK_SYSLOG_MAX_MESSAGE_BYTES` defaults to 8192, matching rsyslog's own
+default; raise it only alongside the receiver's own limit. **A row whose message
+exceeds it fails the entire batch**, with reason `config`, and no connection is
+opened at all. It is not truncated, because a truncated row can never reproduce
+its digest, and it is not skipped, because a sink that drops what it cannot send
+is silently lossy. The remedy is a setting at one end or the other. The
+deployments that meet this are the ones whose audit events carry large `meta`.
+
+### What shipping to a SIEM cannot promise
+
+Three things are true of this sink that are not true of the bucket. None of them
+is a defect waiting to be fixed — they follow from a protocol that acknowledges
+nothing — and you should know them before an auditor does.
+
+**There is no acknowledgement.** RFC 6587 has none to offer. "Shipped" here
+means the bytes were written to a socket and the receiver closed the connection
+without complaint, which is materially weaker than a PUT that returned 200. A
+receiver whose own queue overflows discards messages silently, and no trace of
+that reaches this deployment: the batch is recorded as shipped and the panel
+stays green. If you need a record you can demonstrate arrived, the S3 sink is
+the one that offers it, and the two run happily together.
+
+**`sha256sum` verification does not apply.** The one-command check under *What
+arrives in the bucket* has nothing to run against here. There is no object at
+the far end, and once your SIEM has parsed, indexed and normalized the rows an
+auditor cannot reconstruct the exact bytes, so cannot reproduce the digest at
+all. The `byte_count` and the digest recorded for a syslog shipment describe
+**what was sent**, not what was stored. Treat the syslog copy as an operational
+feed and the bucket as the evidentiary one.
+
+**A receiver that never closes the connection stalls the batch.** Since nothing
+is acknowledged, the receiver closing the connection after we have written and
+half-closed is the strongest evidence available that it took the batch, and this
+deployment waits for it rather than declaring success the moment the last byte
+left. A receiver that instead holds the connection open — some relays keep a
+session alive by design — stalls until the thirty-second timeout, and the batch
+is retried on the normal backoff even though the bytes arrived. You would see
+that as a backlog that keeps growing and `timeout` in the panel, against a
+receiver that looks perfectly healthy from its own side. It is the deliberate
+choice: the alternative is recording a batch as shipped that the receiver
+actually rejected, and a false entry is worse than a duplicate in a record whose
+whole value is that it is true.
+
 ### Watching it
 
 **Settings → Integrations** carries a read-only panel: per sink, whether it is
@@ -1189,13 +1344,10 @@ because this subsystem's failure mode is that the compliance record quietly
 stops leaving the box, and on a deployment with no metrics collector — the
 default — nothing else would tell you.
 
-With telemetry configured (§11) there are three instruments:
+With telemetry configured (§11) there are four instruments:
 `trustcenter.auditsink.batch` (by sink and outcome),
-`trustcenter.auditsink.s3.queue.depth`, and
-`trustcenter.auditsink.digest_mismatch`.
-
-### Not yet shipped
-
-The syslog transport described in the design is **not implemented**. Only the S3
-sink exists today; `AUDIT_SINK_SYSLOG_*` variables are not read and setting them
-does nothing.
+`trustcenter.auditsink.s3.queue.depth`,
+`trustcenter.auditsink.syslog.queue.depth`, and
+`trustcenter.auditsink.digest_mismatch`. The two depth gauges are separate
+instruments rather than one carrying a `sink` attribute, and both report even
+while their sink is switched off, so batches left pending stay visible.

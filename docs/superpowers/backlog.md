@@ -34,6 +34,22 @@ Then replace the "not verified against Amazon" wording in three places: the desi
 Sources bullet at the end of the same document, and `docs/self-hosting.md` §13 under
 "S3-compatible stores".
 
+### `openssl` is an undeclared prerequisite of the integration suite
+
+**From:** subsystem B2, 2026-09-05. **Blocks:** nothing today. **Cost:** minutes, or an hour to
+remove the dependency.
+
+`tests/helpers/syslog-server.ts` shells out to `openssl req -x509` to mint the TLS material the
+syslog adapter's 14 integration tests run against. Nothing in `package.json` or
+`.github/workflows/ci.yml` names it. It is present on `ubuntu-latest` and on the machine B2 was
+written on (macOS 25.6), so CI is green — but a runner without it, or with a build old enough to
+reject `-addext`, fails the whole file with an `execFileSync` error rather than an assertion, which
+reads as a broken adapter rather than a missing tool.
+
+Either declare it (a line in the CI workflow and in the testing notes) or remove it by generating
+the certificate in Node. A checked-in fixture certificate is the third option and the worst one: it
+expires, and nobody notices an expiry until CI turns red for an unrelated-looking reason.
+
 ### Subsystem A has no carry-over document
 
 **From:** noticed 2026-09-04 while writing B1's. **Cost:** an hour of reconstruction, rising.

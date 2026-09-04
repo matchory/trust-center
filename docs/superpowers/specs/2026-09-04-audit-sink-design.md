@@ -923,10 +923,10 @@ design attention the S3 one did, and §5.3's absent TLS story was the symptom.
   and the §6.3 corrections.
 - **B2** — the syslog adapter, its TLS configuration, its docs and its tests.
 
-### What B1 shipped, and what B2 owns — 2026-09-04
+### What B1 and B2 shipped — 2026-09-04, extended 2026-09-05
 
-Recorded so a reader of the merged branch does not have to guess whether syslog was forgotten or
-deferred.
+Recorded so a reader of the merged branch does not have to reconstruct which half landed when, or
+which of the choices below the spec made and which the implementation did.
 
 **Shipped in B1.** `currentHorizon` moved into the audit module; `audit_batch` and
 `audit_batch_shipment` with their append-only and monotonicity triggers (`drizzle/0028`); the keyset
@@ -942,11 +942,45 @@ was otherwise permanently null — the asymmetry the plan's own self-review flag
 And the object-lock probe §5.2 requires had no home in any task, so it is an optional port method
 implemented by the S3 adapter and memoised per bucket.
 
-**B2 owns**: the syslog adapter (§5.3), its TLS configuration including private-CA and mutual TLS,
-its message-size cap, its docs, and its tests against an in-process TLS server. `SINK_NAMES` and the
-`audit_batch_shipment` CHECK constraint already carry `'syslog'`, and the panel already renders it as
-not configured, so B2 adds an adapter rather than reworking the spine. The `AUDIT_SINK_SYSLOG_*`
-variables in §11 are **not read today**; `docs/self-hosting.md` §13 says so.
+**Shipped in B2 — 2026-09-05.** `syslog-message.ts`, the RFC 5424 construction and RFC 6587
+octet-counting framing with the size cap; the six `AUDIT_SINK_SYSLOG_*` variables in `config/parse.ts`
+including the scheme gate that leaves UDP unreachable, the mutual-TLS pair rule, and the
+`AUDIT_SINK_ENABLED` rule widened so syslog alone is a configured sink; `syslog.ts`, the adapter over
+`node:tls`/`node:net` with §5.4's reason mapping; and the wiring in `auditsink/index.ts` and
+`status.ts`, so a deployment configuring both sinks ships each batch to both. `docs/self-hosting.md`
+§13 gains the transport, its TLS story and both honesty notes, and §3 and `.env.example` gain the
+variables. `SINK_NAMES` and the CHECK constraint already carried `'syslog'`, so no migration.
+
+**Decisions B2 took that this spec left open**, recorded because a later reader will ask why PROCID
+carries a batch id:
+
+- **D1 — SEVERITY is `notice` (5), not `info` (6).** A compliance record dropped by a routine
+  `*.info` filter is the failure this subsystem exists to prevent. Fixed, not configurable; §11
+  defines no severity variable.
+- **D2 — HOSTNAME is the host of `BASE_URL`,** not `os.hostname()`, which in a container is a
+  scheduler-assigned id that means nothing to the SIEM operator and changes on every deploy.
+- **D3 — APP-NAME is `trustcenter`,** matching the `trustcenter.*` telemetry namespace.
+- **D4 — PROCID carries the batch id.** RFC 5424 reads a PROCID change as a discontinuity in
+  reporting, which is exactly a batch boundary, and it is what lets a receiver correlate rows to the
+  manifest message without a structured-data element. An attestation carries `attestation`.
+- **D5 — MSGID is `audit`, `manifest` or `attest`.** A receiver can route on it; all three fit the
+  32-character cap.
+- **D6 — STRUCTURED-DATA is nil.** A private SD-ID needs a registered enterprise number this project
+  does not have, and D4 already supplies the correlation.
+- **D7 — MSG carries a UTF-8 BOM before the JSON** (RFC 5424 §6.4). The wire octets are therefore not
+  byte-identical to the canonical line, which costs nothing: §5.3 already records that the digest is
+  not reproducible from what a SIEM stored.
+- **D8 — a row over `MAX_MESSAGE_BYTES` fails the batch with reason `config`,** checked for the whole
+  batch before the socket opens so no partial batch reaches the receiver. The limit is an operator
+  setting and so is the remedy; `network` would send them to look at sockets.
+- **D9 — the PEM variables accept `\n` escapes** and convert them to newlines, because a PEM block is
+  multi-line and a `docker run -e` argument is not. A value already carrying real newlines passes
+  through unchanged.
+
+Two further rulings, both taken during implementation and both recorded in
+`subsystem-b2-carryover.md`: `ship()` resolves on the receiver's close rather than on our own
+`end()`, and a pre-handshake reset carrying no TLS error code is classified `tls` on rule 2 read
+literally.
 
 **One residual carried out of B1**: §16's note that the object-lock premises are verified against
 MinIO and not against Amazon.
