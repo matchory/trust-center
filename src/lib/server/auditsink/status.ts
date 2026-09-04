@@ -3,6 +3,7 @@ import { getConfig } from '../config';
 import { SINK_NAMES } from '../db/schema';
 import { lastAttestedAt } from './attest';
 import { createS3Adapter } from './s3';
+import { createSyslogAdapter } from './syslog';
 import { pendingShipments } from './ship';
 import type { AuditSinkAdapter, ObjectLockStatus } from './port';
 import type { SinkName } from '../db/schema';
@@ -50,13 +51,18 @@ export interface AuditSinkStatus {
 	coverage: SinkCoverage;
 }
 
-/** Only S3 is wired in B1; syslog arrives with B2 and reports `configured: false`
- * until then, rather than being hidden — an operator who set the syslog
- * variables should see that nothing is shipping to them. */
 function adapterFor(sink: SinkName): AuditSinkAdapter | null {
 	const { auditSink } = getConfig();
 
-	return sink === 's3' && auditSink.s3 ? createS3Adapter(auditSink.s3) : null;
+	if (sink === 's3') return auditSink.s3 ? createS3Adapter(auditSink.s3) : null;
+
+	// hostname is the RFC 5424 HOSTNAME field, derived from BASE_URL rather
+	// than an operator setting (decision D2) — it is not part of the config
+	// schema, so it is added here rather than carried on auditSink.syslog.
+	if (!auditSink.syslog) return null;
+	const hostname = new URL(getConfig().baseUrl).host;
+
+	return createSyslogAdapter({ ...auditSink.syslog, hostname });
 }
 
 /**
