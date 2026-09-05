@@ -155,10 +155,13 @@ measurement is recorded in a comment beside the fixture. Cost: ~300 ms on the fi
 
 ## 4. Measurements
 
-- **Suites at the close of the branch**, all green: **394 unit** across 43 files, **430 integration**
-  across 42 files, **106 e2e**, `pnpm lint` clean, `pnpm check` **0 errors / 0 warnings over 2721
+- **Suites at the close of the branch**, all green: **397 unit** across 43 files, **429 integration**
+  across 42 files, **106 e2e**, `pnpm lint` clean, `pnpm check` **0 errors / 0 warnings over 2722
   files**, and `pnpm check` and `pnpm build` both green under `env -i` — the CI property that the
-  build needs neither secrets nor a database. B1 closed at 369 unit and 415 integration.
+  build needs neither secrets nor a database. B1 closed at 369 unit and 415 integration. These are
+  the counts at `2e5eb7b`, the last commit on the branch; the 394 and 430 recorded here first
+  predated `e4f13a2`, which moved a case out of the syslog integration file and added unit cases for
+  the configuration.
 - **B2's own tests**: 9 unit for the message module, 10 unit for the configuration, 4 unit for
   `socketReason`, and 14 integration against an in-process TLS receiver (5.7 s).
 - **TLS error codes**, measured against a real receiver on 2026-09-05, because the classification
