@@ -12,9 +12,11 @@ import type { Db } from '../../src/lib/server/db';
  * reason `egress-switch.test.ts` mocks it rather than building one.
  */
 const s3Configured = vi.fn(() => true);
+const syslogConfigured = vi.fn(() => false);
 
 vi.mock('../../src/lib/server/config', () => ({
 	getConfig: () => ({
+		baseUrl: 'https://trust.example.com',
 		auditSink: {
 			enabled: true,
 			s3: s3Configured()
@@ -26,6 +28,15 @@ vi.mock('../../src/lib/server/config', () => ({
 						endpoint: 'http://127.0.0.1:1',
 						accessKeyId: 'k',
 						secretAccessKey: 's'
+					}
+				: undefined,
+			syslog: syslogConfigured()
+				? {
+						host: 'siem.example.com',
+						port: 6514,
+						tls: true,
+						facility: 'local0',
+						maxMessageBytes: 8192
 					}
 				: undefined
 		}
@@ -58,6 +69,7 @@ beforeEach(async () => {
 	await db.execute(sql`ALTER TABLE audit_batch ENABLE TRIGGER USER`);
 
 	s3Configured.mockReturnValue(true);
+	syslogConfigured.mockReturnValue(false);
 	resetObjectLockProbes();
 	vi.clearAllMocks();
 });
@@ -162,6 +174,19 @@ describe('auditSinkStatus', () => {
 		expect(status.sinks.map((sink) => sink.name)).toContain('syslog');
 		expect(status.sinks.find((sink) => sink.name === 's3')!.configured).toBe(false);
 		expect(status.sinks.find((sink) => sink.name === 's3')!.objectLock).toBeNull();
+	});
+
+	it('reports syslog as configured, with no object-lock notion, alongside a healthy s3', async () => {
+		syslogConfigured.mockReturnValue(true);
+
+		const status = await auditSinkStatus(db);
+
+		const syslog = status.sinks.find((sink) => sink.name === 'syslog')!;
+		expect(syslog.configured).toBe(true);
+		expect(syslog.objectLock).toBeNull();
+
+		const s3 = status.sinks.find((sink) => sink.name === 's3')!;
+		expect(s3.configured).toBe(true);
 	});
 
 	it('reports a fresh deployment as zero rather than throwing', async () => {

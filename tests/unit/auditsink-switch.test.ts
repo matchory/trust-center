@@ -14,9 +14,11 @@ import type { Db } from '../../src/lib/server/db';
  */
 const sinkEnabled = vi.fn(() => false);
 const s3Configured = vi.fn(() => true);
+const syslogConfigured = vi.fn(() => false);
 
 vi.mock('../../src/lib/server/config', () => ({
 	getConfig: () => ({
+		baseUrl: 'https://trust.example.com',
 		auditSink: {
 			enabled: sinkEnabled(),
 			batchRows: 1000,
@@ -30,6 +32,16 @@ vi.mock('../../src/lib/server/config', () => ({
 						accessKeyId: 'k',
 						secretAccessKey: 's'
 					}
+				: undefined,
+			syslog: syslogConfigured()
+				? {
+						host: 'siem.example.com',
+						port: 6514,
+						tls: true,
+						facility: 'local0',
+						maxMessageBytes: 8192,
+						hostname: 'trust.example.com'
+					}
 				: undefined
 		}
 	})
@@ -37,7 +49,7 @@ vi.mock('../../src/lib/server/config', () => ({
 
 const buildBatch = vi.fn(async () => null);
 const claimShipments = vi.fn(async () => [] as { batchId: string; sink: 's3'; attempts: number }[]);
-const shipClaimed = vi.fn(async () => {});
+const shipClaimed = vi.fn<(...args: unknown[]) => Promise<void>>(async () => {});
 const attestationDue = vi.fn(async () => false);
 const buildAttestation = vi.fn(async () => ({ at: '2026-09-04T12:00:00.000Z' }));
 const markAttested = vi.fn(async () => {});
@@ -49,7 +61,7 @@ vi.mock('../../src/lib/server/auditsink/reader', () => ({
 
 vi.mock('../../src/lib/server/auditsink/ship', () => ({
 	claimShipments: () => claimShipments(),
-	shipClaimed: () => shipClaimed()
+	shipClaimed: (...args: unknown[]) => shipClaimed(...args)
 }));
 
 vi.mock('../../src/lib/server/auditsink/attest', () => ({
@@ -60,6 +72,10 @@ vi.mock('../../src/lib/server/auditsink/attest', () => ({
 
 vi.mock('../../src/lib/server/auditsink/s3', () => ({
 	createS3Adapter: () => ({ name: 's3', ship: async () => null, attest: () => attest() })
+}));
+
+vi.mock('../../src/lib/server/auditsink/syslog', () => ({
+	createSyslogAdapter: () => ({ name: 'syslog', ship: async () => null, attest: async () => {} })
 }));
 
 vi.mock('../../src/lib/server/telemetry', () => ({
@@ -73,6 +89,7 @@ beforeEach(() => {
 	vi.clearAllMocks();
 	sinkEnabled.mockReturnValue(false);
 	s3Configured.mockReturnValue(true);
+	syslogConfigured.mockReturnValue(false);
 });
 
 describe('the audit sink kill switch', () => {
@@ -156,5 +173,34 @@ describe('the audit sink kill switch', () => {
 		await runAuditSinkShip(db);
 
 		expect(shipClaimed).toHaveBeenCalledTimes(1);
+	});
+
+	it('claims for syslog alone when only syslog is configured', async () => {
+		sinkEnabled.mockReturnValue(true);
+		s3Configured.mockReturnValue(false);
+		syslogConfigured.mockReturnValue(true);
+
+		await runAuditSinkBatch(db);
+
+		expect(claimShipments).toHaveBeenCalledTimes(1);
+		expect(buildBatch).toHaveBeenCalledTimes(1);
+	});
+
+	it('ships to both sinks when both are configured', async () => {
+		sinkEnabled.mockReturnValue(true);
+		syslogConfigured.mockReturnValue(true);
+		claimShipments.mockResolvedValueOnce([{ batchId: 'b1', sink: 's3', attempts: 0 }]);
+
+		await runAuditSinkBatch(db);
+		await runAuditSinkShip(db);
+
+		// One call, two adapters — shipClaimed fans out internally, and the
+		// property here is that both were passed to it. Asserting only the call
+		// count would pass just as well with S3-only wiring, so the adapters
+		// argument (index 2 of the call, see auditsink/index.ts's `shipClaimed(db,
+		// claimed, active, prebuilt)`) is what actually proves both reached it.
+		expect(shipClaimed).toHaveBeenCalledTimes(1);
+		const active = shipClaimed.mock.calls[0]?.[2] as { name: string }[];
+		expect(active.map((adapter) => adapter.name)).toEqual(expect.arrayContaining(['s3', 'syslog']));
 	});
 });

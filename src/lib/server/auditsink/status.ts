@@ -1,10 +1,10 @@
 import { sql } from 'drizzle-orm';
 import { getConfig } from '../config';
 import { SINK_NAMES } from '../db/schema';
+import { adapterFor } from './adapters';
 import { lastAttestedAt } from './attest';
-import { createS3Adapter } from './s3';
 import { pendingShipments } from './ship';
-import type { AuditSinkAdapter, ObjectLockStatus } from './port';
+import type { ObjectLockStatus } from './port';
 import type { SinkName } from '../db/schema';
 import type { Db } from '../db';
 
@@ -48,15 +48,6 @@ export interface AuditSinkStatus {
 	enabled: boolean;
 	sinks: SinkStatus[];
 	coverage: SinkCoverage;
-}
-
-/** Only S3 is wired in B1; syslog arrives with B2 and reports `configured: false`
- * until then, rather than being hidden — an operator who set the syslog
- * variables should see that nothing is shipping to them. */
-function adapterFor(sink: SinkName): AuditSinkAdapter | null {
-	const { auditSink } = getConfig();
-
-	return sink === 's3' && auditSink.s3 ? createS3Adapter(auditSink.s3) : null;
 }
 
 /**
