@@ -1,6 +1,7 @@
 import { connect as connectTcp, type Socket } from 'node:net';
 import { connect as connectTls } from 'node:tls';
 import { SinkError } from './port';
+import { canonicalLines } from './serialize';
 import { buildMessage, frame, MessageTooLarge } from './syslog-message';
 import type { Attestation, AuditSinkAdapter, SinkBatch } from './port';
 
@@ -186,10 +187,9 @@ export function createSyslogAdapter(config: SyslogSinkConfig): AuditSinkAdapter 
 		name: 'syslog',
 		async ship(batch: SinkBatch): Promise<null> {
 			// The shared body, split back into the lines it was built from
-			// (spec §5.1: one body for all sinks). The canonical format is
-			// LF-terminated, so the trailing empty element is dropped rather
-			// than sent as a message.
-			const lines = Buffer.from(batch.body).toString('utf8').split('\n').filter(Boolean);
+			// (spec §5.1: one body for all sinks). `serialize.ts` owns both
+			// halves of that format.
+			const lines = canonicalLines(batch.body);
 
 			await guard(() =>
 				send(batch.id, [

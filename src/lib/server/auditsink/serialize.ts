@@ -89,6 +89,23 @@ export function serializeBatch(rows: readonly AuditRowText[]): {
 }
 
 /**
+ * The lines a serialized body is made of, for an adapter that sends one message
+ * per row rather than one object per batch.
+ *
+ * Here rather than in the syslog adapter because `serializeBatch` above defines
+ * the terminator; a format change would otherwise update the producer in this
+ * file and leave the consumer in another. Splitting the digested bytes, rather
+ * than keeping a parallel array of rows, is also what guarantees a stream sink
+ * ships exactly what the digest covers.
+ */
+export function canonicalLines(body: Uint8Array): string[] {
+	const text = new TextDecoder().decode(body);
+	// One trailing terminator, not "blank lines are noise": an empty batch
+	// serializes to an empty body, and every other line is a JSON object.
+	return text.length === 0 ? [] : text.slice(0, -1).split('\n');
+}
+
+/**
  * The seq span of a batch's rows. Both call sites need it and only one of them
  * can ever be handed an empty list — `rebuildBatch`, after a purge removed
  * every row in a batch's range — so the empty case lives here rather than

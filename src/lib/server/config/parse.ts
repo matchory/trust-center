@@ -20,25 +20,14 @@ function blankAsUndefined<T extends z.ZodTypeAny>(schema: T) {
  */
 const pemText = (schema: z.ZodString) => schema.transform((value) => value.replace(/\\n/g, '\n'));
 
-/** `URL.parse` is a Node 22.1+ static; this refinement runs at boot, so it
- * must not depend on a recent minor the Dockerfile's pinned `node:22` may
- * predate. */
-function isValidUrl(value: string): boolean {
-	try {
-		new URL(value);
-		return true;
-	} catch {
-		return false;
-	}
-}
-
 /**
  * `tls://` and `tls:///path` are both syntactically valid URLs with an empty
  * `hostname`, and `net.connect` treats a falsy host as `localhost` — so a
  * missing host would boot a "configured" sink that quietly talks to itself
  * rather than refusing to boot like every other malformed setting here.
- * Returns true (no issue) for a value that already fails `isValidUrl`, so the
- * two refinements don't both fire over the same malformed string.
+ * `z.url()` admits it — a host-less URL is syntactically valid — so this runs
+ * after it and is earned rather than defensive. The catch returns true so a
+ * string that is not a URL at all reports only that, once.
  */
 function hasHost(value: string): boolean {
 	try {
@@ -181,7 +170,6 @@ export interface AppConfig {
 			| undefined;
 		syslog:
 			| {
-					url: string;
 					tls: boolean;
 					host: string;
 					port: number;
@@ -190,6 +178,10 @@ export interface AppConfig {
 					clientKey: string | undefined;
 					facility: string;
 					maxMessageBytes: number;
+					/** RFC 5424's HOSTNAME, derived from BASE_URL. Here rather than at
+					 * the call sites for the reason `port` is: it is derived from other
+					 * settings, not asked of the operator. */
+					hostname: string;
 			  }
 			| undefined;
 	};
@@ -318,12 +310,10 @@ function buildSchema(compiledLocales: readonly string[]) {
 			// (spec §5.3).
 			AUDIT_SINK_SYSLOG_URL: blankAsUndefined(
 				z
-					.string()
-					.min(1)
-					.refine((value) => /^tls:\/\/|^tcp:\/\//.test(value), {
-						message: 'AUDIT_SINK_SYSLOG_URL must start with tls:// or tcp:// — UDP is not supported'
+					.url({
+						protocol: /^(tls|tcp)$/,
+						error: 'AUDIT_SINK_SYSLOG_URL must be a tls:// or tcp:// URL — UDP is not supported'
 					})
-					.refine(isValidUrl, { message: 'AUDIT_SINK_SYSLOG_URL is not a valid URL' })
 					.refine(hasHost, { message: 'AUDIT_SINK_SYSLOG_URL must include a host' })
 			),
 			AUDIT_SINK_SYSLOG_CA: blankAsUndefined(pemText(z.string().min(1))),
@@ -410,6 +400,47 @@ function buildSchema(compiledLocales: readonly string[]) {
 		});
 }
 
+/**
+ * Everything the syslog adapter needs, derived here rather than at its call
+ * sites: `host`, `port`, `tls` and `hostname` all come from other settings
+ * rather than from the operator, and deriving three of them here and the
+ * fourth twice elsewhere is how they come to disagree.
+ */
+function syslogSettings(
+	rawUrl: string,
+	baseUrl: string,
+	parsed: {
+		AUDIT_SINK_SYSLOG_CA?: string;
+		AUDIT_SINK_SYSLOG_CLIENT_CERT?: string;
+		AUDIT_SINK_SYSLOG_CLIENT_KEY?: string;
+		AUDIT_SINK_SYSLOG_FACILITY: string;
+		AUDIT_SINK_SYSLOG_MAX_MESSAGE_BYTES: number;
+	}
+) {
+	const url = new URL(rawUrl);
+	const tls = url.protocol === 'tls:';
+
+	return {
+		tls,
+		// `URL#hostname` keeps the brackets an IPv6 literal is written with
+		// (`[::1]`), but `net.connect` does not strip them and fails
+		// `getaddrinfo ENOTFOUND [::1]` forever rather than connecting.
+		host: url.hostname.replace(/^\[|\]$/g, ''),
+		// The scheme's default, because an operator who writes
+		// `tls://siem.example.com` means 6514 and should not have to say so.
+		port: url.port ? Number(url.port) : tls ? 6514 : 514,
+		ca: parsed.AUDIT_SINK_SYSLOG_CA,
+		clientCert: parsed.AUDIT_SINK_SYSLOG_CLIENT_CERT,
+		clientKey: parsed.AUDIT_SINK_SYSLOG_CLIENT_KEY,
+		facility: parsed.AUDIT_SINK_SYSLOG_FACILITY,
+		maxMessageBytes: parsed.AUDIT_SINK_SYSLOG_MAX_MESSAGE_BYTES,
+		// The deployment's own host, not os.hostname(): a container id means
+		// nothing to the SIEM operator reading the message and changes on every
+		// deploy (decision D2).
+		hostname: new URL(baseUrl).host
+	};
+}
+
 export function parseConfig(
 	env: Record<string, string | undefined>,
 	compiledLocales: readonly string[]
@@ -425,13 +456,15 @@ export function parseConfig(
 	}
 
 	const parsed = result.data;
+	// Normalised once here: every consumer concatenates a path onto it
+	// (canonical URLs, the sitemap, robots.txt, the OIDC redirect URI), and a
+	// trailing slash in the environment would double every one. Held in a const
+	// because the syslog settings derive their HOSTNAME from it too.
+	const baseUrl = parsed.BASE_URL.replace(/\/+$/, '');
 
 	return {
 		databaseUrl: parsed.DATABASE_URL,
-		// Normalised once here: every consumer concatenates a path onto it
-		// (canonical URLs, the sitemap, robots.txt, the OIDC redirect URI),
-		// and a trailing slash in the environment would double every one.
-		baseUrl: parsed.BASE_URL.replace(/\/+$/, ''),
+		baseUrl,
 		locales: parsed.LOCALES,
 		defaultLocale: parsed.DEFAULT_LOCALE,
 		storageDir: parsed.STORAGE_DIR,
@@ -486,29 +519,7 @@ export function parseConfig(
 					}
 				: undefined,
 			syslog: parsed.AUDIT_SINK_SYSLOG_URL
-				? (() => {
-						const url = new URL(parsed.AUDIT_SINK_SYSLOG_URL!);
-						const tls = url.protocol === 'tls:';
-
-						return {
-							url: parsed.AUDIT_SINK_SYSLOG_URL!,
-							tls,
-							// `URL#hostname` keeps the brackets an IPv6 literal is written
-							// with (`[::1]`), but `net.connect` does not strip them and
-							// fails `getaddrinfo ENOTFOUND [::1]` forever rather than
-							// connecting.
-							host: url.hostname.replace(/^\[|\]$/g, ''),
-							// The scheme's default, because an operator who writes
-							// `tls://siem.example.com` means 6514 and should not have to
-							// say so.
-							port: url.port ? Number(url.port) : tls ? 6514 : 514,
-							ca: parsed.AUDIT_SINK_SYSLOG_CA,
-							clientCert: parsed.AUDIT_SINK_SYSLOG_CLIENT_CERT,
-							clientKey: parsed.AUDIT_SINK_SYSLOG_CLIENT_KEY,
-							facility: parsed.AUDIT_SINK_SYSLOG_FACILITY,
-							maxMessageBytes: parsed.AUDIT_SINK_SYSLOG_MAX_MESSAGE_BYTES
-						};
-					})()
+				? syslogSettings(parsed.AUDIT_SINK_SYSLOG_URL, baseUrl, parsed)
 				: undefined
 		}
 	};

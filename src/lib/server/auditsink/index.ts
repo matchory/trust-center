@@ -1,11 +1,10 @@
 import { getConfig } from '../config';
 import { withSpan } from '../telemetry';
+import { activeAdapters } from './adapters';
 import { attestationDue, buildAttestation, markAttested } from './attest';
 import { buildBatch } from './reader';
-import { createS3Adapter } from './s3';
-import { createSyslogAdapter } from './syslog';
 import { claimShipments, shipClaimed } from './ship';
-import type { Attestation, AuditSinkAdapter, SinkBatch } from './port';
+import type { Attestation, SinkBatch } from './port';
 import type { ClaimedShipment } from './ship';
 import type { SinkName } from '../db/schema';
 import type { Db } from '../db';
@@ -29,21 +28,6 @@ let claimed: ClaimedShipment[] = [];
 let prebuilt = new Map<string, SinkBatch>();
 let pendingAttestation: Attestation | null = null;
 
-function adapters(): AuditSinkAdapter[] {
-	const { auditSink, baseUrl } = getConfig();
-	const active: AuditSinkAdapter[] = [];
-
-	if (auditSink.s3) active.push(createS3Adapter(auditSink.s3));
-	// hostname is the RFC 5424 HOSTNAME field, derived from BASE_URL rather
-	// than an operator setting (decision D2) — it is not part of the config
-	// schema, so it is added here rather than carried on auditSink.syslog.
-	if (auditSink.syslog) {
-		active.push(createSyslogAdapter({ ...auditSink.syslog, hostname: new URL(baseUrl).host }));
-	}
-
-	return active;
-}
-
 function reset(): void {
 	claimed = [];
 	prebuilt = new Map();
@@ -66,7 +50,7 @@ export async function runAuditSinkBatch(db: Db): Promise<void> {
 	const { auditSink } = getConfig();
 	if (!auditSink.enabled) return;
 
-	const sinks = adapters().map((adapter): SinkName => adapter.name);
+	const sinks = activeAdapters().map((adapter): SinkName => adapter.name);
 	if (sinks.length === 0) return;
 
 	const batch = await buildBatch(db, {
@@ -94,7 +78,7 @@ export async function runAuditSinkBatch(db: Db): Promise<void> {
  * one produced, and phase one produces nothing while the sink is off.
  */
 export async function runAuditSinkShip(db: Db): Promise<void> {
-	const active = adapters();
+	const active = activeAdapters();
 	if (active.length === 0) return reset();
 
 	if (claimed.length > 0) {
