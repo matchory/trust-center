@@ -4,14 +4,14 @@
 # A separate install rather than pruning the build stage's tree: pnpm's default
 # symlinked layout does not survive a COPY between stages, so this one asks for
 # a hoisted layout that does.
-FROM node:22-bookworm-slim AS deps
+FROM node:26-bookworm-slim AS deps
 RUN corepack enable
 WORKDIR /app
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc ./
 RUN pnpm install --frozen-lockfile --prod --ignore-scripts --config.node-linker=hoisted
 
 # --- build -------------------------------------------------------------------
-FROM node:22-bookworm-slim AS build
+FROM node:26-bookworm-slim AS build
 RUN corepack enable
 WORKDIR /app
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc ./
