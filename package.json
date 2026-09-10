@@ -68,7 +68,7 @@
 		"aws4fetch": "1.0.20",
 		"drizzle-orm": "^0.45.2",
 		"mammoth": "^1.12.2",
-		"nodemailer": "^9.0.6",
+		"nodemailer": "^9.1.1",
 		"openid-client": "^6.8.7",
 		"pdf-lib": "^1.17.1",
 		"pdfjs-dist": "^6.3.289",
