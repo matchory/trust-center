@@ -1081,7 +1081,9 @@ bucket up for.
 Verified here against **MinIO** (`quay.io/minio/minio`, 2026-09-04): bucket
 creation with lock, a governance default, a re-PUT to an existing key adding a
 version rather than being refused, and a delete refused without the bypass and
-permitted with it. The integration test suite runs against it on every CI run.
+permitted with it. The integration test suite runs against it on every CI run,
+using Chainguard's build of the same binary (`cgr.dev/chainguard/minio`) since
+MinIO stopped publishing free images.
 
 For **Amazon S3** the behaviour above is what the Object Lock documentation
 specifies, and it has not been exercised against a real Amazon bucket by this
