@@ -1,68 +1,90 @@
-# Grouped per ecosystem so one upstream release does not arrive as several pull requests.
+# Follows the matchory supply chain baseline:
+# https://github.com/matchory/.github/blob/main/supply-chain/STANDARD.md
 #
-# Two grouping mechanisms are in play, because they cover different things:
-#   multi-ecosystem-groups  version updates, collapsed across ecosystems into one PR
-#   groups + applies-to     security updates, which multi-ecosystem groups do NOT cover
-# Without the second block every advisory arrives as its own pull request.
-#
-# The five-day cooldown is a supply-chain control, not a convenience. Most malicious releases in recent
-# memory were detected and yanked within hours, so waiting before adopting a new version neutralises
-# that class of attack. Security updates are unaffected: they are driven by advisories and ignore this.
-
+#   - cooldown: a release must be 3 days old before Dependabot proposes it
+#     (does not delay security updates)
+#   - minor + patch updates arrive as ONE grouped PR per ecosystem; npm,
+#     composer and pip split that into production and development PRs
+#   - major updates are never grouped: one PR per dependency, reviewed on its own
+#   - security updates get their own group per ecosystem
 version: 2
 
-multi-ecosystem-groups:
-  app:
-    schedule:
-      interval: weekly
-  infrastructure:
-    schedule:
-      interval: weekly
-  github-actions:
-    schedule:
-      interval: weekly
-
 updates:
-  - package-ecosystem: npm
-    multi-ecosystem-group: app
+  - package-ecosystem: github-actions
     directory: /
-    patterns:
-      - '*'
+    schedule:
+      interval: weekly
+      day: monday
+      time: '05:00'
+      timezone: Europe/Berlin
     cooldown:
-      default-days: 5
-    labels:
-      - dependencies
+      default-days: 3
     groups:
+      minor-and-patch:
+        applies-to: version-updates
+        update-types: [minor, patch]
       security:
         applies-to: security-updates
-        patterns:
-          - '*'
+        patterns: ['*']
+    labels: [dependencies, github-actions]
 
   - package-ecosystem: docker
-    multi-ecosystem-group: infrastructure
-    directory: /
-    patterns:
-      - '*'
-    labels:
-      - dependencies
-    groups:
-      security:
-        applies-to: security-updates
-        patterns:
-          - '*'
-
-  # `/` covers .github/workflows.
-  - package-ecosystem: github-actions
-    multi-ecosystem-group: github-actions
-    directory: /
-    patterns:
-      - '*'
+    directories: ['/', '/tools/dev-idp']
+    schedule:
+      interval: weekly
+      day: monday
+      time: '05:00'
+      timezone: Europe/Berlin
     cooldown:
-      default-days: 5
-    labels:
-      - dependencies
+      default-days: 3
     groups:
+      minor-and-patch:
+        applies-to: version-updates
+        update-types: [minor, patch]
       security:
         applies-to: security-updates
-        patterns:
-          - '*'
+        patterns: ['*']
+    labels: [dependencies, docker]
+
+  - package-ecosystem: docker-compose
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: '05:00'
+      timezone: Europe/Berlin
+    cooldown:
+      default-days: 3
+    groups:
+      minor-and-patch:
+        applies-to: version-updates
+        update-types: [minor, patch]
+      security:
+        applies-to: security-updates
+        patterns: ['*']
+    labels: [dependencies, docker]
+
+  - package-ecosystem: npm
+    # tools/dev-idp is a separate npm project with its own lockfile.
+    directories: ['/', '/tools/dev-idp']
+    schedule:
+      interval: weekly
+      day: monday
+      time: '05:00'
+      timezone: Europe/Berlin
+    cooldown:
+      default-days: 3
+    groups:
+      production:
+        applies-to: version-updates
+        dependency-type: production
+        update-types: [minor, patch]
+      development:
+        applies-to: version-updates
+        dependency-type: development
+        update-types: [minor, patch]
+      security:
+        applies-to: security-updates
+        patterns: ['*']
+    versioning-strategy: increase-if-necessary
+    labels: [dependencies, javascript]
