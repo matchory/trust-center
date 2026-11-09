@@ -49,7 +49,11 @@ async function createLockedBucket(endpoint: string): Promise<void> {
 }
 
 export async function setup() {
-	container = await new GenericContainer('quay.io/minio/minio:latest')
+	// MinIO stopped publishing free images (quay.io/minio/minio now answers 401).
+	// Chainguard builds the same binary from MinIO's source; pinned by digest.
+	container = await new GenericContainer(
+		'cgr.dev/chainguard/minio:latest@sha256:3c60a2a8c4d33409a9bc7a623a7fcbfb4605adc3d89422d2f53b3f673a6e5597'
+	)
 		.withCommand(['server', '/data'])
 		.withEnvironment({ MINIO_ROOT_USER: ACCESS_KEY, MINIO_ROOT_PASSWORD: SECRET_KEY })
 		.withExposedPorts(9000)
